@@ -68,13 +68,12 @@ export class InlineChatProvider {
         const fullPrompt = this._buildPrompt(prompt, action.value, selectedText, editor.document);
 
         // Call API
-        const response = await fetch(`http://localhost:${this._serverPort}/api/chat`, {
+        const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            messages: [{ role: 'user', content: fullPrompt }],
-            model: 'gpt-4', // Can be made configurable
-            tier: this._licenseManager.isPro() ? 'pro' : 'free'
+            model: 'llama-3.1-70b',
+            prompt: fullPrompt
           })
         });
 
@@ -258,13 +257,12 @@ export class InlineChatProvider {
         const languageId = editor.document.languageId;
         const fullPrompt = `${prompts[action]}\n\nLanguage: ${languageId}\n\nCode:\n\`\`\`${languageId}\n${selectedText}\n\`\`\``;
 
-        const response = await fetch(`http://localhost:${this._serverPort}/api/chat`, {
+        const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            messages: [{ role: 'user', content: fullPrompt }],
-            model: 'gpt-4',
-            tier: this._licenseManager.isPro() ? 'pro' : 'free'
+            model: 'llama-3.1-70b',
+            prompt: fullPrompt
           })
         });
 

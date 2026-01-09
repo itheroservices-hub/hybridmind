@@ -109,33 +109,30 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       };
 
       if (workflowMode === 'agentic') {
-        endpoint = '/api/agent/execute';
+        endpoint = '/agent/execute';
         requestBody = {
           goal: userMessage,
-          context: contextCode,
+          code: contextCode,
           tier: requestBody.tier
         };
       } else if (workflowMode === 'parallel') {
-        endpoint = '/api/run/parallel';
+        endpoint = '/run/parallel';
         requestBody = {
           models: selectedModels,
-          prompt: userMessage,
-          context: contextCode
+          prompt: userMessage
         };
       } else if (workflowMode === 'chain') {
-        endpoint = '/api/run/chain';
+        endpoint = '/run/chain';
         requestBody = {
           models: selectedModels,
-          prompt: userMessage,
-          context: contextCode
+          prompt: userMessage
         };
       } else {
         // Single model mode
-        endpoint = '/api/run/single';
+        endpoint = '/run/single';
         requestBody = {
           model: selectedModels[0],
-          prompt: userMessage,
-          context: contextCode
+          prompt: userMessage
         };
       }
 
@@ -194,8 +191,8 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         // Single model response
         const assistantMsg: ChatMessage = {
           role: 'assistant',
-          content: data.response || data.message || data.content,
-          model: selectedModels[0],
+          content: data.content || data.response || data.message,
+          model: data.model || selectedModels[0],
           timestamp: new Date(),
           tokens: data.usage?.total_tokens,
           cost: data.cost
