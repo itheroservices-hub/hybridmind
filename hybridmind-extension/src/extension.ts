@@ -30,7 +30,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // Check if backend has models available (backend reads from .env)
   try {
     const response = await fetch(`http://localhost:${serverPort}/models`);
-    const models = await response.json() as any[];
+    const result = await response.json() as any;
+    const models = result.data?.models || [];
     
     if (!models || models.length === 0) {
       const action = await vscode.window.showWarningMessage(
@@ -344,8 +345,8 @@ function registerCommands(context: vscode.ExtensionContext) {
 async function getAvailableModels(): Promise<any[]> {
   try {
     const response = await fetch(`http://127.0.0.1:${serverPort}/models`);
-    const data: any = await response.json();
-    return data;
+    const result: any = await response.json();
+    return result.data?.models || [];
   } catch (error) {
     return [];
   }
