@@ -1,0 +1,108 @@
+{
+  "name": "hybridmind",
+  "displayName": "HybridMind AI Assistant",
+  "description": "Multi-model AI orchestration platform with 21 models from 8 providers. Run workflows, compare models, and leverage the best AI for each task.",
+  "publisher": "hybridmind",
+  "version": "1.1.0",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itheroservices-hub/hybridmind.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "ai",
+    "artificial intelligence",
+    "llm",
+    "gpt",
+    "claude",
+    "gemini",
+    "code assistant",
+    "productivity"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "hybridmind.openChat", "title": "HybridMind: Open Chat Window ⭐", "icon": "$(comment-discussion)" },
+      { "command": "hybridmind.manageLicense", "title": "HybridMind: Manage License", "icon": "$(key)" },
+      { "command": "hybridmind.quickChat", "title": "HybridMind: Quick Chat" },
+      { "command": "hybridmind.explainCode", "title": "HybridMind: Explain Code" },
+      { "command": "hybridmind.reviewCode", "title": "HybridMind: Review Code" },
+      { "command": "hybridmind.optimizeCode", "title": "HybridMind: Optimize Code" },
+      { "command": "hybridmind.generateTests", "title": "HybridMind: Generate Tests" },
+      { "command": "hybridmind.fixBugs", "title": "HybridMind: Fix Bugs" }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "hybridmind.openChat",
+          "when": "true"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "hybridmind.explainCode",
+          "group": "hybridmind@1"
+        },
+        {
+          "command": "hybridmind.reviewCode",
+          "group": "hybridmind@2"
+        },
+        {
+          "command": "hybridmind.optimizeCode",
+          "group": "hybridmind@3"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "HybridMind",
+      "properties": {
+        "hybridmind.licenseKey": {
+          "type": "string",
+          "default": "",
+          "description": "HybridMind Pro license key. Get yours at https://hybridmind.dev/pricing"
+        },
+        "hybridmind.groqApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API Key (for Llama, Mixtral models). Get from: https://console.groq.com/keys"
+        },
+        "hybridmind.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key (for Gemini models). Get from: https://aistudio.google.com/app/apikey"
+        },
+        "hybridmind.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key (for DeepSeek models). Get from: https://platform.deepseek.com/api_keys"
+        },
+        "hybridmind.qwenApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Qwen API Key (for Qwen models). Get from: https://dashscope.console.aliyun.com/apiKey"
+        },
+        "hybridmind.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API Key (for GPT models). Get from: https://platform.openai.com/api-keys"
+        },
+        "hybridmind.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API Key (for Claude models). Get from: https://console.anthropic.com/settings/keys"
+        }
+      }
+    }
+  }
+}
