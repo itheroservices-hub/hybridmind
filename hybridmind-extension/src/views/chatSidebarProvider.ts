@@ -519,29 +519,40 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       Select Models <span class="tier-badge">${isPro ? 'PRO: Up to 4' : 'FREE: Up to 2'}</span>
     </h4>
     <div class="model-checkboxes">
+      <!-- FREE TIER -->
       <label class="model-checkbox">
-        <input type="checkbox" value="gpt-4" class="model-check" /> GPT-4
+        <input type="checkbox" value="llama-3.3-70b" class="model-check" checked /> 
+        <span>⚡ Llama 3.3 70B <span class="badge-free">FREE</span></span>
       </label>
       <label class="model-checkbox">
-        <input type="checkbox" value="claude-3-sonnet" class="model-check" /> Claude 3
+        <input type="checkbox" value="mixtral-8x7b" class="model-check" /> 
+        <span>⚡ Mixtral 8x7B <span class="badge-free">FREE</span></span>
       </label>
       <label class="model-checkbox">
-        <input type="checkbox" value="llama-3.3-70b" class="model-check" checked /> Llama 3.3
+        <input type="checkbox" value="gemini-flash" class="model-check" /> 
+        <span>⚡ Gemini Flash <span class="badge-free">FREE</span></span>
       </label>
       <label class="model-checkbox">
-        <input type="checkbox" value="gemini-pro" class="model-check" /> Gemini Pro
+        <input type="checkbox" value="deepseek-v3" class="model-check" /> 
+        <span>⚡ DeepSeek V3 <span class="badge-free">FREE</span></span>
       </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="deepseek-chat" class="model-check" /> DeepSeek
+      
+      <!-- PREMIUM TIER -->
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="claude-sonnet-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 Claude Sonnet 4.5 <span class="badge-premium">PRO</span></span>
       </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="qwen-max" class="model-check" /> Qwen Max
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="gpt-4o" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 GPT-4o <span class="badge-premium">PRO</span></span>
       </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="mixtral-8x7b" class="model-check" /> Mixtral 8x7B
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="gpt-4-turbo" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 GPT-4 Turbo <span class="badge-premium">PRO</span></span>
       </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="gpt-3.5-turbo" class="model-check" /> GPT-3.5
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="claude-3-opus" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 Claude Opus <span class="badge-premium">PRO</span></span>
       </label>
     </div>
     
