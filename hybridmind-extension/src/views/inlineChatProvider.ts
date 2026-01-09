@@ -72,7 +72,7 @@ export class InlineChatProvider {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'llama-3.1-70b',
+            model: 'llama-3.3-70b',
             prompt: fullPrompt
           })
         });

@@ -159,9 +159,9 @@ class ModelFactory {
       // Qwen
       'qwen-max': 'qwen-max',
       'qwen-plus': 'qwen-plus',
-      // Groq
+      // Groq (updated models - 3.1 deprecated Jan 2026)
       'llama-3.3-70b': 'llama-3.3-70b-versatile',
-      'llama-3.1-70b': 'llama-3.1-70b-versatile',
+      'llama-3.1-70b': 'llama-3.3-70b-versatile',
       'mixtral-8x7b': 'mixtral-8x7b-32768',
       // DeepSeek
       'deepseek-chat': 'deepseek-chat',
