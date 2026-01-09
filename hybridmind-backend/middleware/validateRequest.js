@@ -45,9 +45,9 @@ const schemas = {
       minLength: 1
     },
     code: {
-      required: true,
+      required: false,
       type: 'string',
-      minLength: 1
+      default: ''
     },
     options: {
       required: false,
@@ -77,7 +77,7 @@ const schemas = {
       required: true,
       type: 'array',
       validate: (value) => {
-        return Array.isArray(value) && value.length >= 2 && value.every(m => typeof m === 'string');
+        return Array.isArray(value) && value.length >= 1 && value.every(m => typeof m === 'string');
       }
     },
     prompt: {
@@ -86,8 +86,9 @@ const schemas = {
       minLength: 1
     },
     code: {
-      required: true,
-      type: 'string'
+      required: false,
+      type: 'string',
+      default: ''
     }
   }
 };
