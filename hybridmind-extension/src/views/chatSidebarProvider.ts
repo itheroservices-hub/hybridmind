@@ -144,10 +144,17 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        const errorText = await response.text();
+        console.error('API Error:', response.status, errorText);
+        throw new Error(`API error ${response.status}: ${errorText}`);
       }
 
       const data: any = await response.json();
+
+      // Check if response has error
+      if (!data.success && data.error) {
+        throw new Error(data.error.message || 'Unknown API error');
+      }
 
       // Handle multi-model responses
       if (workflowMode === 'parallel' && data.results) {
@@ -188,14 +195,15 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         };
         this._messages.push(assistantMsg);
       } else {
-        // Single model response
+        // Single model response - backend returns {success: true, data: {output: "...", model: "..."}}
+        const responseData = data.data || data;
         const assistantMsg: ChatMessage = {
           role: 'assistant',
-          content: data.content || data.response || data.message,
-          model: data.model || selectedModels[0],
+          content: responseData.output || responseData.content || responseData.response || responseData.message || 'No response',
+          model: responseData.model || selectedModels[0],
           timestamp: new Date(),
-          tokens: data.usage?.total_tokens,
-          cost: data.cost
+          tokens: data.meta?.usage?.totalTokens || responseData.usage?.total_tokens,
+          cost: responseData.cost
         };
         this._messages.push(assistantMsg);
       }
@@ -787,13 +795,13 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
     function formatCodeBlocks(content) {
       // Match code blocks with language
-      content = content.replace(/\`\`\`(\w+)?\n([\s\S]*?)\`\`\`/g, (match, lang, code) => {
+      content = content.replace(/\\\`\\\`\\\`(\\w+)?\\n([\\s\\S]*?)\\\`\\\`\\\`/g, (match, lang, code) => {
         const escapedCode = escapeHtml(code);
         return \`<div class="code-block"><button class="copy-button" data-code="\${escapeHtml(code)}">Copy</button><pre><code>\${escapedCode}</code></pre></div>\`;
       });
       
       // Match inline code
-      content = content.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+      content = content.replace(/\\\`([^\\\`]+)\\\`/g, '<code>$1</code>');
       
       return content;
     }

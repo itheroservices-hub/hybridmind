@@ -3,23 +3,27 @@
  */
 
 const models = {
-  'gpt-4': {
+  'gpt-4o': {
     provider: 'openai',
-    name: 'GPT-4',
-    maxTokens: 8192,
-    capabilities: ['code-generation', 'analysis', 'refactoring', 'explanation'],
-    strengths: ['reasoning', 'complex-tasks', 'multi-step'],
-    costTier: 'high',
-    speed: 'medium'
+    name: 'GPT-4o',
+    tier: 'premium',
+    maxTokens: 131072,
+    capabilities: ['code-generation', 'reasoning', 'analysis', 'vision'],
+    strengths: ['latest', 'multimodal', 'fast'],
+    costTier: 'premium',
+    speed: 'fast',
+    description: 'Latest GPT-4 with vision and advanced capabilities'
   },
   'gpt-4-turbo': {
     provider: 'openai',
     name: 'GPT-4 Turbo',
-    maxTokens: 128000,
+    tier: 'premium',
+    maxTokens: 131072,
     capabilities: ['code-generation', 'analysis', 'refactoring', 'explanation'],
     strengths: ['reasoning', 'large-context', 'speed'],
-    costTier: 'high',
-    speed: 'fast'
+    costTier: 'premium',
+    speed: 'fast',
+    description: 'Fast and powerful GPT-4 variant'
   },
   'gpt-3.5-turbo': {
     provider: 'openai',
@@ -30,14 +34,28 @@ const models = {
     costTier: 'low',
     speed: 'fast'
   },
+  // PREMIUM TIER - Expensive models
+  'claude-sonnet-4.5': {
+    provider: 'anthropic',
+    name: 'Claude Sonnet 4.5',
+    tier: 'premium',
+    maxTokens: 131072,
+    capabilities: ['code-generation', 'reasoning', 'analysis', 'vision'],
+    strengths: ['intelligence', 'reasoning', 'accuracy'],
+    costTier: 'premium',
+    speed: 'standard',
+    description: 'Most intelligent model for complex reasoning'
+  },
   'claude-3-opus': {
     provider: 'anthropic',
     name: 'Claude 3 Opus',
-    maxTokens: 200000,
+    tier: 'premium',
+    maxTokens: 131072,
     capabilities: ['code-generation', 'analysis', 'refactoring', 'explanation', 'code-review'],
     strengths: ['accuracy', 'large-context', 'detailed-analysis'],
-    costTier: 'high',
-    speed: 'medium'
+    costTier: 'premium',
+    speed: 'medium',
+    description: 'Highly capable reasoning model'
   },
   'claude-3-sonnet': {
     provider: 'anthropic',
@@ -75,33 +93,50 @@ const models = {
     costTier: 'low',
     speed: 'medium'
   },
-  // Groq models (ultra-fast inference)
+  // FREE TIER - Your API keys, no cost or nearly free
   'llama-3.3-70b': {
     provider: 'groq',
     name: 'Llama 3.3 70B',
+    tier: 'free',
     maxTokens: 32768,
     capabilities: ['code-generation', 'analysis', 'refactoring', 'explanation'],
-    strengths: ['ultra-fast', 'cost-effective', 'reasoning'],
-    costTier: 'low',
-    speed: 'ultra-fast'
-  },
-  'llama-3.1-70b': {
-    provider: 'groq',
-    name: 'Llama 3.1 70B',
-    maxTokens: 131072,
-    capabilities: ['code-generation', 'analysis', 'large-context'],
-    strengths: ['ultra-fast', 'large-context', 'cost-effective'],
-    costTier: 'low',
-    speed: 'ultra-fast'
+    strengths: ['ultra-fast', 'free', 'reasoning'],
+    costTier: 'free',
+    speed: 'ultra-fast',
+    description: 'Lightning-fast 70B model, perfect for coding'
   },
   'mixtral-8x7b': {
     provider: 'groq',
     name: 'Mixtral 8x7B',
+    tier: 'free',
     maxTokens: 32768,
     capabilities: ['code-generation', 'analysis', 'multilingual'],
-    strengths: ['ultra-fast', 'multilingual', 'cost-effective'],
-    costTier: 'low',
-    speed: 'ultra-fast'
+    strengths: ['ultra-fast', 'multilingual', 'free'],
+    costTier: 'free',
+    speed: 'ultra-fast',
+    description: 'Fast mixture-of-experts model'
+  },
+  'gemini-flash': {
+    provider: 'gemini',
+    name: 'Gemini 2.0 Flash',
+    tier: 'free',
+    maxTokens: 32768,
+    capabilities: ['code-generation', 'analysis', 'explanation', 'vision'],
+    strengths: ['fast', 'free', 'multimodal'],
+    costTier: 'free',
+    speed: 'fast',
+    description: 'Google\'s fast, free multimodal model'
+  },
+  'deepseek-v3': {
+    provider: 'deepseek',
+    name: 'DeepSeek V3',
+    tier: 'free',
+    maxTokens: 32768,
+    capabilities: ['code-generation', 'reasoning', 'analysis'],
+    strengths: ['cost-effective', 'reasoning', 'coding'],
+    costTier: 'free',
+    speed: 'fast',
+    description: 'Extremely cost-effective reasoning model'
   },
   // DeepSeek models (coding specialists)
   'deepseek-chat': {

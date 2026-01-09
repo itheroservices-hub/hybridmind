@@ -1,4 +1,5 @@
 const modelRegistry = require('../services/models/modelRegistry');
+const modelProxy = require('../services/modelProxy');
 const responseFormatter = require('../utils/responseFormatter');
 
 /**
@@ -11,12 +12,21 @@ class ModelsController {
    */
   async getAll(req, res, next) {
     try {
-      const models = modelRegistry.getAllModels();
+      const { userId, isPremium } = req.query;
+      
+      // Get models from registry
+      const allModels = modelRegistry.getAllModels();
+      
+      // Filter by tier if not premium
+      const models = isPremium === 'true' 
+        ? allModels 
+        : allModels.filter(m => m.tier === 'free' || !m.tier);
 
       res.json(
         responseFormatter.success({
           models,
-          count: models.length
+          count: models.length,
+          tier: isPremium === 'true' ? 'premium' : 'free'
         })
       );
     } catch (error) {

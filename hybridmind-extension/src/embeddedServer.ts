@@ -65,6 +65,74 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
         return;
       }
 
+      // Parallel endpoint
+      if (req.url === '/run/parallel' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+          try {
+            const data = JSON.parse(body);
+            const results = await Promise.all(
+              data.models.map((model: string) => runModel(model, data.prompt, context))
+            );
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ results }));
+          } catch (error: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        });
+        return;
+      }
+
+      // Chain endpoint
+      if (req.url === '/run/chain' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+          try {
+            const data = JSON.parse(body);
+            const steps = [];
+            let currentPrompt = data.prompt;
+            
+            for (const model of data.models) {
+              const result = await runModel(model, currentPrompt, context);
+              steps.push(result);
+              currentPrompt = `Previous response from ${model}: ${result.content}\n\nOriginal task: ${data.prompt}`;
+            }
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ steps }));
+          } catch (error: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        });
+        return;
+      }
+
+      // Agent endpoint
+      if (req.url === '/agent/execute' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+          try {
+            const data = JSON.parse(body);
+            const result = await runModel('llama-3.3-70b', data.goal, context);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+              result: result.content,
+              plan: 'Agentic workflow (simplified)',
+              model: 'llama-3.3-70b'
+            }));
+          } catch (error: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        });
+        return;
+      }
+
       // Not found
       res.writeHead(404);
       res.end('Not found');
@@ -148,6 +216,22 @@ function getAvailableModels() {
 async function runModel(modelId: string, prompt: string, context: vscode.ExtensionContext): Promise<any> {
   const config = vscode.workspace.getConfiguration('hybridmind');
   
+  // Map model IDs to actual API model names
+  const modelMapping: { [key: string]: string } = {
+    'llama-3.3-70b': 'llama-3.3-70b-versatile',
+    'mixtral-8x7b': 'mixtral-8x7b-32768',
+    'gemini-2.0-flash-exp': 'gemini-2.0-flash-exp',
+    'gemini-1.5-pro': 'gemini-1.5-pro',
+    'gemini-flash': 'gemini-2.0-flash-exp',
+    'deepseek-chat': 'deepseek-chat',
+    'deepseek-coder': 'deepseek-coder',
+    'deepseek-v3': 'deepseek-chat',
+    'qwen-max': 'qwen-max',
+    'qwen-plus': 'qwen-plus'
+  };
+  
+  const actualModel = modelMapping[modelId] || modelId;
+  
   // COST PROTECTION: Limit prompt size to prevent accidental huge bills
   const MAX_CHARS = 50000; // ~12,500 tokens (~$0.15 for GPT-4, ~$0.05 for Claude)
   if (prompt.length > MAX_CHARS) {
@@ -165,17 +249,17 @@ async function runModel(modelId: string, prompt: string, context: vscode.Extensi
   
   // Route to appropriate provider based on model ID
   if (modelId.startsWith('llama') || modelId.startsWith('mixtral')) {
-    return runGroq(modelId, prompt, config.get('groqApiKey') || '');
+    return runGroq(actualModel, prompt, config.get('groqApiKey') || '');
   } else if (modelId.startsWith('gemini')) {
-    return runGemini(modelId, prompt, config.get('geminiApiKey') || '');
+    return runGemini(actualModel, prompt, config.get('geminiApiKey') || '');
   } else if (modelId.startsWith('deepseek')) {
-    return runDeepseek(modelId, prompt, config.get('deepseekApiKey') || '');
+    return runDeepseek(actualModel, prompt, config.get('deepseekApiKey') || '');
   } else if (modelId.startsWith('qwen')) {
-    return runQwen(modelId, prompt, config.get('qwenApiKey') || '');
+    return runQwen(actualModel, prompt, config.get('qwenApiKey') || '');
   } else if (modelId.startsWith('gpt')) {
-    return runOpenAI(modelId, prompt, config.get('openaiApiKey') || '');
+    return runOpenAI(actualModel, prompt, config.get('openaiApiKey') || '');
   } else if (modelId.startsWith('claude')) {
-    return runAnthropic(modelId, prompt, config.get('anthropicApiKey') || '');
+    return runAnthropic(actualModel, prompt, config.get('anthropicApiKey') || '');
   }
   
   throw new Error(`Unknown model: ${modelId}`);
