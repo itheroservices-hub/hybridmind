@@ -526,7 +526,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         <input type="checkbox" value="claude-3-sonnet" class="model-check" /> Claude 3
       </label>
       <label class="model-checkbox">
-        <input type="checkbox" value="llama-3.1-70b" class="model-check" checked /> Llama 3.1
+        <input type="checkbox" value="llama-3.3-70b" class="model-check" checked /> Llama 3.3
       </label>
       <label class="model-checkbox">
         <input type="checkbox" value="gemini-pro" class="model-check" /> Gemini Pro
@@ -597,7 +597,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     
     let messages = [];
     let includeContext = false;
-    let selectedModels = ['llama-3.1-70b']; // Default
+    let selectedModels = ['llama-3.3-70b']; // Default
 
     // Handle model checkbox changes
     modelCheckboxes.forEach(checkbox => {
