@@ -1,10 +1,13 @@
 import * as vscode from 'vscode';
 import { startEmbeddedServer, stopEmbeddedServer } from './embeddedServer';
 import { ChatPanel } from './views/chatPanel';
+import { ChatSidebarProvider } from './views/chatSidebarProvider';
+import { InlineChatProvider } from './views/inlineChatProvider';
 import { LicenseManager } from './auth/licenseManager';
 
 let serverPort: number | null = null;
 let licenseManager: LicenseManager;
+let inlineChatProvider: InlineChatProvider;
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('HybridMind extension activating...');
@@ -24,20 +27,24 @@ export async function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  // Check if API keys are configured
-  const config = vscode.workspace.getConfiguration('hybridmind');
-  const hasAnyKey = config.get('groqApiKey') || config.get('geminiApiKey') || 
-                    config.get('deepseekApiKey') || config.get('qwenApiKey') ||
-                    config.get('openaiApiKey') || config.get('anthropicApiKey');
-
-  if (!hasAnyKey) {
-    const action = await vscode.window.showWarningMessage(
-      'No AI API keys configured. Configure at least one to use HybridMind.',
-      'Configure Now'
-    );
-    if (action === 'Configure Now') {
-      vscode.commands.executeCommand('workbench.action.openSettings', 'hybridmind');
+  // Check if backend has models available (backend reads from .env)
+  try {
+    const response = await fetch(`http://localhost:${serverPort}/models`);
+    const models = await response.json() as any[];
+    
+    if (!models || models.length === 0) {
+      const action = await vscode.window.showWarningMessage(
+        'No AI models available. Please check your .env file in the backend.',
+        'Open .env File'
+      );
+      if (action === 'Open .env File') {
+        const envPath = vscode.Uri.file('e:\\IThero\\HybridMind\\.env');
+        vscode.window.showTextDocument(envPath);
+      }
     }
+  } catch (error) {
+    // Server might not be fully ready yet, skip check
+    console.log('Could not check models availability:', error);
   }
 
   // Create status bar item
@@ -47,6 +54,16 @@ export async function activate(context: vscode.ExtensionContext) {
   statusBarItem.command = 'hybridmind.manageLicense';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+
+  // Register sidebar chat view
+  const sidebarProvider = new ChatSidebarProvider(context.extensionUri, serverPort);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, sidebarProvider)
+  );
+
+  // Register inline chat provider
+  inlineChatProvider = new InlineChatProvider(serverPort);
+  context.subscriptions.push(inlineChatProvider);
 
   // Register commands
   registerCommands(context);
@@ -62,6 +79,17 @@ function registerCommands(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('hybridmind.openChat', async () => {
       if (serverPort) {
         ChatPanel.createOrShow(context.extensionUri, serverPort);
+      } else {
+        vscode.window.showErrorMessage('Server not running');
+      }
+    })
+  );
+
+  // Inline Chat (Ctrl+K / Cmd+K)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.inlineChat', async () => {
+      if (serverPort) {
+        await inlineChatProvider.showInlineChat();
       } else {
         vscode.window.showErrorMessage('Server not running');
       }
@@ -130,74 +158,57 @@ function registerCommands(context: vscode.ExtensionContext) {
   // Code Explanation
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.explainCode', async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage('No active editor');
-        return;
+      if (serverPort) {
+        await inlineChatProvider.quickFix('explain');
+      } else {
+        vscode.window.showErrorMessage('Server not running');
       }
-
-      const selection = editor.selection;
-      const code = editor.document.getText(selection.isEmpty ? undefined : selection);
-
-      if (!code) {
-        vscode.window.showErrorMessage('No code to explain');
-        return;
-      }
-
-      const models = await getAvailableModels();
-      if (models.length === 0) {
-        vscode.window.showErrorMessage('No models available. Please configure API keys.');
-        return;
-      }
-
-      const modelChoice = await vscode.window.showQuickPick(
-        models.map(m => ({ label: m.name, model: m.id })),
-        { placeHolder: 'Select a model' }
-      );
-
-      if (!modelChoice) return;
-
-      const prompt = `Explain this code:\n\n\`\`\`${editor.document.languageId}\n${code}\n\`\`\``;
-      await runPrompt(modelChoice.model, prompt);
     })
   );
 
   // Code Review
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.reviewCode', async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showErrorMessage('No active editor');
-        return;
+      if (serverPort) {
+        await inlineChatProvider.quickFix('review');
+      } else {
+        vscode.window.showErrorMessage('Server not running');
       }
-
-      const selection = editor.selection;
-      const code = editor.document.getText(selection.isEmpty ? undefined : selection);
-
-      if (!code) {
-        vscode.window.showErrorMessage('No code to review');
-        return;
-      }
-
-      const models = await getAvailableModels();
-      if (models.length === 0) {
-        vscode.window.showErrorMessage('No models available. Please configure API keys.');
-        return;
-      }
-
-      const modelChoice = await vscode.window.showQuickPick(
-        models.map(m => ({ label: m.name, model: m.id })),
-        { placeHolder: 'Select a model' }
-      );
-
-      if (!modelChoice) return;
-
-      const prompt = `Review this code for bugs, performance issues, and best practices:\n\n\`\`\`${editor.document.languageId}\n${code}\n\`\`\``;
-      await runPrompt(modelChoice.model, prompt);
     })
   );
 
   // Optimize Code
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.optimizeCode', async () => {
+      if (serverPort) {
+        await inlineChatProvider.quickFix('optimize');
+      } else {
+        vscode.window.showErrorMessage('Server not running');
+      }
+    })
+  );
+
+  // Generate Tests
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.generateTests', async () => {
+      if (serverPort) {
+        await inlineChatProvider.quickFix('tests');
+      } else {
+        vscode.window.showErrorMessage('Server not running');
+      }
+    })
+  );
+
+  // Fix Bugs
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.fixBugs', async () => {
+      if (serverPort) {
+        await inlineChatProvider.quickFix('fix');
+      } else {
+        vscode.window.showErrorMessage('Server not running');
+      }
+    })
+  );
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.optimizeCode', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -298,6 +309,33 @@ function registerCommands(context: vscode.ExtensionContext) {
       if (!modelChoice) return;
 
       const prompt = `Identify and fix bugs in this code:\n\n\`\`\`${editor.document.languageId}\n${code}\n\`\`\``;
+      await runPrompt(modelChoice.model, prompt);
+    })
+  );
+
+  // Quick Chat - keeping for compatibility
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.quickChat', async () => {
+      const prompt = await vscode.window.showInputBox({
+        prompt: 'Ask anything...',
+        placeHolder: 'What would you like to know?'
+      });
+
+      if (!prompt) return;
+
+      const models = await getAvailableModels();
+      if (models.length === 0) {
+        vscode.window.showErrorMessage('No models available. Please configure API keys.');
+        return;
+      }
+
+      const modelChoice = await vscode.window.showQuickPick(
+        models.map(m => ({ label: m.name, model: m.id })),
+        { placeHolder: 'Select a model' }
+      );
+
+      if (!modelChoice) return;
+
       await runPrompt(modelChoice.model, prompt);
     })
   );

@@ -3,7 +3,7 @@
   "displayName": "HybridMind AI Assistant",
   "description": "Multi-model AI orchestration platform with 21 models from 8 providers. Run workflows, compare models, and leverage the best AI for each task.",
   "publisher": "hybridmind",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
@@ -29,10 +29,39 @@
     "productivity"
   ],
   "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
   "activationEvents": [],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hybridmind",
+          "title": "HybridMind",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "hybridmind": [
+        {
+          "type": "webview",
+          "id": "hybridmind.chatView",
+          "name": "Chat",
+          "icon": "$(comment-discussion)",
+          "contextualTitle": "HybridMind Chat"
+        }
+      ]
+    },
     "commands": [
-      { "command": "hybridmind.openChat", "title": "HybridMind: Open Chat Window ⭐", "icon": "$(comment-discussion)" },
+      { "command": "hybridmind.openChat", "title": "HybridMind: Open Chat Window", "icon": "$(comment-discussion)" },
+      { "command": "hybridmind.inlineChat", "title": "HybridMind: Start Inline Chat", "icon": "$(edit)" },
       { "command": "hybridmind.manageLicense", "title": "HybridMind: Manage License", "icon": "$(key)" },
       { "command": "hybridmind.quickChat", "title": "HybridMind: Quick Chat" },
       { "command": "hybridmind.explainCode", "title": "HybridMind: Explain Code" },
@@ -41,14 +70,36 @@
       { "command": "hybridmind.generateTests", "title": "HybridMind: Generate Tests" },
       { "command": "hybridmind.fixBugs", "title": "HybridMind: Fix Bugs" }
     ],
+    "keybindings": [
+      {
+        "command": "hybridmind.inlineChat",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "hybridmind.openChat",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h"
+      }
+    ],
     "menus": {
       "commandPalette": [
         {
           "command": "hybridmind.openChat",
           "when": "true"
+        },
+        {
+          "command": "hybridmind.inlineChat",
+          "when": "editorTextFocus"
         }
       ],
       "editor/context": [
+        {
+          "command": "hybridmind.inlineChat",
+          "group": "hybridmind@0",
+          "when": "editorTextFocus"
+        },
         {
           "command": "hybridmind.explainCode",
           "group": "hybridmind@1"
