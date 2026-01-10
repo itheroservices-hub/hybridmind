@@ -84,6 +84,10 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           // Handle autonomous execution of suggested task
           await this._handleSendMessage(data.task, data.models, 'agentic', true);
           break;
+        case 'openUpgrade':
+          // Open upgrade page in browser
+          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ai/pricing'));
+          break;
       }
     });
   }
@@ -414,6 +418,47 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.8; }
+    }
+
+    .upgrade-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 6px;
+      padding: 12px;
+      margin: 12px 8px;
+      text-align: center;
+      color: white;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    }
+
+    .upgrade-banner:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+    }
+
+    .upgrade-title {
+      font-size: 13px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .upgrade-desc {
+      font-size: 11px;
+      opacity: 0.9;
+    }
+
+    .upgrade-features {
+      font-size: 10px;
+      opacity: 0.85;
+      margin-top: 4px;
     }
     
     .messages-container {
@@ -800,6 +845,22 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       </label>
     </div>
     
+    ${!isPro ? `
+    <button class="upgrade-banner" id="upgradeButton">
+      <div class="upgrade-title">
+        <span>⭐</span>
+        <span>Unlock Premium Models</span>
+        <span>⭐</span>
+      </div>
+      <div class="upgrade-desc">
+        Access 25+ AI models including Claude 4.5, GPT-4o, Gemini 2.5 Pro
+      </div>
+      <div class="upgrade-features">
+        🚀 Up to 4 models simultaneously • 🧠 Advanced reasoning • 💎 Premium support
+      </div>
+    </button>
+    ` : ''}
+    
     <select id="workflowSelector" class="workflow-selector">
       <option value="single">🎯 Single (Use first selected)</option>
       <option value="parallel">⚡ Parallel (All models respond)</option>
@@ -901,9 +962,19 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     const workflowSelector = document.getElementById('workflowSelector');
     const clearButton = document.getElementById('clearButton');
     const modelCheckboxes = document.querySelectorAll('.model-check');
+    const upgradeButton = document.getElementById('upgradeButton');
     
     const MAX_MODELS = ${maxModels};
     const IS_PRO = ${isPro};
+    
+    // Upgrade button handler
+    if (upgradeButton) {
+      upgradeButton.addEventListener('click', () => {
+        vscode.postMessage({
+          type: 'openUpgrade'
+        });
+      });
+    }
     
     let messages = [];
     let includeContext = false;
