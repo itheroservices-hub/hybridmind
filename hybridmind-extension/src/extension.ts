@@ -200,6 +200,93 @@ function registerCommands(context: vscode.ExtensionContext) {
     })
   );
 
+  // **NEW** Autonomous Refactor with AI
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.refactorWithAI', async () => {
+      if (!serverPort) {
+        vscode.window.showErrorMessage('Server not running');
+        return;
+      }
+
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage('No active editor');
+        return;
+      }
+
+      const selection = editor.selection;
+      const selectedText = editor.document.getText(selection);
+      
+      if (!selectedText) {
+        vscode.window.showWarningMessage('Please select code to refactor');
+        return;
+      }
+
+      // Ask user what kind of refactoring
+      const refactorGoal = await vscode.window.showInputBox({
+        prompt: 'What refactoring should I perform?',
+        placeHolder: 'e.g., "Convert to async/await", "Extract to separate functions", "Add error handling"'
+      });
+
+      if (!refactorGoal) return;
+
+      // Show progress
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'HybridMind Autonomous Agent',
+        cancellable: false
+      }, async (progress) => {
+        progress.report({ message: 'Planning refactoring...' });
+
+        try {
+          const response = await fetch(`http://localhost:${serverPort}/agent/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              goal: `Refactor this code: ${refactorGoal}\n\nCode:\n${selectedText}`,
+              code: selectedText
+            })
+          });
+
+          const data: any = await response.json();
+          
+          if (data.result) {
+            progress.report({ message: 'Applying changes...' });
+            
+            // Show the result in a new editor for review
+            const doc = await vscode.workspace.openTextDocument({
+              content: data.result,
+              language: editor.document.languageId
+            });
+            await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+            
+            // Show steps taken
+            if (data.steps && data.steps.length > 0) {
+              const stepsMessage = data.steps
+                .map((s: any, i: number) => `${i + 1}. ${s.action}`)
+                .join('\n');
+              
+              vscode.window.showInformationMessage(
+                `Refactoring complete! Steps taken:\n${stepsMessage}`,
+                'Apply to Original'
+              ).then(choice => {
+                if (choice === 'Apply to Original') {
+                  editor.edit(editBuilder => {
+                    editBuilder.replace(selection, data.result);
+                  });
+                }
+              });
+            }
+          } else {
+            vscode.window.showErrorMessage('No refactoring result returned');
+          }
+        } catch (error: any) {
+          vscode.window.showErrorMessage(`Refactoring failed: ${error.message}`);
+        }
+      });
+    })
+  );
+
   // Fix Bugs
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.fixBugs', async () => {

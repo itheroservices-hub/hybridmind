@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import * as path from 'path';
+import { AutonomousAgent } from './agents/autonomousAgent';
 
 let server: http.Server | null = null;
 let serverPort = 3000;
@@ -111,20 +112,42 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
         return;
       }
 
-      // Agent endpoint
+      // Agent endpoint - NOW WITH REAL AUTONOMOUS CAPABILITIES!
       if (req.url === '/agent/execute' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
           try {
             const data = JSON.parse(body);
-            const result = await runModel('llama-3.3-70b', data.goal, context);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
-              result: result.content,
-              plan: 'Agentic workflow (simplified)',
-              model: 'llama-3.3-70b'
-            }));
+            
+            // Create autonomous agent
+            const agent = new AutonomousAgent(
+              async (modelId: string, prompt: string) => {
+                return await runModel(modelId, prompt, context);
+              },
+              {
+                autonomyLevel: data.autonomyLevel || 3,
+                permissions: data.permissions || {}
+              }
+            );
+            
+            // Execute the goal autonomously
+            // isDirectExecution = true means skip analysis and execute immediately
+            const agentResult = await agent.execute(data.goal, data.isDirectExecution || false);
+            
+            if (agentResult.success) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ 
+                result: agentResult.finalResult,
+                steps: agentResult.steps,
+                plan: `Executed ${agentResult.steps.length} steps`,
+                model: 'Autonomous Agent (llama-3.3-70b)',
+                suggestions: agentResult.suggestions || [] // Include next step suggestions
+              }));
+            } else {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: agentResult.error }));
+            }
           } catch (error: any) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message }));

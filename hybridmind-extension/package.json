@@ -1,9 +1,9 @@
 {
   "name": "hybridmind",
   "displayName": "HybridMind AI Assistant",
-  "description": "Multi-model AI orchestration platform with 21 models from 8 providers. Run workflows, compare models, and leverage the best AI for each task.",
+  "description": "Multi-model AI platform with 25+ models including Claude 4.5, Gemini 2.5, DeepSeek R1, Grok 4, and specialized coding models. Free tier + premium models via OpenRouter.",
   "publisher": "hybridmind",
-  "version": "1.3.4",
+  "version": "1.4.0",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
@@ -68,7 +68,8 @@
       { "command": "hybridmind.reviewCode", "title": "HybridMind: Review Code" },
       { "command": "hybridmind.optimizeCode", "title": "HybridMind: Optimize Code" },
       { "command": "hybridmind.generateTests", "title": "HybridMind: Generate Tests" },
-      { "command": "hybridmind.fixBugs", "title": "HybridMind: Fix Bugs" }
+      { "command": "hybridmind.fixBugs", "title": "HybridMind: Fix Bugs" },
+      { "command": "hybridmind.refactorWithAI", "title": "HybridMind: 🤖 Refactor with Autonomous Agent", "icon": "$(robot)" }
     ],
     "keybindings": [
       {

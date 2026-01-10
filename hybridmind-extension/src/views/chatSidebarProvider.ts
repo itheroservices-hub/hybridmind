@@ -23,6 +23,17 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   private _selectedModels: string[] = [];
   private _workflowMode: 'single' | 'parallel' | 'chain' | 'agentic' = 'single';
   private _licenseManager: LicenseManager;
+  private _autonomyLevel: number = 3; // Default to Full Auto
+  private _permissions: { [key: string]: boolean } = {
+    read: true,
+    edit: true,
+    terminal: true,
+    create: true,
+    delete: false,
+    'multi-step': true,
+    restructure: false,
+    network: false
+  };
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -62,14 +73,22 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         case 'changeWorkflow':
           this._workflowMode = data.workflow;
           break;
+        case 'changeAutonomy':
+          this._autonomyLevel = data.level;
+          this._permissions = data.permissions;
+          break;
         case 'insertCode':
           this._insertCodeAtCursor(data.code);
+          break;
+        case 'executeSuggestion':
+          // Handle autonomous execution of suggested task
+          await this._handleSendMessage(data.task, data.models, 'agentic', true);
           break;
       }
     });
   }
 
-  private async _handleSendMessage(userMessage: string, models?: string[], workflow?: string) {
+  private async _handleSendMessage(userMessage: string, models?: string[], workflow?: string, isDirectExecution?: boolean) {
     const selectedModels = models || this._selectedModels;
     const workflowMode = workflow || this._workflowMode;
     
@@ -113,7 +132,10 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         requestBody = {
           goal: userMessage,
           code: contextCode,
-          tier: requestBody.tier
+          tier: requestBody.tier,
+          isDirectExecution: isDirectExecution || false, // Flag for suggestion clicks
+          autonomyLevel: this._autonomyLevel,
+          permissions: this._permissions
         };
       } else if (workflowMode === 'parallel') {
         endpoint = '/run/parallel';
@@ -184,16 +206,45 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           this._messages.push(assistantMsg);
         }
       } else if (workflowMode === 'agentic' && data.result) {
-        // Add agentic workflow result
+        // Agentic workflow with real-time agent steps!
+        if (data.steps && data.steps.length > 0) {
+          // Show each agent step
+          for (const step of data.steps) {
+            const stepMsg: ChatMessage = {
+              role: 'assistant',
+              content: `🤖 **${step.action}**${step.tool ? ` using \`${step.tool}\`` : ''}\n${
+                step.result ? `✅ ${step.result.success ? 'Success' : '❌ ' + step.result.error}` : ''
+              }${step.aiResponse ? `\n\n${step.aiResponse}` : ''}`,
+              model: 'Agent Step',
+              timestamp: new Date()
+            };
+            this._messages.push(stepMsg);
+          }
+        }
+        
+        // Final result
         const assistantMsg: ChatMessage = {
           role: 'assistant',
-          content: `**Agentic Result**:\n${data.result}\n\n*Plan:* ${data.plan || 'N/A'}`,
-          model: 'Multi-Agent',
+          content: `**🎯 Autonomous Agent Complete**\n\n${data.result}\n\n*${data.plan || 'Task completed'}*`,
+          model: 'Autonomous Agent',
           timestamp: new Date(),
           tokens: data.totalTokens,
           cost: data.totalCost
         };
         this._messages.push(assistantMsg);
+        
+        // Add suggestions if available
+        if (data.suggestions && data.suggestions.length > 0) {
+          const suggestionsMsg: ChatMessage = {
+            role: 'system',
+            content: JSON.stringify({ 
+              type: 'suggestions', 
+              suggestions: data.suggestions 
+            }),
+            timestamp: new Date()
+          };
+          this._messages.push(suggestionsMsg);
+        }
       } else {
         // Single model response - backend returns {success: true, data: {output: "...", model: "..."}}
         const responseData = data.data || data;
@@ -330,6 +381,39 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       background-color: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       margin-left: 8px;
+    }
+    
+    .badge-free {
+      background-color: #10b981;
+      color: white;
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-size: 9px;
+      font-weight: bold;
+    }
+    
+    .badge-premium {
+      background-color: #3b82f6;
+      color: white;
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-size: 9px;
+      font-weight: bold;
+    }
+    
+    .badge-ultra {
+      background: linear-gradient(135deg, #8b5cf6, #ec4899);
+      color: white;
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-size: 9px;
+      font-weight: bold;
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.8; }
     }
     
     .messages-container {
@@ -514,10 +598,76 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       border-radius: 4px;
       cursor: pointer;
       font-size: 12px;
+      transition: all 0.2s ease;
     }
     
     .suggestion:hover {
       background-color: var(--vscode-list-hoverBackground);
+      border-color: var(--vscode-focusBorder);
+      transform: translateX(4px);
+    }
+    
+    .suggestion-btn {
+      border-left-width: 3px !important;
+    }
+    
+    .suggestion:hover {
+      background-color: var(--vscode-list-hoverBackground);
+    }
+    
+    .autonomy-panel {
+      background-color: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      padding: 10px;
+      margin-top: 8px;
+      font-size: 11px;
+    }
+    
+    .autonomy-level {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    
+    .level-option {
+      flex: 1;
+      padding: 6px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 3px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .level-option:hover {
+      background-color: var(--vscode-list-hoverBackground);
+    }
+    
+    .level-option.active {
+      border-color: var(--vscode-focusBorder);
+      background-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      font-weight: bold;
+    }
+    
+    .permissions-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    
+    .permission-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      padding: 2px;
+    }
+    
+    .permission-item input {
+      cursor: pointer;
     }
   </style>
 </head>
@@ -544,23 +694,109 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         <input type="checkbox" value="deepseek-v3" class="model-check" /> 
         <span>⚡ DeepSeek V3 <span class="badge-free">FREE</span></span>
       </label>
+      <label class="model-checkbox">
+        <input type="checkbox" value="deepseek/deepseek-r1-distill-llama-70b" class="model-check" /> 
+        <span>⚡ DeepSeek R1 Distill <span class="badge-free">FREE</span></span>
+      </label>
+      <label class="model-checkbox">
+        <input type="checkbox" value="meta-llama/llama-3.3-70b-instruct" class="model-check" /> 
+        <span>⚡ Llama 3.3 70B OR <span class="badge-free">FREE</span></span>
+      </label>
       
-      <!-- PREMIUM TIER -->
+      <!-- PREMIUM TIER: REASONING MODELS -->
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
+        🧠 REASONING MODELS
+      </div>
       <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="claude-sonnet-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 Claude Sonnet 4.5 <span class="badge-premium">PRO</span></span>
+        <input type="checkbox" value="deepseek/deepseek-r1-0528" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>🧠 DeepSeek R1 Latest <span class="badge-premium">PRO</span></span>
       </label>
       <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="gpt-4o" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <input type="checkbox" value="openai/o3-deep-research" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>🧠 o3 Deep Research <span class="badge-ultra">ULTRA</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="microsoft/phi-4-reasoning-plus" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>🧠 Phi-4 Reasoning <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="deepseek/deepseek-r1" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>🧠 DeepSeek R1 <span class="badge-premium">PRO</span></span>
+      </label>
+      
+      <!-- PREMIUM TIER: BEST MODELS -->
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
+        👑 FLAGSHIP MODELS
+      </div>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="openai/gpt-4o" class="model-check" ${isPro ? '' : 'disabled'} /> 
         <span>👑 GPT-4o <span class="badge-premium">PRO</span></span>
       </label>
       <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="gpt-4-turbo" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 GPT-4 Turbo <span class="badge-premium">PRO</span></span>
+        <input type="checkbox" value="anthropic/claude-opus-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 Claude Opus 4.5 <span class="badge-ultra">ULTRA</span></span>
       </label>
       <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="claude-3-opus" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 Claude Opus <span class="badge-premium">PRO</span></span>
+        <input type="checkbox" value="anthropic/claude-sonnet-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 Claude Sonnet 4.5 <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="anthropic/claude-3.5-sonnet" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 Claude 3.5 Sonnet <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="google/gemini-2.5-pro" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>👑 Gemini 2.5 Pro <span class="badge-premium">PRO</span></span>
+      </label>
+      
+      <!-- PREMIUM TIER: FAST & CHEAP -->
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
+        ⚡ FAST & AFFORDABLE PRO
+      </div>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="openai/gpt-4o-mini" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>⚡ GPT-4o Mini <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="anthropic/claude-haiku-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>⚡ Claude Haiku 4.5 <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="google/gemini-2.5-flash" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>⚡ Gemini 2.5 Flash <span class="badge-premium">PRO</span></span>
+      </label>
+      
+      <!-- PREMIUM TIER: SPECIALIZED -->
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
+        🎯 SPECIALIZED MODELS
+      </div>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="mistralai/codestral-2508" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>💻 Codestral 2508 <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="mistralai/devstral-2512" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>💻 Devstral 2512 <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="qwen/qwen-2.5-coder-32b-instruct" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>💻 Qwen Coder <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="qwen/qwen3-coder-plus" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>💻 Qwen 3 Coder Plus <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="perplexity/sonar-pro-search" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>🌐 Perplexity Sonar Pro <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="x-ai/grok-4" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>⚡ Grok 4 <span class="badge-premium">PRO</span></span>
+      </label>
+      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
+        <input type="checkbox" value="meta-llama/llama-3.1-405b-instruct" class="model-check" ${isPro ? '' : 'disabled'} /> 
+        <span>🦙 Llama 405B <span class="badge-premium">PRO</span></span>
       </label>
     </div>
     
@@ -570,6 +806,61 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       <option value="chain">🔗 Chain (Sequential refinement)</option>
       <option value="agentic">🤖 Agentic (Planner → Executor → Reviewer)</option>
     </select>
+    
+    <!-- Autonomy Control Panel (only visible in agentic mode) -->
+    <div id="autonomyPanel" class="autonomy-panel" style="display: none;">
+      <div style="font-weight: bold; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;">
+        <span>⚙️ Autonomy Level</span>
+      </div>
+      <div class="autonomy-level">
+        <div class="level-option" data-level="1">
+          <div>🟢 L1</div>
+          <div style="font-size: 9px; margin-top: 2px;">Advisory</div>
+        </div>
+        <div class="level-option" data-level="2">
+          <div>🟡 L2</div>
+          <div style="font-size: 9px; margin-top: 2px;">Assisted</div>
+        </div>
+        <div class="level-option active" data-level="3">
+          <div>🔴 L3</div>
+          <div style="font-size: 9px; margin-top: 2px;">Full Auto</div>
+        </div>
+      </div>
+      <div class="permissions-grid">
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="read" checked />
+          <span>📂 Read files</span>
+        </label>
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="edit" checked />
+          <span>✏️ Edit files</span>
+        </label>
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="terminal" checked />
+          <span>⚡ Terminal</span>
+        </label>
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="create" checked />
+          <span>➕ Create files</span>
+        </label>
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="delete" />
+          <span>🗑️ Delete files</span>
+        </label>
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="multi-step" checked />
+          <span>🔄 Multi-step</span>
+        </label>
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="restructure" />
+          <span>🔧 Restructure</span>
+        </label>
+        <label class="permission-item">
+          <input type="checkbox" class="perm-check" data-perm="network" />
+          <span>🌐 Network</span>
+        </label>
+      </div>
+    </div>
   </div>
   
   <div class="toolbar">
@@ -617,6 +908,70 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     let messages = [];
     let includeContext = false;
     let selectedModels = ['llama-3.3-70b']; // Default
+    let autonomyLevel = 3; // Default to Full Auto
+    let permissions = {
+      read: true,
+      edit: true,
+      terminal: true,
+      create: true,
+      delete: false,
+      'multi-step': true,
+      restructure: false,
+      network: false
+    };
+
+    // Autonomy panel visibility
+    const autonomyPanel = document.getElementById('autonomyPanel');
+    workflowSelector.addEventListener('change', () => {
+      if (workflowSelector.value === 'agentic') {
+        autonomyPanel.style.display = 'block';
+      } else {
+        autonomyPanel.style.display = 'none';
+      }
+      vscode.postMessage({
+        type: 'changeWorkflow',
+        workflow: workflowSelector.value
+      });
+    });
+
+    // Autonomy level selector
+    document.querySelectorAll('.level-option').forEach(option => {
+      option.addEventListener('click', () => {
+        // Remove active class from all
+        document.querySelectorAll('.level-option').forEach(o => o.classList.remove('active'));
+        // Add to clicked
+        option.classList.add('active');
+        autonomyLevel = parseInt(option.dataset.level);
+        
+        // Auto-enable permissions for higher levels
+        if (autonomyLevel === 3) {
+          document.querySelectorAll('.perm-check').forEach(cb => {
+            if (cb.dataset.perm !== 'delete' && cb.dataset.perm !== 'network') {
+              cb.checked = true;
+              permissions[cb.dataset.perm] = true;
+            }
+          });
+        }
+        
+        vscode.postMessage({
+          type: 'changeAutonomy',
+          level: autonomyLevel,
+          permissions: permissions
+        });
+      });
+    });
+
+    // Permission checkboxes
+    document.querySelectorAll('.perm-check').forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        permissions[checkbox.dataset.perm] = checkbox.checked;
+        vscode.postMessage({
+          type: 'changeAutonomy',
+          level: autonomyLevel,
+          permissions: permissions
+        });
+      });
+    });
 
     // Handle model checkbox changes
     modelCheckboxes.forEach(checkbox => {
@@ -754,11 +1109,23 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
 
-      messagesContainer.innerHTML = messages.map(msg => {
+      messagesContainer.innerHTML = messages.map((msg, index) => {
         const time = new Date(msg.timestamp).toLocaleTimeString([], { 
           hour: '2-digit', 
           minute: '2-digit' 
         });
+        
+        // Check if this is a suggestions message (system role with JSON)
+        if (msg.role === 'system' && msg.content.startsWith('{')) {
+          try {
+            const data = JSON.parse(msg.content);
+            if (data.type === 'suggestions' && data.suggestions) {
+              return renderSuggestions(data.suggestions);
+            }
+          } catch (e) {
+            // Not a suggestions message, render normally
+          }
+        }
         
         let content = escapeHtml(msg.content);
         content = formatCodeBlocks(content);
@@ -785,6 +1152,57 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           setTimeout(() => e.target.textContent = 'Copy', 2000);
         });
       });
+      
+      // Add suggestion button listeners
+      document.querySelectorAll('.suggestion-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const task = btn.dataset.task;
+          const model = btn.dataset.model;
+          vscode.postMessage({
+            type: 'executeSuggestion',
+            task: task,
+            models: model ? [model] : selectedModels
+          });
+        });
+      });
+    }
+    
+    function renderSuggestions(suggestions) {
+      const priorityEmoji = {
+        'high': '🔴',
+        'medium': '🟡',
+        'low': '🟢'
+      };
+      
+      return \`
+        <div class="message assistant">
+          <div class="message-header">
+            <span>💡 Suggested Next Steps</span>
+          </div>
+          <div class="message-content">
+            <p style="margin-bottom: 12px; opacity: 0.8;">Would you like me to help with any of these?</p>
+            <div class="suggestions">
+              \${suggestions.map(s => \`
+                <div class="suggestion suggestion-btn" 
+                     data-task="\${escapeHtml(s.task)}" 
+                     data-model="\${s.model || ''}"
+                     style="border-left: 3px solid \${s.priority === 'high' ? '#f14c4c' : s.priority === 'medium' ? '#cca700' : '#89d185'}">
+                  <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <span>\${priorityEmoji[s.priority] || '🔵'}</span>
+                    <strong>\${escapeHtml(s.title)}</strong>
+                  </div>
+                  <div style="font-size: 11px; opacity: 0.9; margin-bottom: 4px;">
+                    \${escapeHtml(s.description)}
+                  </div>
+                  <div style="font-size: 10px; opacity: 0.7;">
+                    ⚡ \${s.model || 'Auto-select model'}
+                  </div>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        </div>
+      \`;
     }
 
     function escapeHtml(text) {

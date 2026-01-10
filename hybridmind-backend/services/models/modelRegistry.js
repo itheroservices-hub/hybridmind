@@ -6,6 +6,7 @@ const deepseekService = require('./deepseekService');
 const geminiService = require('./geminiService');
 const mistralService = require('./mistralService');
 const xaiService = require('./xaiService');
+const openrouterService = require('./openrouterService');
 const { models } = require('../../config/models');
 
 /**
@@ -21,7 +22,8 @@ class ModelRegistry {
       deepseek: deepseekService,
       gemini: geminiService,
       mistral: mistralService,
-      xai: xaiService
+      xai: xaiService,
+      openrouter: openrouterService
     };
     
     this.modelConfigs = models;
