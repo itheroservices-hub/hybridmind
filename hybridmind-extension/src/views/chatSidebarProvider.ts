@@ -683,8 +683,8 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         <span>⚡ Llama 3.3 70B <span class="badge-free">FREE</span></span>
       </label>
       <label class="model-checkbox">
-        <input type="checkbox" value="mixtral-8x7b" class="model-check" /> 
-        <span>⚡ Mixtral 8x7B <span class="badge-free">FREE</span></span>
+        <input type="checkbox" value="llama-3.1-8b" class="model-check" /> 
+        <span>⚡ Llama 3.1 8B Instant <span class="badge-free">FREE</span></span>
       </label>
       <label class="model-checkbox">
         <input type="checkbox" value="gemini-flash" class="model-check" /> 

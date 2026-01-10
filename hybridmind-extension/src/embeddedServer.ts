@@ -194,7 +194,7 @@ function getAvailableModels() {
   if (config.get('groqApiKey')) {
     models.push(
       { id: 'llama-3.3-70b', provider: 'groq', name: 'Llama 3.3 70B' },
-      { id: 'mixtral-8x7b', provider: 'groq', name: 'Mixtral 8x7B' }
+      { id: 'llama-3.1-8b', provider: 'groq', name: 'Llama 3.1 8B Instant' }
     );
   }
 
@@ -242,7 +242,7 @@ async function runModel(modelId: string, prompt: string, context: vscode.Extensi
   // Map model IDs to actual API model names
   const modelMapping: { [key: string]: string } = {
     'llama-3.3-70b': 'llama-3.3-70b-versatile',
-    'mixtral-8x7b': 'mixtral-8x7b-32768',
+    'llama-3.1-8b': 'llama-3.1-8b-instant',
     'gemini-2.0-flash-exp': 'gemini-2.0-flash-exp',
     'gemini-1.5-pro': 'gemini-1.5-pro',
     'gemini-flash': 'gemini-2.0-flash-exp',
@@ -271,7 +271,7 @@ async function runModel(modelId: string, prompt: string, context: vscode.Extensi
   }
   
   // Route to appropriate provider based on model ID
-  if (modelId.startsWith('llama') || modelId.startsWith('mixtral')) {
+  if (modelId.startsWith('llama')) {
     return runGroq(actualModel, prompt, config.get('groqApiKey') || '');
   } else if (modelId.startsWith('gemini')) {
     return runGemini(actualModel, prompt, config.get('geminiApiKey') || '');

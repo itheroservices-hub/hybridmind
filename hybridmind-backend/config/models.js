@@ -105,16 +105,16 @@ const models = {
     speed: 'ultra-fast',
     description: 'Lightning-fast 70B model, perfect for coding'
   },
-  'mixtral-8x7b': {
+  'llama-3.1-8b': {
     provider: 'groq',
-    name: 'Mixtral 8x7B',
+    name: 'Llama 3.1 8B Instant',
     tier: 'free',
-    maxTokens: 32768,
-    capabilities: ['code-generation', 'analysis', 'multilingual'],
-    strengths: ['ultra-fast', 'multilingual', 'free'],
+    maxTokens: 131072,
+    capabilities: ['code-generation', 'analysis', 'explanation'],
+    strengths: ['ultra-fast', 'free', 'large-context'],
     costTier: 'free',
     speed: 'ultra-fast',
-    description: 'Fast mixture-of-experts model'
+    description: 'Extremely fast 8B model with 128K context'
   },
   'gemini-flash': {
     provider: 'gemini',

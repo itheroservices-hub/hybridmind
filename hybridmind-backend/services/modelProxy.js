@@ -44,7 +44,7 @@ class ModelProxy {
       'mixtral-8x7b': {
         tier: 'free',
         provider: 'groq',
-        apiModel: 'mixtral-8x7b-32768',
+        apiModel: 'llama-3.1-8b-instant',
         contextWindow: 32768,
         cost: 0
       },
