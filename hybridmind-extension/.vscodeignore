@@ -4,6 +4,11 @@ src/**
 tsconfig.json
 .eslintrc.json
 
+# Exclude environment files
+.env
+.env.*
+*.env
+
 # Exclude development dependencies
 node_modules/@types/**
 node_modules/**/test/**
