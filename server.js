@@ -9,6 +9,8 @@ const environment = require('./hybridmind-backend/config/environment');
 const logger = require('./hybridmind-backend/utils/logger');
 const errorHandler = require('./hybridmind-backend/middleware/errorHandler');
 const requestLogger = require('./hybridmind-backend/middleware/requestLogger');
+const { burstLimiter, costLimiter, freeTokenLimiter, proTokenLimiter } = require('./hybridmind-backend/middleware/rateLimiter');
+const { validateLicense } = require('./hybridmind-backend/middleware/licenseValidator');
 
 // Routes
 const modelsRoutes = require('./hybridmind-backend/routes/modelsRoutes');
@@ -19,15 +21,15 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '100kb' })); // Reduced from 10mb to save costs
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // Request logging
 if (environment.enableRequestLogging) {
   app.use(requestLogger);
 }
 
-// Health check
+// Health check (before rate limiting)
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -35,6 +37,46 @@ app.get('/health', (req, res) => {
     environment: environment.nodeEnv
   });
 });
+
+// 💰 COST MONITORING ENDPOINT (Check your daily spend!)
+app.get('/cost-stats', (req, res) => {
+  const { rateLimiter } = require('./hybridmind-backend/middleware/rateLimiter');
+  const stats = rateLimiter.getStats(req.ip || 'default');
+  
+  res.json({
+    success: true,
+    data: {
+      dailyBudget: 2.0,
+      dailySpent: stats.costLastDay.toFixed(4),
+      dailyRemaining: (2.0 - stats.costLastDay).toFixed(4),
+      percentUsed: ((stats.costLastDay / 2.0) * 100).toFixed(1),
+      requestsToday: stats.requestsLastDay,
+      requestsLastHour: stats.requestsLastHour,
+      warning: stats.costLastDay > 1.6 ? '⚠️ Approaching daily budget limit!' : null,
+      resetsIn: Math.ceil((86400000 - (Date.now() % 86400000)) / 3600000) + ' hours'
+    }
+  });
+});
+
+// CRITICAL: Validate licenses BEFORE rate limiting (so Pro users get higher limits)
+app.use('/run', validateLicense);
+app.use('/agent', validateLicense);
+
+// Apply token-based rate limiting based on tier
+app.use('/run', (req, res, next) => {
+  const limiter = req.user?.tier === 'pro' ? proTokenLimiter : freeTokenLimiter;
+  limiter(req, res, next);
+});
+app.use('/agent', (req, res, next) => {
+  const limiter = req.user?.tier === 'pro' ? proTokenLimiter : freeTokenLimiter;
+  limiter(req, res, next);
+});
+
+// CRITICAL: Apply rate limiting to API routes only
+app.use('/run', burstLimiter);
+app.use('/run', costLimiter);
+app.use('/agent', burstLimiter);
+app.use('/agent', costLimiter);
 
 // API Routes
 app.use('/models', modelsRoutes);

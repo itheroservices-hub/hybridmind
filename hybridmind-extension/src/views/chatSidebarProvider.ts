@@ -244,7 +244,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       console.log(`[HybridMind] Calling ${endpoint} on port ${backendPort} (mode: ${workflowMode})`);
       const response = await fetch(`http://localhost:${backendPort}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._licenseManager.getApiHeaders(),
         body: JSON.stringify(requestBody)
       });
 

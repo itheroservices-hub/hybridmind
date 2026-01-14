@@ -177,7 +177,7 @@ export class ChainEngine {
     try {
       const response = await fetch(`http://127.0.0.1:${this.serverPort}/run/single`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.licenseManager.getApiHeaders(),
         body: JSON.stringify({ model, prompt }),
         signal: controller.signal
       });

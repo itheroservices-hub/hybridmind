@@ -69,6 +69,7 @@ const models = {
   'claude-3-haiku': {
     provider: 'anthropic',
     name: 'Claude 3 Haiku',
+    tier: 'pro',  // MOVED TO PRO - too expensive for free tier
     maxTokens: 200000,
     capabilities: ['code-generation', 'simple-analysis', 'explanation'],
     strengths: ['speed', 'cost-effective'],
@@ -207,26 +208,57 @@ const models = {
   },
   
   // OPENROUTER PREMIUM MODELS (Pay-as-you-go)
+  // PREMIUM REASONING MODELS (PRO TIER ONLY)
+  'openai/o1': {
+    provider: 'openrouter',
+    name: 'OpenAI o1',
+    tier: 'pro',  // PRO ONLY
+    maxTokens: 200000,
+    capabilities: ['advanced-reasoning', 'complex-problem-solving', 'mathematics', 'code-generation'],
+    strengths: ['deep-reasoning', 'accuracy', 'complex-tasks'],
+    costTier: 'ultra-premium',
+    speed: 'slow',
+    inputPrice: 15.00,  // $15.00 per 1M input tokens
+    outputPrice: 60.00, // $60.00 per 1M output tokens
+    description: 'OpenAI\'s reasoning model for complex problems'
+  },
+  'openai/o1-mini': {
+    provider: 'openrouter',
+    name: 'OpenAI o1-mini',
+    tier: 'pro',  // PRO ONLY
+    maxTokens: 128000,
+    capabilities: ['reasoning', 'code-generation', 'problem-solving'],
+    strengths: ['reasoning', 'cost-effective', 'fast'],
+    costTier: 'premium',
+    speed: 'medium',
+    inputPrice: 3.00,   // $3.00 per 1M input tokens
+    outputPrice: 12.00, // $12.00 per 1M output tokens
+    description: 'Smaller, faster o1 model for reasoning'
+  },
   'openai/gpt-4o': {
     provider: 'openrouter',
     name: 'GPT-4o',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 128000,
     capabilities: ['code-generation', 'reasoning', 'analysis', 'vision'],
     strengths: ['latest', 'multimodal', 'fast'],
     costTier: 'premium',
     speed: 'fast',
+    inputPrice: 2.50,   // $2.50 per 1M input tokens
+    outputPrice: 10.00, // $10.00 per 1M output tokens
     description: 'Latest GPT-4 via OpenRouter'
   },
   'openai/gpt-4-turbo': {
     provider: 'openrouter',
     name: 'GPT-4 Turbo',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 128000,
     capabilities: ['code-generation', 'analysis', 'refactoring'],
     strengths: ['reasoning', 'large-context', 'speed'],
     costTier: 'premium',
     speed: 'fast',
+    inputPrice: 10.00,  // $10.00 per 1M input tokens
+    outputPrice: 30.00, // $30.00 per 1M output tokens
     description: 'Fast GPT-4 variant via OpenRouter'
   },
   'anthropic/claude-sonnet-4': {
@@ -254,24 +286,28 @@ const models = {
   'google/gemini-2.5-pro': {
     provider: 'openrouter',
     name: 'Gemini 2.5 Pro',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 1000000,
     capabilities: ['code-generation', 'analysis', 'multimodal', 'reasoning'],
     strengths: ['huge-context', 'multimodal', 'latest'],
     costTier: 'medium',
     speed: 'fast',
+    inputPrice: 1.25,   // $1.25 per 1M input tokens
+    outputPrice: 5.00,  // $5.00 per 1M output tokens
     description: 'Latest Gemini Pro with 1M context'
   },
   'google/gemini-2.5-flash': {
     provider: 'openrouter',
     name: 'Gemini 2.5 Flash',
-    tier: 'premium',
+    tier: 'free',  // FREE TIER - Ultra cheap at $0.075/M
     maxTokens: 100000,
     capabilities: ['code-generation', 'analysis', 'multimodal'],
     strengths: ['fast', 'cost-effective', 'latest'],
     costTier: 'low',
     speed: 'ultra-fast',
-    description: 'Latest Gemini Flash model'
+    inputPrice: 0.075,  // $0.075 per 1M input tokens
+    outputPrice: 0.30,  // $0.30 per 1M output tokens
+    description: 'Latest Gemini Flash model - Ultra cheap'
   },
   'x-ai/grok-4': {
     provider: 'openrouter',
@@ -306,6 +342,8 @@ const models = {
     strengths: ['deep-reasoning', 'accuracy', 'open-source'],
     costTier: 'low',
     speed: 'fast',
+    inputPrice: 0.55,   // $0.55 per 1M input tokens
+    outputPrice: 2.19,  // $2.19 per 1M output tokens
     description: 'Latest DeepSeek reasoning model'
   },
   'openai/o3-deep-research': {
@@ -335,12 +373,14 @@ const models = {
   'deepseek/deepseek-r1': {
     provider: 'openrouter',
     name: 'DeepSeek R1',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY - Advanced reasoning
     maxTokens: 64000,
     capabilities: ['advanced-reasoning', 'code-generation', 'mathematics'],
     strengths: ['reasoning', 'open-source', 'cost-effective'],
     costTier: 'low',
     speed: 'fast',
+    inputPrice: 0.55,   // $0.55 per 1M input tokens
+    outputPrice: 2.19,  // $2.19 per 1M output tokens
     description: 'Open-source reasoning rival to o1'
   },
   'deepseek/deepseek-r1-distill-llama-70b': {
@@ -359,56 +399,66 @@ const models = {
   'anthropic/claude-opus-4.5': {
     provider: 'openrouter',
     name: 'Claude Opus 4.5',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY - Most expensive
     maxTokens: 200000,
     capabilities: ['code-generation', 'analysis', 'vision', 'reasoning'],
     strengths: ['intelligence', 'accuracy', 'latest'],
     costTier: 'ultra-premium',
     speed: 'medium',
-    description: 'Latest Claude Opus model'
+    inputPrice: 15.00,  // $15.00 per 1M input tokens
+    outputPrice: 75.00, // $75.00 per 1M output tokens
+    description: 'Latest Claude Opus model - Most intelligent'
   },
   'anthropic/claude-sonnet-4.5': {
     provider: 'openrouter',
     name: 'Claude Sonnet 4.5',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 200000,
     capabilities: ['code-generation', 'analysis', 'vision', 'reasoning'],
     strengths: ['balanced', 'coding', 'latest'],
     costTier: 'premium',
     speed: 'fast',
-    description: 'Latest Claude Sonnet model'
+    inputPrice: 3.00,   // $3.00 per 1M input tokens
+    outputPrice: 15.00, // $15.00 per 1M output tokens
+    description: 'Latest Claude Sonnet model - Best for coding'
   },
   'anthropic/claude-3.5-sonnet': {
     provider: 'openrouter',
     name: 'Claude 3.5 Sonnet',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 200000,
     capabilities: ['code-generation', 'analysis', 'vision', 'reasoning'],
     strengths: ['balanced', 'coding', 'fast'],
     costTier: 'medium',
     speed: 'fast',
+    inputPrice: 3.00,   // $3.00 per 1M input tokens
+    outputPrice: 15.00, // $15.00 per 1M output tokens
     description: 'Best balanced Claude model'
   },
   'anthropic/claude-haiku-4.5': {
     provider: 'openrouter',
     name: 'Claude Haiku 4.5',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 200000,
     capabilities: ['code-generation', 'simple-analysis', 'explanation'],
     strengths: ['speed', 'cost-effective', 'latest'],
     costTier: 'low',
     speed: 'ultra-fast',
+    inputPrice: 0.80,   // $0.80 per 1M input tokens
+    outputPrice: 4.00,  // $4.00 per 1M output tokens
     description: 'Latest fastest Claude model'
   },
   'anthropic/claude-3-haiku': {
     provider: 'openrouter',
     name: 'Claude 3 Haiku',
-    tier: 'premium',
+    tier: 'pro',  // MOVED TO PRO - $0.25/$1.25/M too expensive for free margins
     maxTokens: 200000,
     capabilities: ['code-generation', 'simple-analysis', 'explanation'],
     strengths: ['speed', 'cost-effective', 'fast'],
     costTier: 'low',
     speed: 'ultra-fast',
+    inputPrice: 0.25,   // $0.25 per 1M input tokens
+    outputPrice: 1.25,  // $1.25 per 1M output tokens
     description: 'Fastest Claude model'
   },
   
@@ -416,23 +466,27 @@ const models = {
   'openai/gpt-4o-mini': {
     provider: 'openrouter',
     name: 'GPT-4o Mini',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 128000,
     capabilities: ['code-generation', 'analysis', 'vision'],
     strengths: ['cost-effective', 'fast', 'multimodal'],
     costTier: 'low',
     speed: 'ultra-fast',
+    inputPrice: 0.15,   // $0.15 per 1M input tokens
+    outputPrice: 0.60,  // $0.60 per 1M output tokens
     description: 'Cheaper GPT-4o for simple tasks'
   },
   'openai/gpt-3.5-turbo': {
     provider: 'openrouter',
     name: 'GPT-3.5 Turbo',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 16385,
     capabilities: ['code-generation', 'simple-analysis'],
     strengths: ['ultra-cheap', 'fast', 'reliable'],
     costTier: 'very-low',
     speed: 'ultra-fast',
+    inputPrice: 0.50,   // $0.50 per 1M input tokens
+    outputPrice: 1.50,  // $1.50 per 1M output tokens
     description: 'Most cost-effective OpenAI model'
   },
   
@@ -440,23 +494,27 @@ const models = {
   'meta-llama/llama-3.3-70b-instruct': {
     provider: 'openrouter',
     name: 'Llama 3.3 70B Instruct',
-    tier: 'free',
+    tier: 'free',  // FREE TIER - Excellent value at $0.18/M
     maxTokens: 128000,
     capabilities: ['code-generation', 'analysis', 'reasoning'],
     strengths: ['free', 'large-context', 'capable'],
     costTier: 'very-low',
     speed: 'fast',
-    description: 'Latest Llama 3.3 via OpenRouter'
+    inputPrice: 0.18,   // $0.18 per 1M input tokens
+    outputPrice: 0.18,  // $0.18 per 1M output tokens
+    description: 'Latest Llama 3.3 via OpenRouter - Nearly free'
   },
   'meta-llama/llama-3.1-405b-instruct': {
     provider: 'openrouter',
     name: 'Llama 3.1 405B Instruct',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY - Expensive
     maxTokens: 128000,
     capabilities: ['code-generation', 'reasoning', 'analysis'],
     strengths: ['massive-model', 'capable', 'open-source'],
     costTier: 'medium',
     speed: 'medium',
+    inputPrice: 2.70,   // $2.70 per 1M input tokens
+    outputPrice: 2.70,  // $2.70 per 1M output tokens
     description: 'Largest Llama model, very capable'
   },
   
@@ -464,34 +522,40 @@ const models = {
   'mistralai/mistral-large': {
     provider: 'openrouter',
     name: 'Mistral Large',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY
     maxTokens: 128000,
     capabilities: ['code-generation', 'reasoning', 'multilingual'],
     strengths: ['reasoning', 'multilingual', 'large-context'],
     costTier: 'medium',
     speed: 'fast',
+    inputPrice: 2.00,   // $2.00 per 1M input tokens
+    outputPrice: 6.00,  // $6.00 per 1M output tokens
     description: 'Mistral\'s flagship model'
   },
   'mistralai/mistral-small-3.2-24b-instruct': {
     provider: 'openrouter',
     name: 'Mistral Small 3.2',
-    tier: 'premium',
+    tier: 'free',  // FREE TIER - Cheap at $0.20/M
     maxTokens: 32768,
     capabilities: ['code-generation', 'analysis'],
     strengths: ['cost-effective', 'fast', 'efficient'],
     costTier: 'low',
     speed: 'ultra-fast',
+    inputPrice: 0.20,   // $0.20 per 1M input tokens
+    outputPrice: 0.60,  // $0.60 per 1M output tokens
     description: 'Fast and cheap Mistral variant'
   },
   'mistralai/codestral-2508': {
     provider: 'openrouter',
     name: 'Codestral 2508',
-    tier: 'premium',
+    tier: 'pro',  // PRO ONLY - Specialized
     maxTokens: 32768,
     capabilities: ['code-generation', 'code-completion', 'fill-in-middle'],
     strengths: ['coding-specialist', 'fast', 'accurate'],
     costTier: 'low',
     speed: 'fast',
+    inputPrice: 0.30,   // $0.30 per 1M input tokens
+    outputPrice: 0.90,  // $0.90 per 1M output tokens
     description: 'Latest Codestral coding model'
   },
   'mistralai/devstral-2512': {
@@ -545,12 +609,14 @@ const models = {
   'qwen/qwen-2.5-coder-32b-instruct': {
     provider: 'openrouter',
     name: 'Qwen 2.5 Coder 32B',
-    tier: 'premium',
+    tier: 'free',  // FREE TIER - Cheap at $0.18/M
     maxTokens: 32768,
     capabilities: ['code-generation', 'debugging', 'refactoring'],
     strengths: ['coding-specialist', 'multilingual', 'cheap'],
     costTier: 'very-low',
     speed: 'fast',
+    inputPrice: 0.18,   // $0.18 per 1M input tokens
+    outputPrice: 0.18,  // $0.18 per 1M output tokens
     description: 'Alibaba\'s specialized coding model'
   },
   'qwen/qwen3-coder-plus': {
@@ -562,18 +628,50 @@ const models = {
     strengths: ['coding-specialist', 'enhanced', 'multilingual'],
     costTier: 'low',
     speed: 'fast',
+    inputPrice: 0.40,   // $0.40 per 1M input tokens
+    outputPrice: 0.40,  // $0.40 per 1M output tokens
     description: 'Enhanced Qwen 3 coding model'
   },
   'qwen/qwen3-coder-flash': {
     provider: 'openrouter',
     name: 'Qwen 3 Coder Flash',
-    tier: 'premium',
+    tier: 'free',  // FREE TIER - Ultra cheap at $0.10/M
     maxTokens: 32768,
     capabilities: ['code-generation', 'debugging'],
     strengths: ['speed', 'coding-specialist', 'efficient'],
     costTier: 'very-low',
     speed: 'ultra-fast',
+    inputPrice: 0.10,   // $0.10 per 1M input tokens
+    outputPrice: 0.10,  // $0.10 per 1M output tokens
     description: 'Fast Qwen 3 coding model'
+  },
+  
+  // More cutting-edge models
+  'x-ai/grok-2-1212': {
+    provider: 'openrouter',
+    name: 'Grok 2',
+    tier: 'premium',
+    maxTokens: 131072,
+    capabilities: ['code-generation', 'reasoning', 'real-time', 'vision'],
+    strengths: ['up-to-date', 'reasoning', 'multimodal'],
+    costTier: 'medium',
+    speed: 'fast',
+    inputPrice: 2.00,   // $2.00 per 1M input tokens
+    outputPrice: 10.00, // $10.00 per 1M output tokens
+    description: 'Latest Grok with vision and real-time data'
+  },
+  'perplexity/sonar-pro': {
+    provider: 'openrouter',
+    name: 'Perplexity Sonar Pro',
+    tier: 'premium',
+    maxTokens: 127072,
+    capabilities: ['real-time-search', 'code-generation', 'research'],
+    strengths: ['internet-access', 'up-to-date', 'research'],
+    costTier: 'medium',
+    speed: 'medium',
+    inputPrice: 3.00,   // $3.00 per 1M input tokens
+    outputPrice: 15.00, // $15.00 per 1M output tokens
+    description: 'Perplexity with real-time internet search'
   }
 };
 
@@ -581,43 +679,60 @@ const models = {
 const modelSelectionStrategies = {
   // Best model for specific tasks - OpenRouter only
   taskBased: {
-    'code-review': ['anthropic/claude-opus-4.5', 'openai/gpt-4o', 'deepseek/deepseek-r1'],
-    'refactoring': ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'qwen/qwen3-coder-plus'],
+    'code-review': ['anthropic/claude-opus-4.5', 'openai/o1', 'anthropic/claude-sonnet-4.5'],
+    'refactoring': ['anthropic/claude-3.5-sonnet', 'anthropic/claude-sonnet-4.5', 'qwen/qwen3-coder-plus'],
     'explanation': ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-2.5-pro'],
-    'optimization': ['deepseek/deepseek-r1', 'openai/gpt-4-turbo', 'anthropic/claude-opus-4.5'],
+    'optimization': ['deepseek/deepseek-r1', 'openai/o1-mini', 'anthropic/claude-opus-4.5'],
     'debugging': ['qwen/qwen3-coder-plus', 'openai/gpt-4o', 'anthropic/claude-opus-4.5'],
     'documentation': ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'mistralai/mistral-large'],
-    'testing': ['openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-3.5-sonnet'],
-    'quick-fix': ['meta-llama/llama-3.3-70b-instruct', 'openai/gpt-3.5-turbo', 'mistralai/mistral-small-3.2-24b-instruct'],
-    'multilingual': ['qwen/qwen3-coder-plus', 'mistralai/mistral-large', 'google/gemini-2.5-pro']
+    'testing': ['openai/gpt-4o-mini', 'meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-3-haiku'],
+    'quick-fix': ['meta-llama/llama-3.3-70b-instruct', 'deepseek/deepseek-r1-distill-llama-70b', 'google/gemini-2.5-flash'],
+    'multilingual': ['qwen/qwen3-coder-plus', 'mistralai/mistral-large', 'google/gemini-2.5-pro'],
+    'reasoning': ['openai/o1', 'deepseek/deepseek-r1', 'openai/o1-mini'],
+    'complex-problem-solving': ['openai/o1', 'anthropic/claude-opus-4.5', 'deepseek/deepseek-r1'],
+    'research': ['perplexity/sonar-pro', 'openai/gpt-4o', 'google/gemini-2.5-pro']
   },
   
   // Cost-optimized chains (ultra-low cost) - OpenRouter only
   costOptimized: {
-    planner: 'meta-llama/llama-3.3-70b-instruct',
-    executor: 'deepseek/deepseek-r1-distill-llama-70b',
-    reviewer: 'mistralai/mistral-small-3.2-24b-instruct'
+    planner: 'deepseek/deepseek-r1-distill-llama-70b',  // $0.09/M
+    executor: 'meta-llama/llama-3.3-70b-instruct',       // $0.18/M
+    reviewer: 'mistralai/mistral-small-3.2-24b-instruct' // $0.20/M
   },
   
-  // Quality-optimized chains (premium models) - OpenRouter only
+  // Quality-optimized chains (best models) - OpenRouter only
   qualityOptimized: {
-    planner: 'openai/gpt-4o',
-    executor: 'anthropic/claude-sonnet-4.5',
-    reviewer: 'anthropic/claude-opus-4.5'
+    planner: 'openai/o1',                         // $15/$60/M
+    executor: 'anthropic/claude-sonnet-4.5',      // $3/$15/M
+    reviewer: 'anthropic/claude-opus-4.5'         // $15/$75/M
   },
   
-  // Balanced chains - OpenRouter only
+  // Balanced chains (best value) - OpenRouter only
   balanced: {
-    planner: 'meta-llama/llama-3.3-70b-instruct',
-    executor: 'anthropic/claude-3.5-sonnet',
-    reviewer: 'mistralai/mistral-large'
+    planner: 'meta-llama/llama-3.3-70b-instruct',  // $0.18/M
+    executor: 'anthropic/claude-3.5-sonnet',       // $3/$15/M
+    reviewer: 'openai/gpt-4o'                      // $2.50/$10/M
   },
   
   // Speed-optimized chains (ultra-fast) - OpenRouter only
   speedOptimized: {
-    planner: 'meta-llama/llama-3.3-70b-instruct',
-    executor: 'google/gemini-2.5-flash',
-    reviewer: 'anthropic/claude-3-haiku'
+    planner: 'google/gemini-2.5-flash',            // $0.075/$0.30/M
+    executor: 'anthropic/claude-3-haiku',          // $0.25/$1.25/M
+    reviewer: 'openai/gpt-4o-mini'                 // $0.15/$0.60/M
+  },
+  
+  // Reasoning-focused chains - OpenRouter only
+  reasoningOptimized: {
+    planner: 'deepseek/deepseek-r1',               // $0.55/$2.19/M
+    executor: 'openai/o1-mini',                    // $3/$12/M
+    reviewer: 'openai/o1'                          // $15/$60/M
+  },
+  
+  // Coding-specialized chains - OpenRouter only
+  codingOptimized: {
+    planner: 'qwen/qwen3-coder-flash',             // $0.10/M
+    executor: 'qwen/qwen3-coder-plus',             // $0.40/M
+    reviewer: 'mistralai/codestral-2508'           // $0.30/$0.90/M
   }
 };
 

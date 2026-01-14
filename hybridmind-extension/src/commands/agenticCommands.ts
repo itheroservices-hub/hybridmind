@@ -4,6 +4,7 @@
  */
 
 import * as vscode from 'vscode';
+import { LicenseManager } from '../auth/licenseManager';
 import { AgentTools } from '../agents/agentTools';
 import { AgenticExecutor } from '../agents/agenticExecutor';
 import { agentClient } from '../agents/agentClient';
@@ -14,9 +15,10 @@ import { toolExecutor } from '../agents/toolExecutor';
  */
 async function callAI(serverPort: number, modelId: string, prompt: string): Promise<string> {
   try {
+    const licenseManager = LicenseManager.getInstance();
     const response = await fetch(`http://localhost:${serverPort}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: licenseManager.getApiHeaders(),
       body: JSON.stringify({
         model: modelId,
         messages: [

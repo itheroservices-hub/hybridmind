@@ -1,22 +1,16 @@
 /**
- * HybridMind v1.1 - Rate Limiter Middleware
- * Prevents abuse and manages API quotas
+ * HybridMind v1.5 - Rate Limiter Middleware
+ * CRITICAL: Prevents abuse and manages API quotas to protect against excessive costs
+ * STUDENT BUDGET MODE: Very conservative limits to protect API costs
  */
 
 const logger = require('../utils/logger');
 
 class RateLimiter {
-class RateLimiter {
   constructor() {
     this.requests = new Map();
     this.costs = new Map();
-    this.hashTable = {};
-    this.CLEANUP_INTERVAL = 60000; // 1 minute
-    setInterval(() => this.cleanup(), this.CLEANUP_INTERVAL);
-  }
-}  constructor() {
-    this.requests = new Map();
-    this.costs = new Map();
+    this.tokens = new Map(); // Track token usage
     this.CLEANUP_INTERVAL = 60000; // 1 minute
     
     // Start cleanup timer
@@ -31,15 +25,109 @@ class RateLimiter {
    * @param {string} options.message - Error message
    */
   createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too many requests' }) {
-function extractRateLimitingLogic() {
-  // Extracted logic will be placed here
-}
+    return (req, res, next) => {
+      const key = this.getKey(req);
+      const now = Date.now();
+      const windowStart = now - windowMs;
 
-function createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too many requests' }) {
-  return (req, res, next) => {
-    // Rate limiting logic
-  };
-}
+      // Get requests for this key
+      let timestamps = this.requests.get(key) || [];
+      
+      // Filter requests within current window
+      timestamps = timestamps.filter(time => time > windowStart);
+
+      // Check if limit exceeded
+      if (timestamps.length >= maxRequests) {
+        const oldestTimestamp = timestamps[0];
+        const resetIn = Math.ceil((windowMs - (now - oldestTimestamp)) / 1000);
+
+        logger.warn(`Rate limit exceeded for ${key}: ${timestamps.length}/${maxRequests} requests`);
+
+        return res.status(429).json({
+          error: 'Rate limit exceeded',
+          message,
+          limit: maxRequests,
+          current: timestamps.length,
+          resetIn,
+          retryAfter: resetIn
+        });
+      }
+
+      // Add current request
+      timestamps.push(now);
+      this.requests.set(key, timestamps);
+
+      // Calculate usage percentage
+      const usagePercent = Math.round((timestamps.length / maxRequests) * 100);
+      const tier = 'free'; // TODO: Get from req.user?.tier
+
+      // Set rate limit headers with usage info
+      res.set({
+        'X-RateLimit-Limit': maxRequests,
+        'X-RateLimit-Remaining': maxRequests - timestamps.length,
+        'X-RateLimit-Reset': Math.ceil((now + windowMs) / 1000),
+        'X-Usage-Percent': usagePercent,
+        'X-Usage-Tier': tier,
+        'X-Usage-Warning': usagePercent >= 80 ? 'true' : 'false'
+      });
+
+      next();
+    };
+  }
+
+  /**
+   * Token-based rate limiting (for monthly quotas)
+   * @param {Object} options - Token limit options
+   */
+  createTokenLimiter({ maxTokensPerMonth = 8000, message = 'Monthly token limit exceeded' }) {
+    return (req, res, next) => {
+      const key = this.getKey(req);
+      const now = Date.now();
+      const monthStart = now - (30 * 86400000); // 30 days
+
+      // Get token usage for this key
+      let tokenEntries = this.tokens.get(key) || [];
+      
+      // Filter tokens within last 30 days
+      tokenEntries = tokenEntries.filter(entry => entry.timestamp > monthStart);
+
+      // Calculate total tokens used
+      const totalTokens = tokenEntries.reduce((sum, entry) => sum + entry.tokens, 0);
+
+      // Check if limit exceeded
+      if (totalTokens >= maxTokensPerMonth) {
+        const usagePercent = Math.round((totalTokens / maxTokensPerMonth) * 100);
+        
+        return res.status(429).json({
+          error: 'Token limit exceeded',
+          message,
+          monthlyLimit: maxTokensPerMonth,
+          tokensUsed: totalTokens,
+          usagePercent,
+          resetDate: new Date(monthStart + (30 * 86400000)).toISOString()
+        });
+      }
+
+      // Store for response tracking (will be updated after request)
+      req.tokenLimiter = {
+        key,
+        maxTokensPerMonth,
+        totalTokens,
+        entries: tokenEntries
+      };
+
+      // Set usage headers
+      const usagePercent = Math.round((totalTokens / maxTokensPerMonth) * 100);
+      res.set({
+        'X-Token-Limit': maxTokensPerMonth,
+        'X-Tokens-Used': totalTokens,
+        'X-Tokens-Remaining': maxTokensPerMonth - totalTokens,
+        'X-Usage-Percent': usagePercent,
+        'X-Usage-Warning': usagePercent >= 80 ? 'true' : 'false'
+      });
+
+      next();
+    };
   }
 
   /**
@@ -59,20 +147,17 @@ function createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too m
       costEntries = costEntries.filter(entry => entry.timestamp > dayStart);
 
       // Calculate total cost
-      const totalCost = costEntries.reduce((sum, entry) => sum + entry.cost, 0);
-
-      // Estimate cost of current request (rough estimate)
-      const estimatedCost = this.estimateRequestCost(req);
-
-      // Check if adding this request would exceed limit
-      if (totalCost + estimatedCost > maxCostPerDay) {
+      coconst usagePercent = Math.round((totalCost / maxCostPerDay) * 100);
+        
         return res.status(429).json({
           error: 'Cost limit exceeded',
           message,
           dailyLimit: maxCostPerDay,
           currentCost: totalCost.toFixed(4),
           estimatedCost: estimatedCost.toFixed(4),
-          resetIn: Math.ceil((86400000 - (now % 86400000)) / 1000)
+          resetIn: Math.ceil((86400000 - (now % 86400000)) / 1000),
+          usagePercent,
+          upgradeMessage: '💎 Upgrade to Pro for higher limits: $50/day instead of $2/day!'
         });
       }
 
@@ -80,6 +165,17 @@ function createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too m
       req.estimatedCost = estimatedCost;
       req.recordCost = (actualCost) => {
         costEntries.push({ timestamp: now, cost: actualCost });
+        this.costs.set(key, costEntries);
+      };
+
+      const usagePercent = Math.round(((totalCost + estimatedCost) / maxCostPerDay) * 100);
+
+      res.set({
+        'X-Cost-Limit': maxCostPerDay,
+        'X-Cost-Used': totalCost.toFixed(4),
+        'X-Cost-Remaining': (maxCostPerDay - totalCost).toFixed(4),
+        'X-Cost-Percent': usagePercent,
+        'X-Cost-Warning': usagePercent >= 80 ? 'true' : 'false'
         this.costs.set(key, costEntries);
       };
 
@@ -95,40 +191,42 @@ function createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too m
 
   /**
    * Estimate request cost based on parameters
+   * UPDATED: OpenRouter-only pricing (Jan 2026)
    */
   estimateRequestCost(req) {
     const modelCosts = {
-      // Premium models
-      'gpt-4': 0.03 / 1000,
-      'gpt-4-turbo': 0.01 / 1000,
-      'gpt-4o': 0.0025 / 1000,
-      'claude-3-opus': 0.015 / 1000,
-      'claude-3-sonnet': 0.003 / 1000,
-      'claude-3-5-sonnet': 0.003 / 1000,
-      'claude-3-5-sonnet-20241022': 0.003 / 1000,
-      'gemini-pro': 0.00025 / 1000,
-      'gemini-1.5-pro': 0.00125 / 1000,
-      'gemini-2.0-flash-exp': 0.0,
-      'qwen-max': 0.0003 / 1000,
+      // OpenRouter models (cost per 1M tokens)
+      'meta-llama/llama-3.3-70b-instruct': 0.00, // FREE!
+      'google/gemini-2.5-flash': 0.10,
+      'google/gemini-2.5-pro': 1.25,
+      'anthropic/claude-3.5-sonnet': 3.00,
+      'anthropic/claude-opus-4.5': 15.00,
+      'openai/gpt-4o': 5.00,
+      'deepseek/deepseek-r1': 0.55,
+      'qwen/qwen3-coder-plus': 0.40,
+      'x-ai/grok-4': 10.00,
+      'mistralai/mistral-large': 2.00,
       
-      // Free tier models (via Groq/OpenRouter)
-      'llama-3.3-70b-versatile': 0.0, // Free via Groq
-      'deepseek-chat': 0.0, // Free tier
-      'deepseek-reasoner': 0.0, // Free tier
-      'deepseek-coder': 0.0002 / 1000,
-      'groq-llama3-70b': 0.0,
-      
-      // OpenRouter pricing
-      'openrouter/anthropic/claude-3.5-sonnet': 0.003 / 1000,
-      'openrouter/google/gemini-2.0-flash-exp': 0.0
+      // Fallback for unknown models
+      'default': 2.00
     };
 
-    const model = req.body.model || 'gpt-4';
-    const tokens = req.body.maxTokens || 4000;
-    const costPerToken = modelCosts[model] || 0.01 / 1000;
-
-    // Rough estimate: 2x for input + output
-    return tokens * costPerToken * 2;
+    const model = req.body.model || 'meta-llama/llama-3.3-70b-instruct';
+    const code = req.body.code || '';
+    const prompt = req.body.prompt || req.body.goal || '';
+    
+    // Estimate tokens (rough: 1 token ≈ 4 characters)
+    const inputTokens = Math.ceil((code.length + prompt.length) / 4);
+    const outputTokens = req.body.maxTokens || 4000; // Conservative estimate
+    
+    const costPerMillionTokens = modelCosts[model] || modelCosts.default;
+    
+    // Total cost = (input + output) / 1M * cost per 1M
+    const estimatedCost = ((inputTokens + outputTokens) / 1000000) * costPerMillionTokens;
+    
+    logger.debug(`Cost estimate for ${model}: $${estimatedCost.toFixed(6)} (${inputTokens + outputTokens} tokens)`);
+    
+    return estimatedCost;
   }
 
   /**
@@ -196,30 +294,43 @@ const rateLimiter = new RateLimiter();
 module.exports = {
   rateLimiter,
   
-  // Free tier: 200 requests/hour (increased for autonomous workflows)
+  // Free tier: 8k tokens/month
+  freeTokenLimiter: rateLimiter.createTokenLimiter({
+    maxTokensPerMonth: 8000,
+    message: '⚠️ Free tier limit: 8,000 tokens/month. Upgrade to Premium for 128k tokens!'
+  }),
+
+  // Pro tier: 128k tokens/month ($19.99/month)
+  proTokenLimiter: rateLimiter.createTokenLimiter({
+    maxTokensPerMonth: 128000,
+    message: '⚠️ Premium tier limit: 128,000 tokens/month reached.'
+  }),
+
+  // Free tier: 50 requests/hour (burst protection)
   freeTierLimiter: rateLimiter.createLimiter({
     windowMs: 3600000,
-    maxRequests: 200,
-    message: 'Free tier limit: 200 requests/hour. Upgrade to Pro for higher limits.'
+    maxRequests: 50,
+    message: '⚠️ Free tier limit: 50 requests/hour.'
   }),
 
-  // Pro tier: 1000 requests/hour
+  // Pro tier: 500 requests/hour (burst protection)
   proTierLimiter: rateLimiter.createLimiter({
     windowMs: 3600000,
-    maxRequests: 1000,
-    message: 'Pro tier limit: 1000 requests/hour reached.'
+    maxRequests: 500,
+    message: 'Pro tier limit: 500 requests/hour reached.'
   }),
 
-  // Cost limiter: $10/day max
+  // Cost limiter: $2/day max (VERY CONSERVATIVE for student!)
+  // When you get 10 premium users at $10/month, you can increase this to $50/day
   costLimiter: rateLimiter.createCostLimiter({
-    maxCostPerDay: 10.0,
-    message: 'Daily cost limit reached. Your usage will reset in 24 hours.'
+    maxCostPerDay: 2.0, // Only $2/day until you have revenue!
+    message: '🚨 DAILY BUDGET LIMIT: $2/day reached! This protects your student budget. Resets in 24hrs.'
   }),
 
-  // Burst protection: 30 requests per minute (allows autonomous multi-step)
+  // Burst protection: 10 requests per minute (prevents accidental runaway costs)
   burstLimiter: rateLimiter.createLimiter({
     windowMs: 60000,
-    maxRequests: 30,
-    message: 'Too many requests. Please slow down.'
+    maxRequests: 10,
+    message: '⚠️ Slow down! Max 10 requests/minute to protect your API costs.'
   })
 };

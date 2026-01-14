@@ -8,8 +8,8 @@ import { LicenseManager } from '../auth/licenseManager';
 
 export class InlineChatProvider {
   private _serverPort: number;
+  private _currentDecoration: vscode.Disposable | null = null;
   private _licenseManager: LicenseManager;
-  private _currentDecoration: vscode.TextEditorDecorationType | undefined;
 
   constructor(serverPort: number) {
     this._serverPort = serverPort;
@@ -63,14 +63,14 @@ export class InlineChatProvider {
       title: 'HybridMind is thinking...',
       cancellable: false
     }, async (progress) => {
-      try {
+      try {this._licenseManager.getApiHeaders()
         // Build the full prompt
         const fullPrompt = this._buildPrompt(prompt, action.value, selectedText, editor.document);
 
         // Call API
         const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this._licenseManager.getApiHeaders(),
           body: JSON.stringify({
             model: 'llama-3.3-70b',
             prompt: fullPrompt
@@ -263,7 +263,7 @@ export class InlineChatProvider {
 
         const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this._licenseManager.getApiHeaders(),
           body: JSON.stringify({
             model: 'llama-3.1-70b',
             prompt: fullPrompt
@@ -272,6 +272,12 @@ export class InlineChatProvider {
 
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
+        }
+
+        // Update usage tracker from response headers
+        const usageModule = await import('../utils/usageTracker');
+        if (usageModule && (global as any).hybridmindUsageTracker) {
+          (global as any).hybridmindUsageTracker.updateFromHeaders(response.headers);
         }
 
         const data: any = await response.json();

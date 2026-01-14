@@ -1,9 +1,9 @@
 {
   "name": "hybridmind",
   "displayName": "HybridMind AI Assistant",
-  "description": "Multi-model AI platform with 25+ models including Claude 4.5, Gemini 2.5, DeepSeek R1, Grok 4, and specialized coding models. Free tier + premium models via OpenRouter.",
+  "description": "Autonomous AI coding agent with 40+ premium models via OpenRouter. 4-tier pricing (Free, Pro $19, Pro Plus $49, Enterprise). Transparent costs ($0.09-$75/M tokens). Includes o1, Claude 4.5, Gemini 2.5, DeepSeek R1.",
   "publisher": "hybridmind",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
@@ -74,6 +74,11 @@
         "command": "hybridmind.manageLicense",
         "title": "HybridMind: Manage License",
         "icon": "$(key)"
+      },
+      {
+        "command": "hybridmind.showUsageDetails",
+        "title": "HybridMind: Show Usage Statistics",
+        "icon": "$(pulse)"
       },
       {
         "command": "hybridmind.quickChat",

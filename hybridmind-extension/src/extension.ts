@@ -5,16 +5,28 @@ import { ChatSidebarProvider } from './views/chatSidebarProvider';
 import { InlineChatProvider } from './views/inlineChatProvider';
 import { LicenseManager } from './auth/licenseManager';
 import { registerAgenticCommands } from './commands/agenticCommands';
+import { UsageTracker } from './utils/usageTracker';
 
 let serverPort: number | null = null;
 let licenseManager: LicenseManager;
 let inlineChatProvider: InlineChatProvider;
+let usageTracker: UsageTracker;
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('HybridMind extension activating...');
 
   // Initialize license manager
   licenseManager = LicenseManager.getInstance();
+
+  // Initialize usage tracker
+  usageTracker = new UsageTracker();
+  context.subscriptions.push(usageTracker.getStatusBarItem());
+  
+  // Make tracker globally available for API calls
+  (global as any).hybridmindUsageTracker = usageTracker;
+
+  // Reset warning flag every hour
+  setInterval(() => usageTracker.resetWarning(), 3600000);
 
   // Start the embedded server automatically
   try {
@@ -30,7 +42,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Check if backend has models available (backend reads from .env)
   try {
-    const response = await fetch(`http://localhost:${serverPort}/models`);
+    const response = await fetch(`http://localhost:${serverPort}/models`, {
+      headers: licenseManager.getApiHeaders()
+    });
     const result = await response.json() as any;
     const models = result.data?.models || [];
     
@@ -129,6 +143,61 @@ function registerCommands(context: vscode.ExtensionContext) {
         case 'upgrade':
           vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.dev/pricing'));
           break;
+      }
+    })
+  );
+
+  // Show Usage Details
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.showUsageDetails', async () => {
+      if (!serverPort) {
+        vscode.window.showErrorMessage('Server not running');
+        return;
+      }
+
+      try {
+        const response = await fetch(`http://localhost:${serverPort}/cost-stats`, {
+          headers: licenseManager.getApiHeaders()
+        });
+        const data = await response.json() as any;
+        const stats = data.data;
+
+        const tier = licenseManager.isPro() ? 'Pro' : 'Free';
+        const limits = tier === 'Pro' 
+          ? { requests: '500/hour', cost: '$50/day' }
+          : { requests: '50/hour', cost: '$2/day' };
+
+        const message = `
+**HybridMind Usage Statistics**
+
+**Your Tier:** ${tier} ${tier === 'Pro' ? '💎' : '🆓'}
+
+**Requests:**
+- Last Hour: ${stats.requestsLastHour}
+- Today: ${stats.requestsToday}
+- Limit: ${limits.requests}
+
+**Cost Budget:**
+- Used Today: $${stats.dailySpent}
+- Remaining: $${stats.dailyRemaining}
+- Daily Limit: ${limits.cost}
+- Usage: ${stats.percentUsed}%
+
+**Resets in:** ${stats.resetsIn}
+
+${stats.warning || ''}
+${tier === 'Free' && parseFloat(stats.percentUsed) > 50 ? '\n💡 **Upgrade to Pro** for 10x higher limits!' : ''}
+        `.trim();
+
+        const action = tier === 'Free' && parseFloat(stats.percentUsed) > 50
+          ? await vscode.window.showInformationMessage(message, '💎 Upgrade to Pro', 'OK')
+          : await vscode.window.showInformationMessage(message, 'OK');
+
+        if (action === '💎 Upgrade to Pro') {
+          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.dev/pricing'));
+        }
+      } catch (error: any) {
+        vscode.window.showErrorMessage(`Failed to get usage stats: ${error.message}`);
       }
     })
   );
@@ -245,7 +314,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         try {
           const response = await fetch(`http://localhost:${serverPort}/agent/execute`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: licenseManager.getApiHeaders(),
             body: JSON.stringify({
               goal: `Refactor this code: ${refactorGoal}\n\nCode:\n${selectedText}`,
               code: selectedText
@@ -448,7 +517,7 @@ async function runPrompt(model: string, prompt: string) {
   try {
     const response = await fetch(`http://127.0.0.1:${serverPort}/run/single`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: licenseManager.getApiHeaders(),
       body: JSON.stringify({ model, prompt })
     });
 

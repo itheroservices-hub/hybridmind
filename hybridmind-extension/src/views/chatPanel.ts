@@ -281,7 +281,7 @@ export class ChatPanel {
 
     const response = await fetch(`http://localhost:${this._serverPort}/api/models/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this._licenseManager.getApiHeaders(),
       body: JSON.stringify({
         model: this._currentModel,
         messages: context,

@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 
-export type LicenseTier = 'free' | 'pro';
+export type LicenseTier = 'free' | 'pro' | 'pro-plus' | 'enterprise';
 
 export interface LicenseStatus {
   valid: boolean;
@@ -64,16 +64,16 @@ export class LicenseManager {
 
       const data = await response.json() as { valid: boolean; tier: string; expiresAt?: string };
 
-      if (data.valid && data.tier === 'pro') {
-        this.tier = 'pro';
+      if (data.valid && ['pro', 'pro-plus', 'enterprise'].includes(data.tier)) {
+        this.tier = data.tier as LicenseTier;
         this.licenseKey = licenseToVerify;
         this.lastVerified = new Date();
         
         const status: LicenseStatus = {
           valid: true,
-          tier: 'pro',
+          tier: this.tier,
           expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
-          features: this.getProFeatures()
+          features: this.getFeaturesForTier(this.tier)
         };
 
         this.verificationCache = status;
@@ -104,15 +104,30 @@ export class LicenseManager {
 
 
   getModelLimit(): number {
-    return this.tier === 'pro' ? 4 : 2;
+    switch (this.tier) {
+      case 'enterprise': return 10;
+      case 'pro-plus': return 6;
+      case 'pro': return 4;
+      default: return 2;
+    }
   }
 
   getContextLimit(): number {
-    return this.tier === 'pro' ? 128000 : 8000;
+    switch (this.tier) {
+      case 'enterprise': return 2000000;  // 2M
+      case 'pro-plus': return 1000000;    // 1M
+      case 'pro': return 128000;          // 128K
+      default: return 8000;               // 8K
+    }
   }
 
   getRateLimit(): number {
-    return this.tier === 'pro' ? 1000 : 100; // requests per hour
+    switch (this.tier) {
+      case 'enterprise': return 5000;   // 5K per hour
+      case 'pro-plus': return 1000;     // 1K per hour
+      case 'pro': return 200;           // 200 per hour
+      default: return 20;               // 20 per hour
+    }
   }
 
   private isCacheValid(): boolean {
@@ -163,17 +178,82 @@ export class LicenseManager {
     ];
   }
 
+  private getProPlusFeatures(): string[] {
+    return [
+      ...this.getProFeatures(),
+      '6-model-chains',
+      'context-1m',
+      'priority-routing',
+      'team-collaboration',
+      'api-access',
+      'extended-history',
+      'batch-processing'
+    ];
+  }
+
+  private getEnterpriseFeatures(): string[] {
+    return [
+      ...this.getProPlusFeatures(),
+      '10-model-chains',
+      'context-2m',
+      'sla-guarantee',
+      'white-label',
+      'custom-integration',
+      'dedicated-account-manager',
+      'unlimited-tokens'
+    ];
+  }
+
+  private getFeaturesForTier(tier: LicenseTier): string[] {
+    switch (tier) {
+      case 'enterprise': return this.getEnterpriseFeatures();
+      case 'pro-plus': return this.getProPlusFeatures();
+      case 'pro': return this.getProFeatures();
+      default: return this.getFreeFeatures();
+    }
+  }
+
   async checkFeatureAccess(feature: string): Promise<boolean> {
     const status = await this.verifyLicense();
     return status.features.includes(feature);
   }
 
   isPro(): boolean {
-    return this.tier === 'pro';
+    return this.tier !== 'free';
+  }
+
+  isProPlus(): boolean {
+    return this.tier === 'pro-plus' || this.tier === 'enterprise';
+  }
+
+  isEnterprise(): boolean {
+    return this.tier === 'enterprise';
   }
 
   getTier(): LicenseTier {
     return this.tier;
+  }
+
+  /**
+   * Get license key for API requests
+   */
+  getLicenseKey(): string | null {
+    return this.licenseKey;
+  }
+
+  /**
+   * Get headers for API requests (includes license if available)
+   */
+  getApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+
+    if (this.licenseKey) {
+      headers['X-License-Key'] = this.licenseKey;
+    }
+
+    return headers;
   }
 
   async promptForUpgrade(featureName: string): Promise<void> {
@@ -239,6 +319,11 @@ export class LicenseManager {
   }
 
   getStatusBarText(): string {
-    return this.tier === 'pro' ? '$(star-full) HybridMind Pro' : 'HybridMind Free';
+    switch (this.tier) {
+      case 'enterprise': return '$(organization) HybridMind Enterprise';
+      case 'pro-plus': return '$(rocket) HybridMind Pro Plus';
+      case 'pro': return '$(star-full) HybridMind Pro';
+      default: return 'HybridMind Free';
+    }
   }
 }

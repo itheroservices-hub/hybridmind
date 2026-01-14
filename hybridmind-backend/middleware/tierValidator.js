@@ -11,14 +11,18 @@ const logger = require('../utils/logger');
 const TIER_CONFIG = {
   free: {
     maxModelsPerRequest: 2,
-    maxContextTokens: 8000,
-    maxRequestsPerHour: 100,
-    maxRequestsPerDay: 500,
+    maxContextTokens: 8000,   // Reduced from 16K to 8K
+    maxRequestsPerHour: 20,   // Reduced from 50 to 20 (tight control)
+    maxRequestsPerDay: 50,    // Reduced from 200 to 50 (prevent abuse)
+    maxTokensPerDay: 100000,  // Reduced from 500K to 100K (80% reduction)
     allowedModels: [
-      'groq-llama3-70b',
-      'deepseek-coder',
-      'gemini-1.5-flash',
-      'qwen-max'
+      // Ultra-cheap models ONLY (under $0.20/M tokens)
+      'deepseek/deepseek-r1-distill-llama-70b',   // $0.09/M - cheapest!
+      'qwen/qwen3-coder-flash',                   // $0.10/M
+      'google/gemini-2.5-flash',                  // $0.075/M - ultra cheap
+      'qwen/qwen-2.5-coder-32b-instruct',         // $0.18/M
+      'meta-llama/llama-3.3-70b-instruct'         // $0.18/M
+      // NO premium models on free tier - use 7-day trial instead
     ],
     features: [
       'basic-completion',
@@ -27,15 +31,18 @@ const TIER_CONFIG = {
       'single-step',
       'chat-window',
       'standard-speed',
-      'context-8k'
+      'context-8k',
+      'ultra-cheap-models',
+      '7-day-trial'  // All Pro features for 7 days
     ]
   },
   pro: {
     maxModelsPerRequest: 4,
-    maxContextTokens: 128000,
-    maxRequestsPerHour: 1000,
-    maxRequestsPerDay: 10000,
-    allowedModels: 'all', // All models available
+    maxContextTokens: 128000,  // Reduced from 200K to 128K
+    maxRequestsPerHour: 200,   // Reduced from 500 to 200
+    maxRequestsPerDay: 800,    // Reduced from 2000 to 800
+    maxTokensPerDay: 5000000,  // Reduced from 10M to 5M (50% reduction)
+    allowedModels: 'all',      // All models available including o1, Claude Opus 4.5, etc.
     features: [
       'basic-completion',
       'code-explanation',
@@ -50,7 +57,82 @@ const TIER_CONFIG = {
       'advanced-workflows',
       'priority-support',
       '4-model-chains',
-      'context-128k'
+      'context-128k',
+      'o1-access',
+      'claude-opus-access',
+      'unlimited-reasoning'
+    ]
+  },
+  'pro-plus': {
+    maxModelsPerRequest: 6,      // Can chain 6 models
+    maxContextTokens: 1000000,   // 1M context (for Gemini Pro)
+    maxRequestsPerHour: 1000,    // Reduced from 2000 to 1000
+    maxRequestsPerDay: 3000,     // Reduced from 10000 to 3000
+    maxTokensPerDay: 20000000,   // Reduced from 50M to 20M (60% reduction)
+    allowedModels: 'all',
+    features: [
+      'basic-completion',
+      'code-explanation',
+      'code-review',
+      'agentic-chains',
+      'multi-step-autonomous',
+      'chat-window',
+      'premium-models',
+      'all-models',
+      'ultra-fast-inference',
+      'multi-model-orchestration',
+      'advanced-workflows',
+      'priority-support',
+      '6-model-chains',
+      'context-1m',
+      'o1-access',
+      'claude-opus-access',
+      'unlimited-reasoning',
+      'priority-routing',
+      'dedicated-support',
+      'team-collaboration',
+      'api-access',
+      'custom-workflows',
+      'extended-history',
+      'batch-processing'
+    ]
+  },
+  enterprise: {
+    maxModelsPerRequest: 10,     // Can chain up to 10 models
+    maxContextTokens: 2000000,   // 2M context
+    maxRequestsPerHour: 5000,    // Reduced from 10000 to 5000 (still huge)
+    maxRequestsPerDay: 15000,    // Reduced from 50000 to 15000
+    maxTokensPerDay: 100000000,  // 100M cap instead of unlimited (prevent abuse)
+    allowedModels: 'all',
+    features: [
+      'basic-completion',
+      'code-explanation',
+      'code-review',
+      'agentic-chains',
+      'multi-step-autonomous',
+      'chat-window',
+      'premium-models',
+      'all-models',
+      'ultra-fast-inference',
+      'multi-model-orchestration',
+      'advanced-workflows',
+      'priority-support',
+      '10-model-chains',
+      'context-2m',
+      'o1-access',
+      'claude-opus-access',
+      'unlimited-reasoning',
+      'priority-routing',
+      'dedicated-support',
+      'team-collaboration',
+      'api-access',
+      'custom-workflows',
+      'extended-history',
+      'batch-processing',
+      'sla-guarantee',
+      'white-label',
+      'custom-integration',
+      'dedicated-account-manager'
     ]
   }
 };
@@ -72,15 +154,17 @@ function getTierConfig(tier = 'free') {
  */
 async function validateTier(req, res, next) {
   try {
-    // Extract tier from request (set by auth middleware or default to PRO for development)
-    const tier = req.user?.tier || process.env.DEFAULT_TIER || 'pro'; // Changed from 'free' to 'pro' for development
+    // Get tier from license validation middleware (should run before this)
+    // License validator sets req.tier and req.user
+    const tier = req.tier || req.user?.tier || 'free';
     const config = getTierConfig(tier);
-
-    // Attach tier info to request
-    req.tier = tier;
-    req.tierConfig = config;
-
-    // Check model count limit
+tier === 'pro' ? 'Pro tier' : tier === 'pro-plus' ? 'Pro Plus tier' : 'Your tier'} allows ${config.maxTokensPerDay.toLocaleString()} tokens per day`,
+        tier,
+        tokensUsed: dailyTokens,
+        tokensLimit: config.maxTokensPerDay,
+        resetIn: 86400 - (now % 86400000),
+        upgradeUrl: 'https://hybridmind.dev/pricing',
+        suggestedTier: tier === 'free' ? 'pro' : tier === 'pro' ? 'pro-plus' : 'enterprise
     if (req.body.models && Array.isArray(req.body.models)) {
       if (req.body.models.length > config.maxModelsPerRequest) {
         return res.status(403).json({
@@ -122,6 +206,7 @@ async function validateTier(req, res, next) {
     const now = Date.now();
     const hourKey = `${userId}:${Math.floor(now / 3600000)}`;
     const dayKey = `${userId}:${Math.floor(now / 86400000)}`;
+    const tokenDayKey = `${userId}:tokens:${Math.floor(now / 86400000)}`;
 
     // Initialize tracking
     if (!requestTracking.has(hourKey)) {
@@ -130,10 +215,30 @@ async function validateTier(req, res, next) {
     if (!requestTracking.has(dayKey)) {
       requestTracking.set(dayKey, 0);
     }
+    if (!requestTracking.has(tokenDayKey)) {
+      requestTracking.set(tokenDayKey, 0);
+    }
 
     // Increment counters
     const hourlyCount = requestTracking.get(hourKey) + 1;
     const dailyCount = requestTracking.get(dayKey) + 1;
+    const dailyTokens = requestTracking.get(tokenDayKey);
+
+    // Estimate token usage for this request
+    const estimatedTokens = (req.body.maxTokens || 4000) + (req.body.prompt?.length || 0) * 0.25;
+    
+    // Check token limit (if configured)
+    if (config.maxTokensPerDay && dailyTokens + estimatedTokens > config.maxTokensPerDay) {
+      return res.status(429).json({
+        error: 'Daily token limit exceeded',
+        message: `${tier === 'free' ? 'Free tier' : 'Your tier'} allows ${config.maxTokensPerDay.toLocaleString()} tokens per day`,
+        tier,
+        tokensUsed: dailyTokens,
+        tokensLimit: config.maxTokensPerDay,
+        resetIn: 86400 - (now % 86400000),
+        upgradeUrl: 'https://hybridmind.dev/pricing'
+      });
+    }
 
     // Check limits
     if (hourlyCount > config.maxRequestsPerHour) {
@@ -161,6 +266,7 @@ async function validateTier(req, res, next) {
     // Update tracking
     requestTracking.set(hourKey, hourlyCount);
     requestTracking.set(dayKey, dailyCount);
+    requestTracking.set(tokenDayKey, dailyTokens + estimatedTokens);
 
     // Cleanup old tracking data (older than 24 hours)
     const cutoff = Math.floor(now / 3600000) - 24;
@@ -176,6 +282,8 @@ async function validateTier(req, res, next) {
       tier,
       requestsRemainingHour: config.maxRequestsPerHour - hourlyCount,
       requestsRemainingDay: config.maxRequestsPerDay - dailyCount,
+      tokensRemainingDay: config.maxTokensPerDay ? config.maxTokensPerDay - dailyTokens : 'unlimited',
+      tokensUsedDay: dailyTokens,
       modelsAllowed: config.maxModelsPerRequest,
       contextLimit: config.maxContextTokens
     };
