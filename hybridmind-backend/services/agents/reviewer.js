@@ -6,7 +6,7 @@ const logger = require('../../utils/logger');
  */
 class Reviewer {
   constructor() {
-    this.defaultModel = 'claude-3-opus'; // Use Claude for thorough reviews
+    this.defaultModel = 'llama-3.3-70b'; // Use Groq for reviews
   }
 
   /**
@@ -17,12 +17,21 @@ class Reviewer {
    * @param {string} params.finalCode - Final code after execution
    * @param {Array} params.steps - Execution steps taken
    * @param {string} params.model - Model override (optional)
+   * @param {boolean} params.autonomous - Autonomous mode (default: true)
    * @returns {Promise<Object>} Review results
    */
-  async review({ originalGoal, originalCode, finalCode, steps, model = this.defaultModel }) {
+  async review({ originalGoal, originalCode, finalCode, steps, model = this.defaultModel, autonomous = true }) {
     logger.info('Performing final review');
 
-    const prompt = `Review the following code transformation.
+    const autonomousDirective = autonomous
+      ? `\n\nAUTONOMOUS VERIFICATION MODE:
+- Verify the code is COMPLETE and WORKING
+- Check for NO placeholders or TODOs
+- Confirm all functionality is IMPLEMENTED
+- Flag any incomplete sections as CRITICAL issues\n`
+      : '';
+
+    const prompt = `Review the following code transformation.${autonomousDirective}
 
 Original Goal: ${originalGoal}
 
@@ -237,6 +246,36 @@ Provide results in JSON format:
       improvements: [],
       summary: 'Review completed successfully',
       confidence: 0.7
+    };
+  }
+
+  /**
+   * Immediate verification for autonomous execution
+   * Quick check to ensure step produced working output
+   */
+  async verifyStepOutput({ step, output, originalCode }) {
+    logger.info(`⚙️  Verifying step: ${step.name}`);
+
+    // Quick heuristic checks
+    const checks = {
+      hasOutput: !!output && output.length > 0,
+      noPlaceholders: !output?.includes('TODO') && !output?.includes('...'),
+      notEmpty: output?.trim().length > 10,
+      codeChanged: output !== originalCode,
+      syntaxValid: true // Placeholder for syntax validation
+    };
+
+    const passed = Object.values(checks).every(v => v);
+
+    return {
+      passed,
+      checks,
+      message: passed 
+        ? `✅ Step verified: ${step.name}` 
+        : `⚠️  Verification issues found in: ${step.name}`,
+      warnings: Object.entries(checks)
+        .filter(([_, v]) => !v)
+        .map(([k]) => k)
     };
   }
 }

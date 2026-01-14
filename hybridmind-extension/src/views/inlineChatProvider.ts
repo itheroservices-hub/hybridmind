@@ -233,11 +233,15 @@ export class InlineChatProvider {
     }
 
     const selection = editor.selection;
-    const selectedText = editor.document.getText(selection);
+    let selectedText = editor.document.getText(selection);
 
-    if (!selectedText) {
-      vscode.window.showWarningMessage('Please select some code first');
-      return;
+    // If no selection, use the entire file content
+    if (!selectedText || selectedText.trim().length === 0) {
+      selectedText = editor.document.getText();
+      if (!selectedText) {
+        vscode.window.showWarningMessage('No code to analyze');
+        return;
+      }
     }
 
     const prompts = {

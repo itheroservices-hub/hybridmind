@@ -93,7 +93,7 @@ class ModelSelector {
 
     // For complex code, use best reasoning models
     if (complexity === 'high') {
-      return 'gpt-4';
+      return 'llama-3.3-70b';
     }
 
     // For specific languages
@@ -156,9 +156,9 @@ class ModelSelector {
    */
   getDefaultModel(strategy) {
     const defaults = {
-      cost: 'gpt-3.5-turbo',
-      balanced: 'claude-3-sonnet',
-      quality: 'gpt-4'
+      cost: 'llama-3.1-8b',
+      balanced: 'llama-3.3-70b',
+      quality: 'llama-3.3-70b'
     };
 
     return defaults[strategy] || defaults.balanced;
@@ -172,7 +172,7 @@ class ModelSelector {
     
     if (!taskModels) {
       // Default comparison set
-      return ['gpt-4', 'claude-3-opus', 'qwen-max'].slice(0, count);
+      return ['llama-3.3-70b', 'gemini-flash', 'qwen-plus'].slice(0, count);
     }
 
     return taskModels.slice(0, count);

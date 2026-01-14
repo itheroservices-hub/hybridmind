@@ -114,6 +114,15 @@ async function runModel(modelId, prompt, options = {}) {
 }
 
 /**
+ * Call method for compatibility with modelFactory interface
+ */
+async function call(request) {
+  const { model, prompt, code = '', temperature, maxTokens } = request;
+  const fullPrompt = code ? `${prompt}\n\nCode:\n${code}` : prompt;
+  return await callOpenRouter(model, fullPrompt, { temperature, maxTokens });
+}
+
+/**
  * Get available OpenRouter models
  */
 function getAvailableModels() {
@@ -177,6 +186,7 @@ function getAvailableModels() {
 }
 
 module.exports = {
+  call,
   runModel,
   getAvailableModels,
   MODEL_PRICING

@@ -66,9 +66,18 @@ async function runFinalTests() {
       code: ''
     });
     console.log(`   Models executed: ${res.data.data.results.length}`);
+    let missingOutputs = 0;
     res.data.data.results.forEach((r, i) => {
+      if (!r.output) {
+        missingOutputs++;
+        console.log(`   ⚠️  Model ${i+1} (${r.model}) missing output${r.error ? ` - ${r.error}` : ''}`);
+        return;
+      }
       console.log(`   Model ${i+1} (${r.model}): "${r.output.substring(0, 50)}"`);
     });
+    if (missingOutputs > 0) {
+      throw new Error(`Missing outputs for ${missingOutputs} model(s) in parallel run`);
+    }
     passed++;
   } catch (error) {
     console.log(`   ❌ FAILED: ${error.message}`);

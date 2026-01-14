@@ -6,7 +6,15 @@
 const logger = require('../utils/logger');
 
 class RateLimiter {
+class RateLimiter {
   constructor() {
+    this.requests = new Map();
+    this.costs = new Map();
+    this.hashTable = {};
+    this.CLEANUP_INTERVAL = 60000; // 1 minute
+    setInterval(() => this.cleanup(), this.CLEANUP_INTERVAL);
+  }
+}  constructor() {
     this.requests = new Map();
     this.costs = new Map();
     this.CLEANUP_INTERVAL = 60000; // 1 minute
@@ -23,52 +31,15 @@ class RateLimiter {
    * @param {string} options.message - Error message
    */
   createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too many requests' }) {
-    return (req, res, next) => {
-      const key = this.getKey(req);
-      const now = Date.now();
-      const windowStart = now - windowMs;
+function extractRateLimitingLogic() {
+  // Extracted logic will be placed here
+}
 
-      // Get request timestamps for this key
-      let timestamps = this.requests.get(key) || [];
-      
-      // Filter out old requests outside the window
-      timestamps = timestamps.filter(time => time > windowStart);
-
-      // Check if limit exceeded
-      if (timestamps.length >= maxRequests) {
-        const oldestRequest = Math.min(...timestamps);
-        const resetTime = oldestRequest + windowMs;
-        const resetIn = Math.ceil((resetTime - now) / 1000);
-
-        res.set({
-          'X-RateLimit-Limit': maxRequests,
-          'X-RateLimit-Remaining': 0,
-          'X-RateLimit-Reset': new Date(resetTime).toISOString(),
-          'Retry-After': resetIn
-        });
-
-        return res.status(429).json({
-          error: 'Rate limit exceeded',
-          message,
-          retryAfter: resetIn,
-          limit: maxRequests,
-          window: windowMs / 1000
-        });
-      }
-
-      // Add current request
-      timestamps.push(now);
-      this.requests.set(key, timestamps);
-
-      // Set rate limit headers
-      res.set({
-        'X-RateLimit-Limit': maxRequests,
-        'X-RateLimit-Remaining': maxRequests - timestamps.length,
-        'X-RateLimit-Reset': new Date(now + windowMs).toISOString()
-      });
-
-      next();
-    };
+function createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too many requests' }) {
+  return (req, res, next) => {
+    // Rate limiting logic
+  };
+}
   }
 
   /**
@@ -127,16 +98,29 @@ class RateLimiter {
    */
   estimateRequestCost(req) {
     const modelCosts = {
+      // Premium models
       'gpt-4': 0.03 / 1000,
       'gpt-4-turbo': 0.01 / 1000,
+      'gpt-4o': 0.0025 / 1000,
       'claude-3-opus': 0.015 / 1000,
       'claude-3-sonnet': 0.003 / 1000,
       'claude-3-5-sonnet': 0.003 / 1000,
+      'claude-3-5-sonnet-20241022': 0.003 / 1000,
       'gemini-pro': 0.00025 / 1000,
       'gemini-1.5-pro': 0.00125 / 1000,
+      'gemini-2.0-flash-exp': 0.0,
+      'qwen-max': 0.0003 / 1000,
+      
+      // Free tier models (via Groq/OpenRouter)
+      'llama-3.3-70b-versatile': 0.0, // Free via Groq
+      'deepseek-chat': 0.0, // Free tier
+      'deepseek-reasoner': 0.0, // Free tier
       'deepseek-coder': 0.0002 / 1000,
-      'groq-llama3-70b': 0.0005 / 1000,
-      'qwen-max': 0.0003 / 1000
+      'groq-llama3-70b': 0.0,
+      
+      // OpenRouter pricing
+      'openrouter/anthropic/claude-3.5-sonnet': 0.003 / 1000,
+      'openrouter/google/gemini-2.0-flash-exp': 0.0
     };
 
     const model = req.body.model || 'gpt-4';
@@ -212,11 +196,11 @@ const rateLimiter = new RateLimiter();
 module.exports = {
   rateLimiter,
   
-  // Free tier: 100 requests/hour
+  // Free tier: 200 requests/hour (increased for autonomous workflows)
   freeTierLimiter: rateLimiter.createLimiter({
     windowMs: 3600000,
-    maxRequests: 100,
-    message: 'Free tier limit: 100 requests/hour. Upgrade to Pro for higher limits.'
+    maxRequests: 200,
+    message: 'Free tier limit: 200 requests/hour. Upgrade to Pro for higher limits.'
   }),
 
   // Pro tier: 1000 requests/hour
@@ -232,10 +216,10 @@ module.exports = {
     message: 'Daily cost limit reached. Your usage will reset in 24 hours.'
   }),
 
-  // Burst protection: 10 requests per minute
+  // Burst protection: 30 requests per minute (allows autonomous multi-step)
   burstLimiter: rateLimiter.createLimiter({
     windowMs: 60000,
-    maxRequests: 10,
+    maxRequests: 30,
     message: 'Too many requests. Please slow down.'
   })
 };

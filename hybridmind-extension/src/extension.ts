@@ -4,6 +4,7 @@ import { ChatPanel } from './views/chatPanel';
 import { ChatSidebarProvider } from './views/chatSidebarProvider';
 import { InlineChatProvider } from './views/inlineChatProvider';
 import { LicenseManager } from './auth/licenseManager';
+import { registerAgenticCommands } from './commands/agenticCommands';
 
 let serverPort: number | null = null;
 let licenseManager: LicenseManager;
@@ -68,6 +69,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register commands
   registerCommands(context);
+
+  // Register agentic commands (these actually execute actions!)
+  registerAgenticCommands(context, serverPort);
 }
 
 export function deactivate() {
@@ -287,16 +291,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     })
   );
 
-  // Fix Bugs
-  context.subscriptions.push(
-    vscode.commands.registerCommand('hybridmind.fixBugs', async () => {
-      if (serverPort) {
-        await inlineChatProvider.quickFix('fix');
-      } else {
-        vscode.window.showErrorMessage('Server not running');
-      }
-    })
-  );
+  // Fix Bugs - Now handled by agentic commands
+  // The new version actually executes fixes instead of just suggesting them
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.optimizeCode', async () => {
       const editor = vscode.window.activeTextEditor;

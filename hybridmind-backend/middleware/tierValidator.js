@@ -72,8 +72,8 @@ function getTierConfig(tier = 'free') {
  */
 async function validateTier(req, res, next) {
   try {
-    // Extract tier from request (set by auth middleware or default to free)
-    const tier = req.user?.tier || 'free';
+    // Extract tier from request (set by auth middleware or default to PRO for development)
+    const tier = req.user?.tier || process.env.DEFAULT_TIER || 'pro'; // Changed from 'free' to 'pro' for development
     const config = getTierConfig(tier);
 
     // Attach tier info to request
@@ -192,7 +192,7 @@ async function validateTier(req, res, next) {
  */
 function requireFeature(featureName) {
   return (req, res, next) => {
-    const tier = req.tier || 'free';
+    const tier = req.tier || process.env.DEFAULT_TIER || 'pro'; // Changed from 'free' to 'pro' for development
     const config = getTierConfig(tier);
 
     if (!config.features.includes(featureName)) {

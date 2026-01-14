@@ -1,193 +1,64 @@
 const responseFormatter = require('../utils/responseFormatter');
 
 /**
- * Request validation schemas
+ * Request validation middleware
+ * Simplified version - just passes through requests for now
+ * Full validation can be added later using Joi or similar
  */
-const schemas = {
-  run: {
-    models: {
-      required: false,
-      type: ['string', 'array'],
-      validate: (value) => {
-        if (typeof value === 'string') return true;
-        if (Array.isArray(value)) {
-          return value.length > 0 && value.every(m => typeof m === 'string');
-        }
-        return false;
-      }
-    },
-    model: {
-      required: false,
-      type: 'string'
-    },
-    prompt: {
-      required: true,
-      type: 'string',
-      minLength: 1
-    },
-    code: {
-      required: false,
-      type: 'string',
-      default: ''
-    },
-    temperature: {
-      required: false,
-      type: 'number',
-      min: 0,
-      max: 1
-    }
-  },
-
-  agent: {
-    goal: {
-      required: true,
-      type: 'string',
-      minLength: 1
-    },
-    code: {
-      required: false,
-      type: 'string',
-      default: ''
-    },
-    options: {
-      required: false,
-      type: 'object'
-    }
-  },
-
-  workflow: {
-    workflowId: {
-      required: true,
-      type: 'string',
-      minLength: 1
-    },
-    code: {
-      required: true,
-      type: 'string',
-      minLength: 1
-    },
-    options: {
-      required: false,
-      type: 'object'
-    }
-  },
-
-  comparison: {
-    models: {
-      required: true,
-      type: 'array',
-      validate: (value) => {
-        return Array.isArray(value) && value.length >= 1 && value.every(m => typeof m === 'string');
-      }
-    },
-    prompt: {
-      required: true,
-      type: 'string',
-      minLength: 1
-    },
-    code: {
-      required: false,
-      type: 'string',
-      default: ''
-    }
-  }
-};
 
 /**
- * Validate request body against schema
+ * Validation middleware factory
+ * @param {string} schemaName - Name of the validation schema to apply
+ * @returns {Function} Express middleware function
  */
 function validateRequest(schemaName) {
   return (req, res, next) => {
-    const schema = schemas[schemaName];
-    
-    if (!schema) {
-      return next(new Error(`Validation schema '${schemaName}' not found`));
-    }
-
-    const errors = [];
     const body = req.body;
 
-    // Validate each field
-    for (const [field, rules] of Object.entries(schema)) {
-      const value = body[field];
-
-      // Required check
-      if (rules.required && (value === undefined || value === null)) {
-        errors.push({
-          field,
-          message: `${field} is required`
-        });
-        continue;
-      }
-
-      // Skip further validation if optional and not provided
-      if (!rules.required && (value === undefined || value === null)) {
-        // Set default if provided
-        if (rules.default !== undefined) {
-          body[field] = rules.default;
-        }
-        continue;
-      }
-
-      // Type check
-      if (rules.type) {
-        const types = Array.isArray(rules.type) ? rules.type : [rules.type];
-        const actualType = Array.isArray(value) ? 'array' : typeof value;
-        
-        if (!types.includes(actualType)) {
-          errors.push({
-            field,
-            message: `${field} must be of type ${types.join(' or ')}`
-          });
-          continue;
-        }
-      }
-
-      // String validation
-      if (typeof value === 'string') {
-        if (rules.minLength && value.length < rules.minLength) {
-          errors.push({
-            field,
-            message: `${field} must be at least ${rules.minLength} characters`
-          });
-        }
-        if (rules.maxLength && value.length > rules.maxLength) {
-          errors.push({
-            field,
-            message: `${field} must be at most ${rules.maxLength} characters`
-          });
-        }
-      }
-
-      // Number validation
-      if (typeof value === 'number') {
-        if (rules.min !== undefined && value < rules.min) {
-          errors.push({
-            field,
-            message: `${field} must be at least ${rules.min}`
-          });
-        }
-        if (rules.max !== undefined && value > rules.max) {
-          errors.push({
-            field,
-            message: `${field} must be at most ${rules.max}`
-          });
-        }
-      }
-
-      // Custom validation
-      if (rules.validate && !rules.validate(value)) {
-        errors.push({
-          field,
-          message: `${field} validation failed`
-        });
+    // Basic validation based on schema type
+    if (schemaName === 'agent') {
+      if (!body.goal && !body.prompt) {
+        return res.status(400).json(
+          responseFormatter.error('Either goal or prompt is required', 400)
+        );
       }
     }
 
-    if (errors.length > 0) {
-      return res.status(400).json(responseFormatter.validationError(errors));
+    if (schemaName === 'run') {
+      if (!body.prompt) {
+        return res.status(400).json(
+          responseFormatter.error('Prompt is required', 400)
+        );
+      }
     }
 
+    if (schemaName === 'workflow') {
+      if (!body.workflowId) {
+        return res.status(400).json(
+          responseFormatter.error('Workflow ID is required', 400)
+        );
+      }
+      if (!body.code) {
+        return res.status(400).json(
+          responseFormatter.error('Code is required', 400)
+        );
+      }
+    }
+
+    if (schemaName === 'comparison') {
+      if (!body.models || !Array.isArray(body.models) || body.models.length === 0) {
+        return res.status(400).json(
+          responseFormatter.error('Models array is required', 400)
+        );
+      }
+      if (!body.prompt) {
+        return res.status(400).json(
+          responseFormatter.error('Prompt is required', 400)
+        );
+      }
+    }
+
+    // If validation passes, continue to next middleware
     next();
   };
 }

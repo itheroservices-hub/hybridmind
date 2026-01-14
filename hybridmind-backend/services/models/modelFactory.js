@@ -94,7 +94,6 @@ class ModelFactory {
    */
   async parallel(params) {
     const { models, prompt, code, options = {} } = params;
-
     const promises = models.map(modelId =>
       this.call({
         model: modelId,
@@ -102,7 +101,24 @@ class ModelFactory {
         code,
         temperature: options.temperature,
         maxTokens: options.maxTokens
-      }).then(result => ({ model: modelId, ...result }))
+      })
+        .then(result => ({
+          model: modelId,
+          output: result?.content,
+          usage: result.usage,
+          success: !!result?.content,
+          error: result?.content ? null : 'Model returned empty output'
+        }))
+        .catch(error => {
+          logger.error(`Parallel call failed for ${modelId}: ${error.message}`);
+          return {
+            model: modelId,
+            output: null,
+            usage: null,
+            success: false,
+            error: error.message
+          };
+        })
     );
 
     const results = await Promise.all(promises);

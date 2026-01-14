@@ -2,10 +2,16 @@
 node_modules/
 package-lock.json
 
-# Environment
+# Environment Variables (CRITICAL: Never commit these!)
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
+.env.test
+
+# Keep the example template
+!.env.example
 
 # Logs
 logs

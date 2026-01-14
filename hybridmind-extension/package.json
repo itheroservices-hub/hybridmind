@@ -3,7 +3,7 @@
   "displayName": "HybridMind AI Assistant",
   "description": "Multi-model AI platform with 25+ models including Claude 4.5, Gemini 2.5, DeepSeek R1, Grok 4, and specialized coding models. Free tier + premium models via OpenRouter.",
   "publisher": "hybridmind",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
@@ -60,16 +60,75 @@
       ]
     },
     "commands": [
-      { "command": "hybridmind.openChat", "title": "HybridMind: Open Chat Window", "icon": "$(comment-discussion)" },
-      { "command": "hybridmind.inlineChat", "title": "HybridMind: Start Inline Chat", "icon": "$(edit)" },
-      { "command": "hybridmind.manageLicense", "title": "HybridMind: Manage License", "icon": "$(key)" },
-      { "command": "hybridmind.quickChat", "title": "HybridMind: Quick Chat" },
-      { "command": "hybridmind.explainCode", "title": "HybridMind: Explain Code" },
-      { "command": "hybridmind.reviewCode", "title": "HybridMind: Review Code" },
-      { "command": "hybridmind.optimizeCode", "title": "HybridMind: Optimize Code" },
-      { "command": "hybridmind.generateTests", "title": "HybridMind: Generate Tests" },
-      { "command": "hybridmind.fixBugs", "title": "HybridMind: Fix Bugs" },
-      { "command": "hybridmind.refactorWithAI", "title": "HybridMind: 🤖 Refactor with Autonomous Agent", "icon": "$(robot)" }
+      {
+        "command": "hybridmind.openChat",
+        "title": "HybridMind: Open Chat Window",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "hybridmind.inlineChat",
+        "title": "HybridMind: Start Inline Chat",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "hybridmind.manageLicense",
+        "title": "HybridMind: Manage License",
+        "icon": "$(key)"
+      },
+      {
+        "command": "hybridmind.quickChat",
+        "title": "HybridMind: Quick Chat"
+      },
+      {
+        "command": "hybridmind.explainCode",
+        "title": "HybridMind: Explain Code"
+      },
+      {
+        "command": "hybridmind.reviewCode",
+        "title": "HybridMind: Review Code"
+      },
+      {
+        "command": "hybridmind.optimizeCode",
+        "title": "HybridMind: Optimize Code"
+      },
+      {
+        "command": "hybridmind.generateTests",
+        "title": "HybridMind: Generate Tests"
+      },
+      {
+        "command": "hybridmind.fixBugs",
+        "title": "HybridMind: Fix Bugs"
+      },
+      {
+        "command": "hybridmind.refactorWithAI",
+        "title": "HybridMind: 🤖 Refactor with Autonomous Agent",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "hybridmind.autonomousDebug",
+        "title": "HybridMind: 🔧 Autonomous Debug (Fix All Errors)",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "hybridmind.runStrictJsonWorkflow",
+        "title": "HybridMind: ⚡ Run AI Workflow (Strict JSON)",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "hybridmind.strictJsonQuickFix",
+        "title": "HybridMind: ⚡ Quick Fix (Strict JSON)",
+        "icon": "$(wrench)"
+      },
+      {
+        "command": "hybridmind.strictJsonAddFeature",
+        "title": "HybridMind: ⚡ Add Feature (Strict JSON)",
+        "icon": "$(add)"
+      },
+      {
+        "command": "hybridmind.showAgentOutput",
+        "title": "HybridMind: Show Agent Output",
+        "icon": "$(output)"
+      }
     ],
     "keybindings": [
       {
@@ -156,5 +215,14 @@
         }
       }
     }
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.5",
+    "@types/vscode": "^1.108.0",
+    "typescript": "^5.9.3"
   }
 }

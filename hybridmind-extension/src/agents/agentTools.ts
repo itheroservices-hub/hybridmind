@@ -438,4 +438,283 @@ export class AgentTools {
       };
     }
   }
+
+  /**
+   * Apply a WorkspaceEdit - for atomic multi-file changes
+   * This is how GitHub Copilot makes multiple coordinated edits
+   */
+  static async applyWorkspaceEdit(edits: Array<{
+    filePath: string;
+    startLine: number;
+    startChar: number;
+    endLine: number;
+    endChar: number;
+    newText: string;
+  }>): Promise<ToolResult> {
+    try {
+      const workspaceEdit = new vscode.WorkspaceEdit();
+
+      for (const edit of edits) {
+        const uri = vscode.Uri.file(edit.filePath);
+        const start = new vscode.Position(edit.startLine, edit.startChar);
+        const end = new vscode.Position(edit.endLine, edit.endChar);
+        const range = new vscode.Range(start, end);
+        
+        workspaceEdit.replace(uri, range, edit.newText);
+      }
+
+      const success = await vscode.workspace.applyEdit(workspaceEdit);
+
+      if (success) {
+        return {
+          success: true,
+          data: {
+            editsApplied: edits.length,
+            files: [...new Set(edits.map(e => e.filePath))]
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: 'WorkspaceEdit was rejected by VS Code'
+        };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to apply workspace edit: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Replace specific text at file location - precise editing like Copilot
+   */
+  static async replaceAtLocation(
+    filePath: string,
+    lineNumber: number,
+    oldText: string,
+    newText: string
+  ): Promise<ToolResult> {
+    try {
+      const uri = vscode.Uri.file(filePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      
+      const line = document.lineAt(lineNumber);
+      const lineText = line.text;
+      
+      const startIndex = lineText.indexOf(oldText);
+      if (startIndex === -1) {
+        return {
+          success: false,
+          error: `Text not found on line ${lineNumber + 1}`
+        };
+      }
+
+      const start = new vscode.Position(lineNumber, startIndex);
+      const end = new vscode.Position(lineNumber, startIndex + oldText.length);
+      const range = new vscode.Range(start, end);
+
+      const workspaceEdit = new vscode.WorkspaceEdit();
+      workspaceEdit.replace(uri, range, newText);
+      
+      const success = await vscode.workspace.applyEdit(workspaceEdit);
+
+      if (success) {
+        return {
+          success: true,
+          data: {
+            filePath,
+            lineNumber: lineNumber + 1,
+            oldText,
+            newText
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Edit was rejected by VS Code'
+        };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to replace at location: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Insert text at a specific position
+   */
+  static async insertAt(
+    filePath: string,
+    lineNumber: number,
+    character: number,
+    text: string
+  ): Promise<ToolResult> {
+    try {
+      const uri = vscode.Uri.file(filePath);
+      const position = new vscode.Position(lineNumber, character);
+
+      const workspaceEdit = new vscode.WorkspaceEdit();
+      workspaceEdit.insert(uri, position, text);
+      
+      const success = await vscode.workspace.applyEdit(workspaceEdit);
+
+      if (success) {
+        return {
+          success: true,
+          data: {
+            filePath,
+            lineNumber: lineNumber + 1,
+            character,
+            inserted: text.length
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Insert was rejected by VS Code'
+        };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to insert: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Delete a range of text
+   */
+  static async deleteRange(
+    filePath: string,
+    startLine: number,
+    startChar: number,
+    endLine: number,
+    endChar: number
+  ): Promise<ToolResult> {
+    try {
+      const uri = vscode.Uri.file(filePath);
+      const start = new vscode.Position(startLine, startChar);
+      const end = new vscode.Position(endLine, endChar);
+      const range = new vscode.Range(start, end);
+
+      const workspaceEdit = new vscode.WorkspaceEdit();
+      workspaceEdit.delete(uri, range);
+      
+      const success = await vscode.workspace.applyEdit(workspaceEdit);
+
+      if (success) {
+        return {
+          success: true,
+          data: {
+            filePath,
+            linesDeleted: endLine - startLine + 1
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Delete was rejected by VS Code'
+        };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to delete range: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Get diagnostics (errors/warnings) for a file
+   */
+  static async getDiagnostics(filePath?: string): Promise<ToolResult> {
+    try {
+      const diagnostics = vscode.languages.getDiagnostics();
+      
+      if (filePath) {
+        const uri = vscode.Uri.file(filePath);
+        const fileDiagnostics = vscode.languages.getDiagnostics(uri);
+        
+        return {
+          success: true,
+          data: {
+            filePath,
+            issues: fileDiagnostics.map(d => ({
+              severity: d.severity === vscode.DiagnosticSeverity.Error ? 'error' : 
+                       d.severity === vscode.DiagnosticSeverity.Warning ? 'warning' : 'info',
+              message: d.message,
+              line: d.range.start.line + 1,
+              column: d.range.start.character + 1,
+              source: d.source
+            }))
+          }
+        };
+      } else {
+        const allIssues = diagnostics.map(([uri, diags]) => ({
+          file: uri.fsPath,
+          count: diags.length,
+          errors: diags.filter(d => d.severity === vscode.DiagnosticSeverity.Error).length,
+          warnings: diags.filter(d => d.severity === vscode.DiagnosticSeverity.Warning).length
+        }));
+        
+        return {
+          success: true,
+          data: {
+            totalFiles: allIssues.length,
+            files: allIssues.filter(f => f.count > 0)
+          }
+        };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to get diagnostics: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Format a document using VS Code's formatter
+   */
+  static async formatDocument(filePath: string): Promise<ToolResult> {
+    try {
+      const uri = vscode.Uri.file(filePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      
+      const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
+        'vscode.executeFormatDocumentProvider',
+        uri
+      );
+
+      if (edits && edits.length > 0) {
+        const workspaceEdit = new vscode.WorkspaceEdit();
+        edits.forEach(edit => workspaceEdit.replace(uri, edit.range, edit.newText));
+        
+        const success = await vscode.workspace.applyEdit(workspaceEdit);
+        
+        return {
+          success,
+          data: {
+            filePath,
+            editsApplied: edits.length
+          }
+        };
+      }
+      
+      return {
+        success: true,
+        data: { filePath, message: 'No formatting changes needed' }
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to format document: ${error.message}`
+      };
+    }
+  }
 }

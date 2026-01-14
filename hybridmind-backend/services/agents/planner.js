@@ -6,7 +6,7 @@ const logger = require('../../utils/logger');
  */
 class Planner {
   constructor() {
-    this.defaultModel = 'gpt-4'; // Use best reasoning model for planning
+    this.defaultModel = 'meta-llama/llama-3.3-70b-instruct'; // Use OpenRouter's Llama model for planning
   }
 
   /**
@@ -15,12 +15,22 @@ class Planner {
    * @param {string} params.goal - High-level goal
    * @param {string} params.code - Code context
    * @param {string} params.model - Model to use for planning
+   * @param {boolean} params.autonomous - Enable autonomous execution mode (default: true)
    * @returns {Promise<Object>} Plan with steps
    */
-  async createPlan({ goal, code, model = this.defaultModel }) {
-    const prompt = `You are a software engineering planning assistant. Break down the following task into clear, actionable steps.
+  async createPlan({ goal, code, model = this.defaultModel, autonomous = true }) {
+    const autonomousDirective = autonomous 
+      ? `\n\nAUTONOMOUS EXECUTION MODE ENABLED:
+- Each step MUST be immediately executable
+- Each step MUST produce complete, working code
+- NO placeholders, NO TODOs, NO partial implementations
+- Steps must be atomic and self-contained
+- Each step must validate its own output\n`
+      : '';
 
-Task: ${goal}
+    const prompt = `You are an autonomous software engineering agent. Create an executable plan for immediate action.
+
+Task: ${goal}${autonomousDirective}
 
 Provide a step-by-step plan in the following JSON format:
 {
@@ -203,6 +213,54 @@ Provide an improved plan in the same JSON format.`;
     });
 
     return this.parsePlan(result.content);
+  }
+
+  /**
+   * Validate plan for autonomous execution
+   */
+  validatePlan(plan) {
+    const issues = [];
+
+    if (!plan.steps || plan.steps.length === 0) {
+      issues.push('Plan has no steps');
+    }
+
+    plan.steps?.forEach((step, index) => {
+      if (!step.name) issues.push(`Step ${index + 1}: Missing name`);
+      if (!step.description) issues.push(`Step ${index + 1}: Missing description`);
+      if (!step.action) issues.push(`Step ${index + 1}: Missing action type`);
+    });
+
+    return {
+      valid: issues.length === 0,
+      issues,
+      stepCount: plan.steps?.length || 0
+    };
+  }
+
+  /**
+   * Get next logical step based on completed work
+   */
+  suggestNextStep({ goal, completedSteps, currentCode }) {
+    const lastStep = completedSteps[completedSteps.length - 1];
+    const completedActions = new Set(completedSteps.map(s => s.action));
+
+    // Suggest next action based on workflow
+    const workflowSequence = ['analyze', 'refactor', 'optimize', 'document', 'test', 'review'];
+    
+    for (const action of workflowSequence) {
+      if (!completedActions.has(action)) {
+        return {
+          name: `${action}-step`,
+          description: `${action.charAt(0).toUpperCase() + action.slice(1)} the code based on: ${goal}`,
+          action,
+          priority: 'medium',
+          estimatedComplexity: 'moderate'
+        };
+      }
+    }
+
+    return null; // All standard steps completed
   }
 }
 

@@ -579,45 +579,45 @@ const models = {
 
 // Model selection strategies
 const modelSelectionStrategies = {
-  // Best model for specific tasks
+  // Best model for specific tasks - OpenRouter only
   taskBased: {
-    'code-review': ['deepseek-coder', 'anthropic/claude-opus-4', 'openai/gpt-4o'],
-    'refactoring': ['deepseek-coder', 'openai/gpt-4o', 'claude-3-sonnet'],
-    'explanation': ['claude-3-sonnet', 'openai/gpt-4o', 'gemini-1.5-pro'],
-    'optimization': ['deepseek-coder', 'openai/gpt-4-turbo', 'anthropic/claude-opus-4'],
-    'debugging': ['deepseek-coder', 'openai/gpt-4o', 'anthropic/claude-opus-4'],
-    'documentation': ['claude-3-sonnet', 'openai/gpt-4o', 'mistral-large'],
-    'testing': ['openai/gpt-4o', 'deepseek-coder', 'claude-3-sonnet'],
-    'quick-fix': ['llama-3.3-70b', 'gpt-3.5-turbo', 'mistral-small'],
-    'multilingual': ['qwen-plus', 'mixtral-8x7b', 'mistral-large']
+    'code-review': ['anthropic/claude-opus-4.5', 'openai/gpt-4o', 'deepseek/deepseek-r1'],
+    'refactoring': ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'qwen/qwen3-coder-plus'],
+    'explanation': ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-2.5-pro'],
+    'optimization': ['deepseek/deepseek-r1', 'openai/gpt-4-turbo', 'anthropic/claude-opus-4.5'],
+    'debugging': ['qwen/qwen3-coder-plus', 'openai/gpt-4o', 'anthropic/claude-opus-4.5'],
+    'documentation': ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'mistralai/mistral-large'],
+    'testing': ['openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-3.5-sonnet'],
+    'quick-fix': ['meta-llama/llama-3.3-70b-instruct', 'openai/gpt-3.5-turbo', 'mistralai/mistral-small-3.2-24b-instruct'],
+    'multilingual': ['qwen/qwen3-coder-plus', 'mistralai/mistral-large', 'google/gemini-2.5-pro']
   },
   
-  // Cost-optimized chains (ultra-low cost)
+  // Cost-optimized chains (ultra-low cost) - OpenRouter only
   costOptimized: {
-    planner: 'llama-3.3-70b',
-    executor: 'deepseek-chat',
-    reviewer: 'mistral-small'
+    planner: 'meta-llama/llama-3.3-70b-instruct',
+    executor: 'deepseek/deepseek-r1-distill-llama-70b',
+    reviewer: 'mistralai/mistral-small-3.2-24b-instruct'
   },
   
-  // Quality-optimized chains (premium models)
+  // Quality-optimized chains (premium models) - OpenRouter only
   qualityOptimized: {
     planner: 'openai/gpt-4o',
-    executor: 'anthropic/claude-sonnet-4',
-    reviewer: 'anthropic/claude-opus-4'
+    executor: 'anthropic/claude-sonnet-4.5',
+    reviewer: 'anthropic/claude-opus-4.5'
   },
   
-  // Balanced chains
+  // Balanced chains - OpenRouter only
   balanced: {
-    planner: 'llama-3.3-70b',
-    executor: 'claude-3-sonnet',
-    reviewer: 'mistral-large'
+    planner: 'meta-llama/llama-3.3-70b-instruct',
+    executor: 'anthropic/claude-3.5-sonnet',
+    reviewer: 'mistralai/mistral-large'
   },
   
-  // Speed-optimized chains (ultra-fast)
+  // Speed-optimized chains (ultra-fast) - OpenRouter only
   speedOptimized: {
-    planner: 'llama-3.3-70b',
-    executor: 'mixtral-8x7b',
-    reviewer: 'gemini-2.0-flash-exp'
+    planner: 'meta-llama/llama-3.3-70b-instruct',
+    executor: 'google/gemini-2.5-flash',
+    reviewer: 'anthropic/claude-3-haiku'
   }
 };
 

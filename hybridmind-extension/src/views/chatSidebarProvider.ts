@@ -5,6 +5,9 @@
 
 import * as vscode from 'vscode';
 import { LicenseManager } from '../auth/licenseManager';
+import { WorkspaceAnalyzer } from '../agents/workspaceAnalyzer';
+import { AutonomyManager, AutonomyLevel, ToolPermissions } from '../agents/autonomyManager';
+import { AgentPlanner, ExecutionResult, NextStep } from '../agents/agentPlanner';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -24,6 +27,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   private _workflowMode: 'single' | 'parallel' | 'chain' | 'agentic' = 'single';
   private _licenseManager: LicenseManager;
   private _autonomyLevel: number = 3; // Default to Full Auto
+  private _readOnly: boolean = false; // Prevent file changes
   private _permissions: { [key: string]: boolean } = {
     read: true,
     edit: true,
@@ -34,6 +38,11 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     restructure: false,
     network: false
   };
+  
+  // Autonomous agent system
+  private _autonomyManager: AutonomyManager;
+  private _agentPlanner: AgentPlanner;
+  private _currentExecution: ExecutionResult | null = null;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -41,6 +50,29 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   ) {
     this._serverPort = serverPort;
     this._licenseManager = LicenseManager.getInstance();
+    
+    // Initialize autonomous agent system
+    this._autonomyManager = new AutonomyManager(AutonomyLevel.L1, {
+      allowFileEdits: true,
+      allowFileCreation: true,
+      allowFileDeletion: false,
+      allowTerminalCommands: true,
+      allowPackageInstalls: false
+    });
+    this._agentPlanner = new AgentPlanner(this._autonomyManager);
+  }
+
+  /**
+   * Get provider for a given model
+   */
+  private _getProviderForModel(model: string): string {
+    if (model.includes('gpt')) return 'openai';
+    if (model.includes('llama') || model.includes('mixtral')) return 'groq';
+    if (model.includes('deepseek')) return 'deepseek';
+    if (model.includes('claude')) return 'anthropic';
+    if (model.includes('gemini')) return 'google';
+    if (model.includes('qwen')) return 'qwen';
+    return 'groq'; // Default to groq (free)
   }
 
   public resolveWebviewView(
@@ -61,7 +93,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.type) {
         case 'sendMessage':
-          await this._handleSendMessage(data.message, data.models, data.workflow);
+          await this._handleSendMessage(data.message, data.models, data.workflow, data.includeContext);
           break;
         case 'clearHistory':
           this._messages = [];
@@ -77,6 +109,9 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           this._autonomyLevel = data.level;
           this._permissions = data.permissions;
           break;
+        case 'toggleReadOnly':
+          this._readOnly = data.readOnly;
+          break;
         case 'insertCode':
           this._insertCodeAtCursor(data.code);
           break;
@@ -88,11 +123,27 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           // Open upgrade page in browser
           vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ai/pricing'));
           break;
+        case 'executeNextStep':
+          // Execute a suggested next step
+          await this._handleNextStep(data.stepId, data.models);
+          break;
+        case 'viewDiff':
+          // View diff for a specific file change
+          await this._viewFileDiff(data.filePath);
+          break;
+        case 'acceptChanges':
+          // Accept all file changes
+          this._acceptAllChanges();
+          break;
+        case 'rejectChanges':
+          // Reject all file changes
+          await this._rejectAllChanges();
+          break;
       }
     });
   }
 
-  private async _handleSendMessage(userMessage: string, models?: string[], workflow?: string, isDirectExecution?: boolean) {
+  private async _handleSendMessage(userMessage: string, models?: string[], workflow?: string, includeContext?: boolean, isDirectExecution?: boolean) {
     const selectedModels = models || this._selectedModels;
     const workflowMode = workflow || this._workflowMode;
     
@@ -108,21 +159,53 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Add user message
-    const userMsg: ChatMessage = {
-      role: 'user',
-      content: userMessage,
-      timestamp: new Date()
-    };
-    this._messages.push(userMsg);
-    this._updateWebview();
-
     try {
-      // Get active editor context
+      // Get active editor context if requested BEFORE adding message to chat
       const editor = vscode.window.activeTextEditor;
       let contextCode = '';
-      if (editor && editor.selection) {
+      
+      if (includeContext && editor && editor.selection) {
         contextCode = editor.document.getText(editor.selection);
+        
+        // If no selection, get the whole file
+        if (!contextCode || contextCode.trim() === '') {
+          contextCode = editor.document.getText();
+        }
+        
+        // Prepend context to message for better AI understanding
+        userMessage = `${userMessage}\n\nSelected code:\n\`\`\`\n${contextCode}\n\`\`\``;
+      }
+
+      // Detect if user wants actual edits but is in non-agentic mode
+      let wantsEdits = /\b(edit|change|modify|update|fix|refactor|optimize|improve|implement)\b/i.test(userMessage);
+      if (wantsEdits && workflowMode !== 'agentic') {
+        const switchToAgentic = await vscode.window.showInformationMessage(
+          '💡 To actually edit files, switch to Agentic mode in the workflow dropdown above. Otherwise I can only provide suggestions.',
+          'Switch to Agentic Mode',
+          'Just Get Suggestions'
+        );
+        
+        if (switchToAgentic === 'Switch to Agentic Mode') {
+          // Inform user to manually switch - we'll handle it next time
+          vscode.window.showInformationMessage('Please select "Agentic" from the workflow dropdown at the top, then ask again! 🚀');
+          return;
+        }
+      }
+
+      // Add user message (with context if included)
+      const userMsg: ChatMessage = {
+        role: 'user',
+        content: userMessage,
+        timestamp: new Date()
+      };
+      this._messages.push(userMsg);
+      this._updateWebview();
+
+      // Check if this should be autonomous execution (agentic mode)
+      if (workflowMode === 'agentic') {
+        // Use new autonomous agent system
+        await this._handleAutonomousExecution(userMessage, selectedModels);
+        return;
       }
 
       // Choose the appropriate endpoint based on workflow
@@ -131,27 +214,21 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         tier: this._licenseManager.isPro() ? 'pro' : 'free'
       };
 
-      if (workflowMode === 'agentic') {
-        endpoint = '/agent/execute';
-        requestBody = {
-          goal: userMessage,
-          code: contextCode,
-          tier: requestBody.tier,
-          isDirectExecution: isDirectExecution || false, // Flag for suggestion clicks
-          autonomyLevel: this._autonomyLevel,
-          permissions: this._permissions
-        };
-      } else if (workflowMode === 'parallel') {
+      if (workflowMode === 'parallel') {
         endpoint = '/run/parallel';
         requestBody = {
           models: selectedModels,
-          prompt: userMessage
+          prompt: userMessage,
+          code: contextCode,
+          options: { readOnly: this._readOnly }
         };
       } else if (workflowMode === 'chain') {
         endpoint = '/run/chain';
         requestBody = {
           models: selectedModels,
-          prompt: userMessage
+          prompt: userMessage,
+          code: contextCode,
+          options: { readOnly: this._readOnly }
         };
       } else {
         // Single model mode
@@ -162,8 +239,10 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         };
       }
 
-      // Call backend API
-      const response = await fetch(`http://localhost:${this._serverPort}${endpoint}`, {
+      // Call backend API - always use port 3000 (OpenRouter backend)
+      const backendPort = 3000;
+      console.log(`[HybridMind] Calling ${endpoint} on port ${backendPort} (mode: ${workflowMode})`);
+      const response = await fetch(`http://localhost:${backendPort}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
@@ -182,13 +261,17 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         throw new Error(data.error.message || 'Unknown API error');
       }
 
+      // Extract data from backend response wrapper
+      const responseData = data.data || data;
+      console.log('[HybridMind] Response:', JSON.stringify(responseData).slice(0, 500));
+
       // Handle multi-model responses
-      if (workflowMode === 'parallel' && data.results) {
+      if (workflowMode === 'parallel' && responseData.results) {
         // Add multiple assistant messages for parallel execution
-        for (const result of data.results) {
+        for (const result of responseData.results) {
           const assistantMsg: ChatMessage = {
             role: 'assistant',
-            content: result.content || result.response,
+            content: result.output || result.content || result.response || 'No response',
             model: result.model,
             timestamp: new Date(),
             tokens: result.usage?.total_tokens,
@@ -196,12 +279,12 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           };
           this._messages.push(assistantMsg);
         }
-      } else if (workflowMode === 'chain' && data.steps) {
+      } else if (workflowMode === 'chain' && responseData.steps) {
         // Add messages for each step in the chain
-        for (const step of data.steps) {
+        for (const step of responseData.steps) {
           const assistantMsg: ChatMessage = {
             role: 'assistant',
-            content: `**${step.model}**: ${step.content || step.response}`,
+            content: `**${step.model}**: ${step.output || step.content || step.response || 'No response'}`,
             model: step.model,
             timestamp: new Date(),
             tokens: step.usage?.total_tokens,
@@ -209,46 +292,44 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           };
           this._messages.push(assistantMsg);
         }
-      } else if (workflowMode === 'agentic' && data.result) {
-        // Agentic workflow with real-time agent steps!
-        if (data.steps && data.steps.length > 0) {
-          // Show each agent step
-          for (const step of data.steps) {
+      } else if (workflowMode === 'agentic') {
+        // Backend agentic workflow (Planner → Executor → Reviewer)
+        const result = responseData;
+        
+        // Show execution steps if available
+        if (result.execution?.results) {
+          for (const step of result.execution.results) {
             const stepMsg: ChatMessage = {
               role: 'assistant',
-              content: `🤖 **${step.action}**${step.tool ? ` using \`${step.tool}\`` : ''}\n${
-                step.result ? `✅ ${step.result.success ? 'Success' : '❌ ' + step.result.error}` : ''
-              }${step.aiResponse ? `\n\n${step.aiResponse}` : ''}`,
-              model: 'Agent Step',
+              content: `**📝 ${step.stepName}** (${step.action})\n${step.success ? '✅' : '❌'} ${step.confirmation?.message || 'Executed'}\n\nChanges: ${step.changes?.linesAdded || 0} added, ${step.changes?.linesRemoved || 0} removed`,
+              model: step.model,
               timestamp: new Date()
             };
             this._messages.push(stepMsg);
           }
         }
         
+        // Show review if available
+        if (result.review) {
+          const reviewMsg: ChatMessage = {
+            role: 'assistant',
+            content: `**🔍 Review**\n\n${result.review.summary || 'Review complete'}\n\n**Quality Score:** ${result.review.qualityScore || 'N/A'}\n**Issues:** ${result.review.issues?.length || 0}`,
+            model: 'Reviewer',
+            timestamp: new Date()
+          };
+          this._messages.push(reviewMsg);
+        }
+        
         // Final result
         const assistantMsg: ChatMessage = {
           role: 'assistant',
-          content: `**🎯 Autonomous Agent Complete**\n\n${data.result}\n\n*${data.plan || 'Task completed'}*`,
-          model: 'Autonomous Agent',
+          content: `**🎯 Agentic Workflow Complete**\n\n${result.finalOutput || 'Task completed successfully'}`,
+          model: 'Workflow Engine',
           timestamp: new Date(),
-          tokens: data.totalTokens,
-          cost: data.totalCost
+          tokens: result.totalUsage?.totalTokens,
+          cost: 0
         };
         this._messages.push(assistantMsg);
-        
-        // Add suggestions if available
-        if (data.suggestions && data.suggestions.length > 0) {
-          const suggestionsMsg: ChatMessage = {
-            role: 'system',
-            content: JSON.stringify({ 
-              type: 'suggestions', 
-              suggestions: data.suggestions 
-            }),
-            timestamp: new Date()
-          };
-          this._messages.push(suggestionsMsg);
-        }
       } else {
         // Single model response - backend returns {success: true, data: {output: "...", model: "..."}}
         const responseData = data.data || data;
@@ -277,6 +358,226 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       this._messages.push(errorMsg);
       this._updateWebview();
     }
+  }
+
+  /**
+   * Handle autonomous agent execution with file discovery and planning
+   */
+  private async _handleAutonomousExecution(userMessage: string, models: string[]) {
+    try {
+      // Show planning message
+      const planningMsg: ChatMessage = {
+        role: 'system',
+        content: '🧠 Analyzing request and creating execution plan...',
+        timestamp: new Date()
+      };
+      this._messages.push(planningMsg);
+      this._updateWebview();
+
+      // Update autonomy manager based on current settings
+      const autonomyLevel = this._autonomyLevel === 3 ? AutonomyLevel.L3 :
+                           this._autonomyLevel === 2 ? AutonomyLevel.L2 :
+                           AutonomyLevel.L1;
+      
+      this._autonomyManager.setLevel(autonomyLevel);
+      this._autonomyManager.updatePermissions({
+        allowFileEdits: this._permissions.edit,
+        allowFileCreation: this._permissions.create,
+        allowFileDeletion: this._permissions.delete,
+        allowTerminalCommands: this._permissions.terminal,
+        allowPackageInstalls: false // Always ask for package installs
+      });
+
+      // Build conversation history (last 3 messages for context)
+      const recentMessages = this._messages
+        .slice(-6) // Last 6 messages (3 exchanges)
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+        .join('\n');
+
+      // Set the selected model for the agent planner
+      const selectedModel = models[0] || 'llama-3.3-70b-versatile';
+      this._agentPlanner.setModel(selectedModel);
+
+      // Create execution plan
+      const plan = await this._agentPlanner.createPlan(userMessage, recentMessages);
+      
+      if (!plan) {
+        const errorMsg: ChatMessage = {
+          role: 'assistant',
+          content: `I encountered an error analyzing your request. Please try again.`,
+          timestamp: new Date()
+        };
+        this._messages.push(errorMsg);
+        this._updateWebview();
+        return;
+      }
+
+      // If no steps, this is a review/analysis-only task
+      if (plan.steps.length === 0) {
+        const reviewMsg: ChatMessage = {
+          role: 'assistant',
+          content: `## 📋 ${plan.goal}\n\n${plan.analysis}\n\n${plan.reasoning ? `**Reasoning:** ${plan.reasoning}` : ''}`,
+          model: 'Agent Planner',
+          timestamp: new Date()
+        };
+        this._messages.push(reviewMsg);
+        this._updateWebview();
+        return;
+      }
+
+      // Show the plan with steps
+      const planMsg: ChatMessage = {
+        role: 'assistant',
+        content: `## 📋 Execution Plan\n\n**Goal:** ${plan.goal}\n\n**Analysis:** ${plan.analysis}\n\n**Steps:**\n${plan.steps.map(s => `${s.id}. ${s.description} (${s.type})`).join('\n')}\n\n**Reasoning:** ${plan.reasoning}\n\nAutonomy Level: **${this._autonomyManager.getLevelDescription()}**`,
+        model: 'Agent Planner',
+        timestamp: new Date()
+      };
+      this._messages.push(planMsg);
+      this._updateWebview();
+
+      // Execute the plan
+      const executionMsg: ChatMessage = {
+        role: 'system',
+        content: '⚙️ Executing plan...',
+        timestamp: new Date()
+      };
+      this._messages.push(executionMsg);
+      this._updateWebview();
+
+      const result = await this._agentPlanner.executePlan(plan, (step, status) => {
+        // Update progress in chat
+        const progressMsg: ChatMessage = {
+          role: 'system',
+          content: `${status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🔄'} Step ${step.id}: ${step.description}`,
+          timestamp: new Date()
+        };
+        this._messages.push(progressMsg);
+        this._updateWebview();
+      });
+
+      // Store result for next steps
+      this._currentExecution = result;
+
+      // Show summary
+      const summaryMsg: ChatMessage = {
+        role: 'assistant',
+        content: result.summary,
+        model: 'Agent Summary',
+        timestamp: new Date()
+      };
+      this._messages.push(summaryMsg);
+
+      // Show file changes summary if any changes were made
+      const changeTracker = this._agentPlanner.getChangeTracker();
+      const changes = changeTracker.getChanges();
+      
+      if (changes.length > 0) {
+        const changeSummary = changeTracker.getSummary();
+        const changesMsg: ChatMessage = {
+          role: 'system',
+          content: JSON.stringify({
+            type: 'fileChanges',
+            summary: changeSummary,
+            changes: changes.map(c => ({
+              file: c.filePath,
+              type: c.changeType
+            }))
+          }),
+          timestamp: new Date()
+        };
+        this._messages.push(changesMsg);
+      }
+
+      // Show next steps as interactive buttons
+      if (result.nextSteps.length > 0) {
+        const nextStepsMsg: ChatMessage = {
+          role: 'system',
+          content: JSON.stringify({
+            type: 'nextSteps',
+            steps: result.nextSteps
+          }),
+          timestamp: new Date()
+        };
+        this._messages.push(nextStepsMsg);
+      } else {
+        const completeMsg: ChatMessage = {
+          role: 'assistant',
+          content: '✨ Task complete! No further actions recommended.',
+          timestamp: new Date()
+        };
+        this._messages.push(completeMsg);
+      }
+
+      this._updateWebview();
+
+    } catch (error: any) {
+      const errorMsg: ChatMessage = {
+        role: 'assistant',
+        content: `❌ Autonomous execution error: ${error.message}`,
+        timestamp: new Date()
+      };
+      this._messages.push(errorMsg);
+      this._updateWebview();
+    }
+  }
+
+  /**
+   * Handle execution of a suggested next step
+   */
+  private async _handleNextStep(stepId: string, models?: string[]) {
+    if (!this._currentExecution || !this._currentExecution.nextSteps) {
+      return;
+    }
+
+    const step = this._currentExecution.nextSteps.find(s => s.id === stepId);
+    if (!step) {
+      return;
+    }
+
+    // Execute the next step as a new autonomous task
+    const nextStepMessage = `${step.title}: ${step.description}`;
+    await this._handleAutonomousExecution(nextStepMessage, models || this._selectedModels);
+  }
+
+  /**
+   * View diff for a specific file change
+   */
+  private async _viewFileDiff(filePath: string) {
+    const changeTracker = this._agentPlanner.getChangeTracker();
+    await changeTracker.showDiff(filePath);
+  }
+
+  /**
+   * Accept all file changes
+   */
+  private _acceptAllChanges() {
+    const changeTracker = this._agentPlanner.getChangeTracker();
+    changeTracker.acceptAll();
+    
+    const confirmMsg: ChatMessage = {
+      role: 'system',
+      content: '✅ All file changes have been accepted.',
+      timestamp: new Date()
+    };
+    this._messages.push(confirmMsg);
+    this._updateWebview();
+  }
+
+  /**
+   * Reject all file changes (revert)
+   */
+  private async _rejectAllChanges() {
+    const changeTracker = this._agentPlanner.getChangeTracker();
+    await changeTracker.rejectAll();
+    
+    const confirmMsg: ChatMessage = {
+      role: 'system',
+      content: '↩️ All file changes have been reverted.',
+      timestamp: new Date()
+    };
+    this._messages.push(confirmMsg);
+    this._updateWebview();
   }
 
   private _updateWebview() {
@@ -714,180 +1015,309 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     .permission-item input {
       cursor: pointer;
     }
+    
+    /* Next Steps Buttons */
+    .next-steps-container {
+      background-color: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 12px;
+      margin: 8px 0;
+    }
+    
+    .next-steps-title {
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: var(--vscode-foreground);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .next-step-btn {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px;
+      margin: 6px 0;
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: 1px solid var(--vscode-button-border);
+      border-radius: 4px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.2s;
+    }
+    
+    .next-step-btn:hover {
+      background-color: var(--vscode-button-hoverBackground);
+      color: var(--vscode-button-foreground);
+      transform: translateY(-1px);
+    }
+    
+    .next-step-title {
+      font-weight: 600;
+      font-size: 12px;
+    }
+    
+    .next-step-desc {
+      font-size: 11px;
+      opacity: 0.9;
+    }
+    
+    .next-step-priority {
+      font-size: 9px;
+      opacity: 0.7;
+      text-transform: uppercase;
+    }
+    
+    .next-step-priority.high { color: #f48771; }
+    
+    .file-changes-container {
+      background-color: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 12px;
+      margin: 10px 0;
+    }
+    
+    .file-changes-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    
+    .file-changes-summary {
+      font-size: 11px;
+      opacity: 0.8;
+      white-space: pre-line;
+      margin-bottom: 12px;
+    }
+    
+    .file-changes-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    
+    .file-change-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background-color: var(--vscode-input-background);
+      border-radius: 4px;
+    }
+    
+    .file-change-type {
+      font-size: 14px;
+    }
+    
+    .file-change-path {
+      flex: 1;
+      font-size: 11px;
+      font-family: var(--vscode-editor-font-family);
+      cursor: pointer;
+    }
+    
+    .file-change-path:hover {
+      text-decoration: underline;
+    }
+    
+    .view-diff-btn {
+      padding: 3px 8px;
+      font-size: 10px;
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: 1px solid var(--vscode-button-border);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    
+    .view-diff-btn:hover {
+      background-color: var(--vscode-button-hoverBackground);
+    }
+    
+    .file-changes-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    
+    .accept-changes-btn, .reject-changes-btn {
+      flex: 1;
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid var(--vscode-button-border);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .accept-changes-btn {
+      background-color: #4CAF50;
+      color: white;
+    }
+    
+    .accept-changes-btn:hover {
+      background-color: #45a049;
+    }
+    
+    .reject-changes-btn {
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    
+    .reject-changes-btn:hover {
+      background-color: var(--vscode-errorForeground);
+      color: white;
+    }
+    .next-step-priority.medium { color: #dcdcaa; }
+    .next-step-priority.low { color: #9cdcfe; }
+    
+    /* Collapsible sections */
+    .config-section {
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    
+    .config-header {
+      padding: 8px 16px;
+      background-color: var(--vscode-sideBar-background);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 600;
+      user-select: none;
+    }
+    
+    .config-header:hover {
+      background-color: var(--vscode-list-hoverBackground);
+    }
+    
+    .config-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    
+    .config-content.expanded {
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    
+    .collapse-icon {
+      transition: transform 0.3s;
+    }
+    
+    .collapse-icon.expanded {
+      transform: rotate(180deg);
+    }
+    
+    .compact-select {
+      width: 100%;
+      padding: 6px 8px;
+      margin: 4px 0;
+      background-color: var(--vscode-dropdown-background);
+      color: var(--vscode-dropdown-foreground);
+      border: 1px solid var(--vscode-dropdown-border);
+      border-radius: 3px;
+      font-size: 11px;
+    }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h4 style="margin: 0 0 8px 0; font-size: 12px;">
-      Select Models <span class="tier-badge">${isPro ? 'PRO: Up to 4' : 'FREE: Up to 2'}</span>
-    </h4>
-    <div class="model-checkboxes">
-      <!-- FREE TIER -->
-      <label class="model-checkbox">
-        <input type="checkbox" value="llama-3.3-70b" class="model-check" checked /> 
-        <span>⚡ Llama 3.3 70B <span class="badge-free">FREE</span></span>
-      </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="llama-3.1-8b" class="model-check" /> 
-        <span>⚡ Llama 3.1 8B Instant <span class="badge-free">FREE</span></span>
-      </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="gemini-flash" class="model-check" /> 
-        <span>⚡ Gemini Flash <span class="badge-free">FREE</span></span>
-      </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="deepseek-v3" class="model-check" /> 
-        <span>⚡ DeepSeek V3 <span class="badge-free">FREE</span></span>
-      </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="deepseek/deepseek-r1-distill-llama-70b" class="model-check" /> 
-        <span>⚡ DeepSeek R1 Distill <span class="badge-free">FREE</span></span>
-      </label>
-      <label class="model-checkbox">
-        <input type="checkbox" value="meta-llama/llama-3.3-70b-instruct" class="model-check" /> 
-        <span>⚡ Llama 3.3 70B OR <span class="badge-free">FREE</span></span>
-      </label>
-      
-      <!-- PREMIUM TIER: REASONING MODELS -->
-      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
-        🧠 REASONING MODELS
-      </div>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="deepseek/deepseek-r1-0528" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>🧠 DeepSeek R1 Latest <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="openai/o3-deep-research" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>🧠 o3 Deep Research <span class="badge-ultra">ULTRA</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="microsoft/phi-4-reasoning-plus" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>🧠 Phi-4 Reasoning <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="deepseek/deepseek-r1" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>🧠 DeepSeek R1 <span class="badge-premium">PRO</span></span>
-      </label>
-      
-      <!-- PREMIUM TIER: BEST MODELS -->
-      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
-        👑 FLAGSHIP MODELS
-      </div>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="openai/gpt-4o" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 GPT-4o <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="anthropic/claude-opus-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 Claude Opus 4.5 <span class="badge-ultra">ULTRA</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="anthropic/claude-sonnet-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 Claude Sonnet 4.5 <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="anthropic/claude-3.5-sonnet" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 Claude 3.5 Sonnet <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="google/gemini-2.5-pro" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>👑 Gemini 2.5 Pro <span class="badge-premium">PRO</span></span>
-      </label>
-      
-      <!-- PREMIUM TIER: FAST & CHEAP -->
-      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
-        ⚡ FAST & AFFORDABLE PRO
-      </div>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="openai/gpt-4o-mini" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>⚡ GPT-4o Mini <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="anthropic/claude-haiku-4.5" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>⚡ Claude Haiku 4.5 <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="google/gemini-2.5-flash" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>⚡ Gemini 2.5 Flash <span class="badge-premium">PRO</span></span>
-      </label>
-      
-      <!-- PREMIUM TIER: SPECIALIZED -->
-      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; color: var(--vscode-descriptionForeground);">
-        🎯 SPECIALIZED MODELS
-      </div>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="mistralai/codestral-2508" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>💻 Codestral 2508 <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="mistralai/devstral-2512" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>💻 Devstral 2512 <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="qwen/qwen-2.5-coder-32b-instruct" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>💻 Qwen Coder <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="qwen/qwen3-coder-plus" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>💻 Qwen 3 Coder Plus <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="perplexity/sonar-pro-search" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>🌐 Perplexity Sonar Pro <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="x-ai/grok-4" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>⚡ Grok 4 <span class="badge-premium">PRO</span></span>
-      </label>
-      <label class="model-checkbox ${isPro ? '' : 'disabled'}">
-        <input type="checkbox" value="meta-llama/llama-3.1-405b-instruct" class="model-check" ${isPro ? '' : 'disabled'} /> 
-        <span>🦙 Llama 405B <span class="badge-premium">PRO</span></span>
-      </label>
+  <!-- Collapsible Model Selection -->
+  <div class="config-section">
+    <div class="config-header" id="modelsHeader">
+      <span>🤖 Models <span class="tier-badge">${isPro ? 'PRO: 4 max' : 'FREE: 2 max'}</span></span>
+      <span class="collapse-icon">▼</span>
     </div>
-    
-    ${!isPro ? `
-    <button class="upgrade-banner" id="upgradeButton">
-      <div class="upgrade-title">
-        <span>⭐</span>
-        <span>Unlock Premium Models</span>
-        <span>⭐</span>
+    <div class="config-content" id="modelsContent">
+      <div style="padding: 8px 16px;">
+        <!-- Quick select dropdowns -->
+        <select class="compact-select" id="freeModelSelect">
+          <option value="">➕ Add Free Model</option>
+          <optgroup label="🔥 Top Free">
+            <option value="llama-3.3-70b">⚡ Llama 3.3 70B</option>
+            <option value="deepseek-r1">🧠 DeepSeek R1 (Reasoning)</option>
+            <option value="qwen3-coder">💻 Qwen3 Coder 480B</option>
+            <option value="devstral">🚀 Devstral 2 (Agentic)</option>
+          </optgroup>
+          <optgroup label="⚡ Fast Free">
+            <option value="gemini-flash">⚡ Gemini 2.0 Flash</option>
+            <option value="deepseek-v3">⚡ DeepSeek V3</option>
+            <option value="mimo-flash">⚡ MiMo V2 Flash</option>
+            <option value="glm-4.5-air">⚡ GLM 4.5 Air</option>
+            <option value="llama-3.1-8b">⚡ Llama 3.1 8B</option>
+          </optgroup>
+        </select>
+        
+        <select class="compact-select" id="proModelSelect" ${isPro ? '' : 'disabled'}>
+          <option value="">➕ Add Premium Model ${isPro ? '' : '(PRO only)'}</option>
+          <optgroup label="💰 Low Cost">
+            <option value="llama-4-maverick">Llama 4 Maverick (1M ctx)</option>
+            <option value="llama-4-scout">Llama 4 Scout</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash Pro</option>
+          </optgroup>
+          <optgroup label="🧠 Reasoning">
+            <option value="o3-mini">OpenAI o3-mini</option>
+            <option value="o1">OpenAI o1 (ULTRA)</option>
+          </optgroup>
+          <optgroup label="👑 Flagship">
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4.1">GPT-4.1 (1M ctx)</option>
+            <option value="claude-sonnet-4">Claude Sonnet 4</option>
+            <option value="claude-opus-4">Claude Opus 4 (ULTRA)</option>
+            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+            <option value="grok-3">Grok 3 Beta</option>
+          </optgroup>
+        </select>
+        
+        <!-- Selected models -->
+        <div id="selectedModelsContainer" style="margin-top: 8px;"></div>
       </div>
-      <div class="upgrade-desc">
-        Access 25+ AI models including Claude 4.5, GPT-4o, Gemini 2.5 Pro
-      </div>
-      <div class="upgrade-features">
-        🚀 Up to 4 models simultaneously • 🧠 Advanced reasoning • 💎 Premium support
-      </div>
-    </button>
-    ` : ''}
-    
-    <select id="workflowSelector" class="workflow-selector">
-      <option value="single">🎯 Single (Use first selected)</option>
-      <option value="parallel">⚡ Parallel (All models respond)</option>
-      <option value="chain">🔗 Chain (Sequential refinement)</option>
-      <option value="agentic">🤖 Agentic (Planner → Executor → Reviewer)</option>
+    </div>
+  </div>
+  
+  <!-- Workflow Selection (always visible) -->
+  <div style="padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border);">
+    <select id="workflowSelector" class="compact-select">
+      <option value="single">🎯 Single Model</option>
+      <option value="parallel">⚡ Parallel (All respond)</option>
+      <option value="chain">🔗 Chain (Sequential)</option>
+      <option value="agentic">🤖 Agentic (Autonomous)</option>
     </select>
-    
-    <!-- Autonomy Control Panel (only visible in agentic mode) -->
-    <div id="autonomyPanel" class="autonomy-panel" style="display: none;">
-      <div style="font-weight: bold; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;">
-        <span>⚙️ Autonomy Level</span>
-      </div>
-      <div class="autonomy-level">
-        <div class="level-option" data-level="1">
-          <div>🟢 L1</div>
-          <div style="font-size: 9px; margin-top: 2px;">Advisory</div>
+  </div>
+  
+  <!-- Collapsible Autonomy Panel -->
+  <div class="config-section" id="autonomySection" style="display: none;">
+    <div class="config-header" id="autonomyHeader">
+      <span>⚙️ Autonomy Settings</span>
+      <span class="collapse-icon">▼</span>
+    </div>
+    <div class="config-content" id="autonomyContent">
+      <div style="padding: 8px 16px;">
+        <div class="autonomy-level">
+          <div class="level-option" data-level="1">
+            <div>🟢 L1</div>
+            <div style="font-size: 9px; margin-top: 2px;">Advisory</div>
+          </div>
+          <div class="level-option" data-level="2">
+            <div>🟡 L2</div>
+            <div style="font-size: 9px; margin-top: 2px;">Assisted</div>
+          </div>
+          <div class="level-option active" data-level="3">
+            <div>🔴 L3</div>
+            <div style="font-size: 9px; margin-top: 2px;">Full Auto</div>
+          </div>
         </div>
-        <div class="level-option" data-level="2">
-          <div>🟡 L2</div>
-          <div style="font-size: 9px; margin-top: 2px;">Assisted</div>
-        </div>
-        <div class="level-option active" data-level="3">
-          <div>🔴 L3</div>
-          <div style="font-size: 9px; margin-top: 2px;">Full Auto</div>
-        </div>
-      </div>
-      <div class="permissions-grid">
+        <div class="permissions-grid" style="margin-top: 8px;">
         <label class="permission-item">
           <input type="checkbox" class="perm-check" data-perm="read" checked />
           <span>📂 Read files</span>
@@ -920,6 +1350,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           <input type="checkbox" class="perm-check" data-perm="network" />
           <span>🌐 Network</span>
         </label>
+        </div>
       </div>
     </div>
   </div>
@@ -928,6 +1359,14 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     <button class="toolbar-button" id="clearButton">🗑️ Clear Chat</button>
     <button class="toolbar-button" id="contextButton">📎 Include Selection</button>
   </div>
+  
+  ${!isPro ? `
+  <div style="padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border);">
+    <button class="upgrade-banner" id="upgradeButton" style="width: 100%; padding: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px;">
+      ⭐ Upgrade to Pro - Unlock Premium Models
+    </button>
+  </div>
+  ` : ''}
   
   <div class="messages-container" id="messagesContainer">
     <div class="empty-state">
@@ -961,7 +1400,6 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     const sendButton = document.getElementById('sendButton');
     const workflowSelector = document.getElementById('workflowSelector');
     const clearButton = document.getElementById('clearButton');
-    const modelCheckboxes = document.querySelectorAll('.model-check');
     const upgradeButton = document.getElementById('upgradeButton');
     
     const MAX_MODELS = ${maxModels};
@@ -991,13 +1429,112 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       network: false
     };
 
+    // Collapsible sections
+    function setupCollapse(headerId, contentId) {
+      const header = document.getElementById(headerId);
+      const content = document.getElementById(contentId);
+      if (!header || !content) return;
+      
+      const icon = header.querySelector('.collapse-icon');
+      
+      header.addEventListener('click', () => {
+        content.classList.toggle('expanded');
+        if (icon) icon.classList.toggle('expanded');
+      });
+    }
+    
+    setupCollapse('modelsHeader', 'modelsContent');
+    setupCollapse('autonomyHeader', 'autonomyContent');
+    
+    // Model selection from dropdowns
+    const selectedModelsContainer = document.getElementById('selectedModelsContainer');
+    const freeModelSelect = document.getElementById('freeModelSelect');
+    const proModelSelect = document.getElementById('proModelSelect');
+    
+    function renderSelectedModels() {
+      selectedModelsContainer.innerHTML = selectedModels.map(model => {
+        const modelNames = {
+          // Free models
+          'llama-3.3-70b': '⚡ Llama 3.3 70B',
+          'llama-3.1-8b': '⚡ Llama 3.1 8B',
+          'gemini-flash': '⚡ Gemini Flash',
+          'deepseek-v3': '⚡ DeepSeek V3',
+          'deepseek-r1': '🧠 DeepSeek R1',
+          'qwen3-coder': '💻 Qwen3 Coder',
+          'devstral': '🚀 Devstral 2',
+          'mimo-flash': '⚡ MiMo Flash',
+          'glm-4.5-air': '⚡ GLM 4.5 Air',
+          // Low cost
+          'llama-4-maverick': '🦙 Llama 4 Maverick',
+          'llama-4-scout': '🦙 Llama 4 Scout',
+          'gemini-2.0-flash': '⚡ Gemini 2.0 Flash',
+          // Premium
+          'gpt-4o': '👑 GPT-4o',
+          'gpt-4.1': '👑 GPT-4.1',
+          'claude-sonnet-4': '👑 Claude Sonnet 4',
+          'claude-opus-4': '👑 Claude Opus 4',
+          'gemini-2.5-pro': '👑 Gemini 2.5 Pro',
+          'grok-3': '👑 Grok 3',
+          'o3-mini': '🧠 o3-mini',
+          'o1': '🧠 o1'
+        };
+        const displayName = modelNames[model] || model;
+        return \`
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 3px; margin: 2px 0; font-size: 11px;">
+            <span>\${displayName}</span>
+            <button onclick="removeModel('\${model}')" style="background: none; border: none; color: var(--vscode-foreground); cursor: pointer; opacity: 0.6; padding: 2px 6px;">✕</button>
+          </div>
+        \`;
+      }).join('');
+    }
+    
+    window.removeModel = function(model) {
+      selectedModels = selectedModels.filter(m => m !== model);
+      renderSelectedModels();
+      vscode.postMessage({ type: 'changeModels', models: selectedModels });
+    };
+    
+    freeModelSelect.addEventListener('change', (e) => {
+      const model = e.target.value;
+      if (model && !selectedModels.includes(model)) {
+        if (selectedModels.length >= MAX_MODELS) {
+          alert(\`\${IS_PRO ? 'Pro' : 'Free'} tier limited to \${MAX_MODELS} models!\`);
+          e.target.value = '';
+          return;
+        }
+        selectedModels.push(model);
+        renderSelectedModels();
+        vscode.postMessage({ type: 'changeModels', models: selectedModels });
+      }
+      e.target.value = '';
+    });
+    
+    proModelSelect.addEventListener('change', (e) => {
+      const model = e.target.value;
+      if (model && !selectedModels.includes(model)) {
+        if (selectedModels.length >= MAX_MODELS) {
+          alert(\`Pro tier limited to \${MAX_MODELS} models!\`);
+          e.target.value = '';
+          return;
+        }
+        selectedModels.push(model);
+        renderSelectedModels();
+        vscode.postMessage({ type: 'changeModels', models: selectedModels });
+      }
+      e.target.value = '';
+    });
+    
+    // Initial render
+    renderSelectedModels();
+    renderMessages();
+
     // Autonomy panel visibility
-    const autonomyPanel = document.getElementById('autonomyPanel');
+    const autonomySection = document.getElementById('autonomySection');
     workflowSelector.addEventListener('change', () => {
       if (workflowSelector.value === 'agentic') {
-        autonomyPanel.style.display = 'block';
+        autonomySection.style.display = 'block';
       } else {
-        autonomyPanel.style.display = 'none';
+        autonomySection.style.display = 'none';
       }
       vscode.postMessage({
         type: 'changeWorkflow',
@@ -1044,40 +1581,6 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       });
     });
 
-    // Handle model checkbox changes
-    modelCheckboxes.forEach(checkbox => {
-      checkbox.addEventListener('change', () => {
-        selectedModels = Array.from(modelCheckboxes)
-          .filter(cb => cb.checked)
-          .map(cb => cb.value);
-        
-        // Enforce max models limit
-        if (selectedModels.length > MAX_MODELS) {
-          checkbox.checked = false;
-          selectedModels = selectedModels.slice(0, MAX_MODELS);
-          alert(\`\${IS_PRO ? 'Pro' : 'Free'} tier limited to \${MAX_MODELS} models!\`);
-        }
-        
-        // Update disabled state
-        if (selectedModels.length >= MAX_MODELS) {
-          modelCheckboxes.forEach(cb => {
-            if (!cb.checked) {
-              cb.parentElement.classList.add('disabled');
-            }
-          });
-        } else {
-          modelCheckboxes.forEach(cb => {
-            cb.parentElement.classList.remove('disabled');
-          });
-        }
-        
-        vscode.postMessage({
-          type: 'changeModels',
-          models: selectedModels
-        });
-      });
-    });
-
     // Handle message sending
     sendButton.addEventListener('click', sendMessage);
     messageInput.addEventListener('keydown', (e) => {
@@ -1106,7 +1609,8 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         type: 'sendMessage',
         message: message,
         models: selectedModels,
-        workflow: workflowSelector.value
+        workflow: workflowSelector.value,
+        includeContext: includeContext  // Send context flag to extension
       });
 
       messageInput.value = '';
@@ -1136,10 +1640,18 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         includeContext ? '📎 Context On' : '📎 Include Selection';
     });
 
-    // Suggestion clicks
+    // Suggestion clicks - auto-enable context for code-related prompts
     document.querySelectorAll('.suggestion').forEach(btn => {
       btn.addEventListener('click', () => {
-        messageInput.value = btn.dataset.prompt;
+        const prompt = btn.dataset.prompt;
+        messageInput.value = prompt;
+        
+        // Auto-enable context for prompts that mention "code" or "selected"
+        if (prompt.toLowerCase().includes('code') || prompt.toLowerCase().includes('selected')) {
+          includeContext = true;
+          document.getElementById('contextButton').textContent = '📎 Context On';
+        }
+        
         sendMessage();
       });
     });
@@ -1173,7 +1685,15 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         // Re-attach suggestion listeners
         document.querySelectorAll('.suggestion').forEach(btn => {
           btn.addEventListener('click', () => {
-            messageInput.value = btn.dataset.prompt;
+            const prompt = btn.dataset.prompt;
+            messageInput.value = prompt;
+            
+            // Auto-enable context for prompts that mention "code" or "selected"
+            if (prompt.toLowerCase().includes('code') || prompt.toLowerCase().includes('selected')) {
+              includeContext = true;
+              document.getElementById('contextButton').textContent = '📎 Context On';
+            }
+            
             sendMessage();
           });
         });
@@ -1193,8 +1713,16 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
             if (data.type === 'suggestions' && data.suggestions) {
               return renderSuggestions(data.suggestions);
             }
+            // Handle next steps buttons
+            if (data.type === 'nextSteps' && data.steps) {
+              return renderNextSteps(data.steps);
+            }
+            // Handle file changes UI
+            if (data.type === 'fileChanges' && data.changes) {
+              return renderFileChanges(data.summary, data.changes);
+            }
           } catch (e) {
-            // Not a suggestions message, render normally
+            // Not a JSON message, render normally
           }
         }
         
@@ -1236,6 +1764,45 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           });
         });
       });
+      
+      // Add next-step button listeners
+      document.querySelectorAll('.next-step-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const stepId = btn.dataset.stepId;
+          vscode.postMessage({
+            type: 'executeNextStep',
+            stepId: stepId,
+            models: selectedModels
+          });
+        });
+      });
+
+      // Add file change button listeners
+      document.querySelectorAll('.view-diff-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const filePath = btn.dataset.filePath;
+          vscode.postMessage({
+            type: 'viewDiff',
+            filePath: filePath
+          });
+        });
+      });
+
+      document.querySelectorAll('.accept-changes-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          vscode.postMessage({
+            type: 'acceptChanges'
+          });
+        });
+      });
+
+      document.querySelectorAll('.reject-changes-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          vscode.postMessage({
+            type: 'rejectChanges'
+          });
+        });
+      });
     }
     
     function renderSuggestions(suggestions) {
@@ -1271,6 +1838,71 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
                 </div>
               \`).join('')}
             </div>
+          </div>
+        </div>
+      \`;
+    }
+
+    function renderNextSteps(steps) {
+      const priorityEmoji = {
+        'high': '🔴',
+        'medium': '🟡',
+        'low': '🟢'
+      };
+      
+      return \`
+        <div class="next-steps-container">
+          <div class="next-steps-title">🚀 Suggested Next Actions</div>
+          \${steps.map(step => \`
+            <button class="next-step-btn" data-step-id="\${step.id}">
+              <div class="next-step-title">
+                <span class="next-step-priority \${step.priority}">\${priorityEmoji[step.priority]} \${step.priority.toUpperCase()}</span>
+                • \${escapeHtml(step.title)}
+              </div>
+              <div class="next-step-desc">\${escapeHtml(step.description)}</div>
+              <div style="font-size: 10px; opacity: 0.6; margin-top: 4px; font-style: italic;">
+                💭 \${escapeHtml(step.reasoning)}
+              </div>
+            </button>
+          \`).join('')}
+          <div style="margin-top: 8px; font-size: 10px; opacity: 0.7; text-align: center;">
+            Click any action to execute it autonomously
+          </div>
+        </div>
+      \`;
+    }
+
+    function renderFileChanges(summary, changes) {
+      const typeEmoji = {
+        'edit': '✏️',
+        'create': '➕',
+        'delete': '🗑️'
+      };
+      
+      return \`
+        <div class="file-changes-container">
+          <div class="file-changes-header">
+            <span style="font-size: 18px;">📝</span>
+            <span style="font-weight: 600; margin-left: 8px;">File Changes</span>
+          </div>
+          <div class="file-changes-summary">\${escapeHtml(summary)}</div>
+          <div class="file-changes-list">
+            \${changes.map(change => \`
+              <div class="file-change-item">
+                <span class="file-change-type">\${typeEmoji[change.type]}</span>
+                <span class="file-change-path" data-file-path="\${change.file}">
+                  \${change.file.split(/[\\/\\\\]/).pop()}
+                </span>
+                <button class="view-diff-btn" data-file-path="\${change.file}">View Diff</button>
+              </div>
+            \`).join('')}
+          </div>
+          <div class="file-changes-actions">
+            <button class="accept-changes-btn">✅ Accept All Changes</button>
+            <button class="reject-changes-btn">↩️ Reject All Changes</button>
+          </div>
+          <div style="margin-top: 8px; font-size: 10px; opacity: 0.7; text-align: center;">
+            Changes are tracked until you accept or reject them
           </div>
         </div>
       \`;

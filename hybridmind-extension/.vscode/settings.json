@@ -1,0 +1,9 @@
+{
+  "debug.javascript.automaticallyTunnelRemoteServer": false,
+  "extensions.ignoreRecommendations": true,
+  "dotenv.enableAutocloaking": false,
+  "files.watcherExclude": {
+    "**/.env": true,
+    "**/.env.*": true
+  }
+}

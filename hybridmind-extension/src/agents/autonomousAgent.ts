@@ -149,37 +149,77 @@ export class AutonomousAgent {
             });
           }
         } else if (currentFile) {
-          // Read active file if no specific file mentioned
-          const readResult = await AgentTools.readFile(currentFile);
+          // User has a file open - check if they want to analyze it
+          const hasSelection = selection && !selection.isEmpty;
+          const wantsToAnalyze = /review|analyze|check|improve|optimize|refactor|explain/i.test(goal);
+          const fileName = currentFile.split(/[/\\]/).pop() || '';
+          const isEnvFile = fileName === '.env' || fileName.endsWith('.env');
           
-          this.steps.push({
-            action: `📖 Read file: ${currentFile.split('\\').pop()}`,
-            tool: 'readFile',
-            parameters: { path: currentFile },
-            result: readResult
-          });
-          
-          if (readResult.success && readResult.data) {
-            currentContent = readResult.data.content;
-            context = `Current file: ${currentFile}\nFile content:\n${currentContent}\n\n`;
+          if (hasSelection) {
+            // They selected code - use only the selection
+            context += `File: ${fileName}\nSelected code:\n${selection.text}\n\n`;
+          } else if (wantsToAnalyze && !isEnvFile) {
+            // They want to analyze but haven't selected - read the whole file (except .env files)
+            const readResult = await AgentTools.readFile(currentFile);
+            
+            this.steps.push({
+              action: `📖 Read file: ${fileName}`,
+              tool: 'readFile',
+              parameters: { path: currentFile },
+              result: readResult
+            });
+            
+            if (readResult.success && readResult.data) {
+              currentContent = readResult.data.content;
+              context = `Current file: ${currentFile}\nFile content:\n${currentContent}\n\n`;
+            }
+          } else if (isEnvFile && wantsToAnalyze) {
+            // .env file - don't read it, ask user what they want to review
+            context = '';
+            // This will trigger the "ask for clarification" prompt below
           }
-        }
-        
-        // If there's a selection, include it
-        if (selection && !selection.isEmpty) {
-          context += `Selected code:\n${selection.text}\n\n`;
         }
       }
 
       // STEP 1: Execute based on mode
       let analysisPrompt = '';
       
+      // Check if this is a review/analysis request (not an action request)
+      // Matches: "review X", "how can I optimize", "what about", "analyze this", etc.
+      const isAnalysisOnly = /(review|analyze|check|explain|what|how|show|tell me|describe|evaluate|assess|examine|inspect|look at|should i|can i optimize|opportunities)/i.test(goal);
+      
       if (isDirectExecution) {
         // Direct execution mode - user clicked a suggestion, skip analysis and GO!
         analysisPrompt = this.getFullAutonomousPrompt(goal, context, currentFile);
-      } else {
-        // Analysis mode - behavior depends on autonomy level
-        if (this.autonomyLevel === 1) {
+      } else if (isAnalysisOnly && !context) {
+        // User wants to review something but no context provided
+        analysisPrompt = `You are a helpful coding assistant. The user asked: "${goal}"
+
+However, there's no code or file selected for you to review. 
+
+Respond naturally and ask them to:
+- Open a specific code file they want reviewed
+- Select code they want you to analyze  
+- Tell you which file or function to look at
+
+Be conversational and helpful. For example: "I'd be happy to review your code! Could you please select the code you'd like me to review, or tell me which file you want me to look at?"`;
+      } else if (isAnalysisOnly) {
+        // User wants analysis/review only, not execution - regardless of autonomy level
+        analysisPrompt = `You are a code review expert. Analyze this code and provide detailed feedback.
+
+User request: "${goal}"
+
+${context}
+
+Provide a thorough analysis covering:
+- Code quality and best practices
+- Potential issues or bugs
+- Performance considerations  
+- Security concerns
+- Suggestions for improvement
+
+Be specific and actionable. DO NOT write tool calls or pseudo-code - just provide your analysis in natural language.`;
+      } else if (this.autonomyLevel === 1) {
           // Advisory Mode: Analyze and suggest only, NO execution
           analysisPrompt = `You are a code advisor. Analyze this code and provide suggestions.
 
@@ -211,17 +251,36 @@ Do NOT execute yet - just present the plan.`;
           // Full Autonomous Mode: Analyze → Plan → Execute → Verify
           analysisPrompt = this.getFullAutonomousPrompt(goal, context, currentFile);
         }
-      }
 
       // STEP 2: Get AI response
-      const analysisResponse = await this.runModel('llama-3.3-70b', analysisPrompt);
+      const analysisResponse = await this.runModel('deepseek-chat', analysisPrompt);
       
       this.steps.push({
         action: '🧠 Analyze file content',
         aiResponse: analysisResponse.content
       });
 
-      // STEP 2: Determine if additional actions are needed
+      // STEP 3: Execute based on autonomy level and request type
+      // L1 (Advisory): Never execute, just return analysis
+      // L2 (Assisted): Present plan, don't execute (user must approve via suggestions)
+      // L3 (Full Auto): Execute autonomously if not a review-only request
+      // Review requests: Never execute, regardless of level
+      
+      const shouldExecute = !isAnalysisOnly && this.autonomyLevel === 3 && !isDirectExecution;
+      
+      if (!shouldExecute) {
+        // Return analysis only
+        const suggestions = await this.suggestNextSteps(goal, this.steps, currentFile, currentContent);
+        
+        return {
+          success: true,
+          steps: this.steps,
+          finalResult: analysisResponse.content,
+          suggestions
+        };
+      }
+
+      // STEP 4: For L3 Full Auto - Determine if additional actions are needed
       const actionPrompt = `Based on this task: "${goal}"
 And this analysis: ${analysisResponse.content}
 
@@ -234,7 +293,7 @@ gitCommit - message: "fix bugs"
 
 Or just: DONE`;
 
-      const actionResponse = await this.runModel('llama-3.3-70b', actionPrompt);
+      const actionResponse = await this.runModel('deepseek-chat', actionPrompt);
       
       if (!actionResponse.content.includes('DONE')) {
         const toolCalls = this.parseToolCalls(actionResponse.content);
@@ -278,7 +337,7 @@ Or just: DONE`;
   }
 
   /**
-   * Suggest logical next steps based on completed work
+   * Suggest logical next steps based on completed work and AI response
    * Uses a reasoning-focused model to anticipate user needs
    */
   async suggestNextSteps(
@@ -288,37 +347,40 @@ Or just: DONE`;
     fileContent: string
   ): Promise<AgentSuggestion[]> {
     try {
+      // Get the agent's actual response from the last step
+      const lastResponse = completedSteps.find(s => s.aiResponse)?.aiResponse || '';
+      
       // Use Gemini for fast, smart reasoning about next steps
       const suggestionPrompt = `You just helped a user with: "${originalGoal}"
 
-Current file: ${currentFile}
-File type: ${this.getFileType(currentFile)}
+Agent's response to the user:
+${lastResponse}
 
 Steps completed:
 ${completedSteps.map((s, i) => `${i + 1}. ${s.action}`).join('\n')}
 
-Based on this context, suggest 2-3 logical next actions the user might want to take.
-For each suggestion, consider:
-- Natural workflow progression (what typically comes next?)
-- Common developer patterns (test after code change, commit after test, etc.)
-- File-specific needs (.env → check security, add missing vars; code → add tests, docs)
+Based on the AGENT'S ACTUAL RESPONSE and what was accomplished, suggest 2-3 logical next actions.
+The suggestions must be DIRECTLY RELATED to what the agent discussed, NOT generic file-type suggestions.
+
+For example:
+- If agent mentioned security issues, suggest "Fix security vulnerabilities"
+- If agent suggested refactoring, suggest "Implement the refactoring"  
+- If agent found bugs, suggest "Fix the identified bugs"
+- If agent provided analysis only, suggest implementing their recommendations
 
 Respond ONLY with a JSON array (no markdown, no backticks):
 [
   {
     "title": "Short action title (4-6 words)",
-    "description": "One sentence explaining why this helps",
-    "task": "Precise instruction the agent will execute",
+    "description": "One sentence explaining why (based on agent's response)",
+    "task": "Precise instruction referencing agent's specific recommendations",
     "priority": "high|medium|low",
     "model": "best model for this task (qwen-max for code, gemini-2.0-flash-exp for reasoning, deepseek-chat for refactoring)"
   }
 ]
 
-Example for .env file analysis:
-[
-  {"title": "Validate API Keys", "description": "Test if all API keys are valid and working", "task": "Write a test script to validate each API key by making a test request", "priority": "high", "model": "qwen-max"},
-  {"title": "Add Security Best Practices", "description": "Ensure .env is in .gitignore and add .env.example", "task": "Check if .env is in .gitignore, create .env.example with placeholder values", "priority": "medium", "model": "deepseek-chat"}
-]`;
+If the agent just asked for clarification or didn't provide actionable recommendations, return: []
+`;
 
       const response = await this.runModel('gemini-2.0-flash-exp', suggestionPrompt);
       
@@ -463,13 +525,14 @@ Example for .env file analysis:
 You are an autonomous multi-model software engineering agent with full authority to modify files, create new files, refactor entire codebases, run terminal commands, and execute multi-step plans without waiting for user micromanagement.
 
 CORE DIRECTIVES
-1. Take meaningful actions, not small edits.
-2. Never produce placeholders, pseudo-code, or "example" structures.
-3. Always produce real, production-ready code.
-4. When modifying files, provide COMPLETE file content, not partial edits.
-5. When running commands, use actual terminal commands (npm, git, etc).
-6. Break tasks into clear, actionable steps and execute them sequentially.
-7. Use tools immediately - don't describe what you'll do, DO IT.
+1. If no code or file context is provided, ask the user what they want you to work on.
+2. Take meaningful actions, not small edits.
+3. Never produce placeholders, pseudo-code, or "example" structures.
+4. Always produce real, production-ready code.
+5. When modifying files, provide COMPLETE file content, not partial edits.
+6. When running commands, use actual terminal commands (npm, git, etc).
+7. Break tasks into clear, actionable steps and execute them sequentially.
+8. Use tools immediately - don't describe what you'll do, DO IT.
 
 PERMISSIONS GRANTED: ${permList}
 
@@ -489,10 +552,10 @@ ${this.permissions.terminal ? '- gitCommit(message): Commit to git' : ''}
 USER REQUEST: "${goal}"
 
 CONTEXT:
-${context}
+${context || 'No code or file is currently selected. Ask the user what they want you to work on, or use searchFiles to find relevant files.'}
 
 WORKFLOW:
-1. ANALYZE: Understand what needs to be done
+1. ANALYZE: Understand what needs to be done. If no context, ask user for clarification.
 2. PLAN: Break into 3-7 specific steps  
 3. EXECUTE: Use tools immediately for each step
 4. VERIFY: Confirm changes worked
@@ -516,10 +579,11 @@ executeCommand(npm test)
 \`\`\`
 
 CRITICAL RULES:
+- If no context is provided and request is ambiguous, ask "What file or code would you like me to review/work on?"
 - NO PLACEHOLDERS OR EXAMPLES - Real code only
 - NO "You should..." suggestions - Execute actions
 - NO partial file edits - Complete implementations
-- Execute tools in EVERY response
+- Execute tools in EVERY response (unless asking for clarification)
 - Don't ask permission - you have autonomy level ${this.autonomyLevel}
 
 BEGIN EXECUTION NOW:`;

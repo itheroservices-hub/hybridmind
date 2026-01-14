@@ -91,7 +91,8 @@ class ResponseFormatter {
         results: result.results.map(r => ({
           model: r.model,
           output: r.output,
-          success: r.success
+          success: r.success,
+          error: r.error
         }))
       },
       {

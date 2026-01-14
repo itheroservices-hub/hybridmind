@@ -16,7 +16,24 @@ async function callModel(model, prompt, code) {
 }
 
 module.exports = async function runService(models, prompt, code) {
+module.exports = async function runService(models, prompt, code) {
+  if (!Array.isArray(models) && typeof models !== 'string') {
+    throw new Error('Models must be an array or a single model name');
+  }
+  if (Array.isArray(models) && models.length === 0) {
+    throw new Error('Models array cannot be empty');
+  }
   // If user only selects one model, run normally
+  if (!Array.isArray(models) || models.length === 1) {
+    return await callModel(Array.isArray(models) ? models[0] : models, prompt, code);
+  }
+  // Multi-model chaining
+  let currentOutput = code;
+  for (const model of models) {
+    currentOutput = await callModel(model, prompt, currentOutput);
+  }
+  return currentOutput;
+}  // If user only selects one model, run normally
   if (!Array.isArray(models) || models.length === 1) {
     return await callModel(models[0], prompt, code);
   }

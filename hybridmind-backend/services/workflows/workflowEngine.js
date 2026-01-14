@@ -7,8 +7,14 @@ const logger = require('../../utils/logger');
 
 /**
  * Workflow Engine - Orchestrates complete agent workflows
+ * Enhanced for autonomous, step-by-step execution
  */
 class WorkflowEngine {
+  constructor() {
+    // State for autonomous execution
+    this.activePlan = null;
+    this.executionContext = {};
+  }
   /**
    * Execute a preset workflow
    * @param {Object} params
@@ -121,11 +127,13 @@ class WorkflowEngine {
       code,
       context: {
         goal,
-        strategy: planResult.strategy
+        strategy: planResult.strategy,
+        readOnly: options.readOnly || options.dryRun
       },
       options: {
         model: options.executorModel || models.executor,
-        stopOnError: options.stopOnError !== false
+        stopOnError: options.stopOnError !== false,
+        readOnly: options.readOnly || options.dryRun
       }
     });
 
@@ -195,7 +203,10 @@ class WorkflowEngine {
             estimatedComplexity: 'moderate'
           },
           code,
-          model: modelId
+          model: modelId,
+          context: {
+            readOnly: options.readOnly || options.dryRun
+          }
         });
 
         results.push({
@@ -249,7 +260,8 @@ class WorkflowEngine {
           code: currentCode,
           context: {
             chainPosition: i + 1,
-            totalModels: models.length
+            totalModels: models.length,
+            readOnly: options.readOnly || options.dryRun
           },
           model: modelId
         });
@@ -360,6 +372,140 @@ class WorkflowEngine {
       }),
       { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
     );
+  }
+
+  /**
+   * Initialize plan for autonomous execution
+   * @param {Object} params
+   * @param {string} params.goal - High-level goal
+   * @param {string} params.code - Code context
+   * @param {Object} params.options - Execution options
+   * @returns {Promise<Object>} Plan initialization result
+   */
+  async initializePlan({ goal, code, options = {} }) {
+    logger.info(`🚀 Initializing autonomous plan: ${goal}`);
+
+    // Create plan with autonomous mode enabled
+    const planResult = await planner.createPlan({
+      goal,
+      code,
+      model: options.plannerModel,
+      autonomous: true
+    });
+
+    // Validate plan
+    const validation = planner.validatePlan(planResult);
+
+    if (!validation.valid) {
+      logger.warn(`Plan validation issues: ${validation.issues.join(', ')}`);
+    }
+
+    // Initialize executor with plan
+    executor.setPlan(planResult);
+    this.activePlan = planResult;
+    this.executionContext = { goal, code, options };
+
+    logger.info(`📋 Plan initialized: ${validation.stepCount} steps`);
+
+    return {
+      plan: planResult,
+      validation,
+      status: executor.getStatus()
+    };
+  }
+
+  /**
+   * Execute next step in active plan
+   * @param {Object} params
+   * @param {string} params.code - Current code state
+   * @param {Object} params.context - Additional context
+   * @returns {Promise<Object>} Execution result
+   */
+  async executeNext({ code, context = {} }) {
+    if (!this.activePlan) {
+      throw new Error('No active plan. Call /agent/plan first to initialize.');
+    }
+
+    logger.info('▶️  Executing next step...');
+
+    const result = await executor.executeNext({
+      code,
+      context: {
+        ...this.executionContext,
+        ...context
+      }
+    });
+
+    return result;
+  }
+
+  /**
+   * Undo last executed step
+   * @returns {Promise<Object>} Undo result
+   */
+  async undo() {
+    logger.info('↩️  Undoing last step...');
+    return await executor.undo();
+  }
+
+  /**
+   * Get current execution status
+   * @returns {Object} Status information
+   */
+  getExecutionStatus() {
+    return {
+      ...executor.getStatus(),
+      activePlan: this.activePlan ? {
+        strategy: this.activePlan.strategy,
+        totalSteps: this.activePlan.steps?.length || 0
+      } : null,
+      context: this.executionContext
+    };
+  }
+
+  /**
+   * Execute specific step by index
+   * @param {Object} params
+   * @param {number} params.stepIndex - Step index (0-based)
+   * @param {string} params.code - Current code state
+   * @param {Object} params.context - Additional context
+   * @returns {Promise<Object>} Execution result
+   */
+  async executeStepByIndex({ stepIndex, code, context = {} }) {
+    if (!this.activePlan) {
+      throw new Error('No active plan. Call /agent/plan first to initialize.');
+    }
+
+    const step = this.activePlan.steps[stepIndex];
+    
+    if (!step) {
+      throw new Error(`Invalid step index: ${stepIndex}`);
+    }
+
+    logger.info(`🎯 Executing selected step [${stepIndex + 1}]: ${step.name}`);
+
+    const result = await executor.executeStep({
+      step,
+      code,
+      context: {
+        ...this.executionContext,
+        ...context,
+        selectedStep: stepIndex
+      },
+      autonomous: true
+    });
+
+    return result;
+  }
+
+  /**
+   * Reset execution state
+   */
+  reset() {
+    this.activePlan = null;
+    this.executionContext = {};
+    executor.setPlan({ steps: [] });
+    logger.info('🔄 Execution state reset');
   }
 }
 
