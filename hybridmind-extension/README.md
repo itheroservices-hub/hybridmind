@@ -1,90 +1,45 @@
-# HybridMind AI Assistant v1.5
+# HybridMind
 
-**Multi-model AI orchestration platform with 40+ premium models via OpenRouter.** Autonomous agents, multi-step workflows, transparent pricing, and the best AI models for each task - all from within VS Code.
+Multi-model AI coding assistant with autonomous agent capabilities and intelligent model orchestration.
 
-## ✨ What's New in v1.5
+## Features
 
-🤖 **Autonomous Agent System** - Fully operational multi-step code modifications with AI planning  
-🔄 **Undo Functionality** - 10-step history to revert any autonomous changes  
-📊 **Real-Time Progress Tracking** - Monitor execution status for each workflow step  
-🎯 **OpenRouter Integration** - Access to 40+ premium models with a single API key  
-⚡ **Latest AI Models** - o1, Claude 4.5, Gemini 2.5, DeepSeek R1, Grok 2, and more  
-💰 **Transparent Pricing** - See exact costs for each model ($0.09 to $75 per 1M tokens)  
-🆓 **Free Tier** - 5 ultra-efficient models + 7-day Pro trial (100K tokens/day)  
-💎 **Pro Tier** - Unlimited access to all premium models including o1 and Claude Opus 4.5  
-🛠️ **Smart Execution** - AI-powered plan generation with context-aware validation  
-🔍 **Task-Specific Models** - Automatic model selection based on task type
+**Autonomous Agents** - Natural language task execution with multi-step planning  
+**Multi-Model Orchestration** - Route tasks to specialized models automatically  
+**Intelligent Caching** - Reduce API costs with prompt caching  
+**Flexible Workflows** - Switch between chat, agentic, and custom modes  
+**200+ Models** - Access GPT-4, Claude, Gemini, DeepSeek, and more via unified interface
 
-## ✨ Core Features
+## Quick Start
 
-- **40+ Premium AI Models** via OpenRouter (o1, Claude 4.5, Gemini 2.5, DeepSeek R1, Grok 2, GPT-4o, and more)
-- **Transparent Pricing** - See exact costs per model, from $0.09 to $75 per 1M tokens
-- **Autonomous Agent System** - AI creates and executes multi-step modification plans
-- **Persistent Chat Window** - Multi-turn conversations with any model
-- **Undo System** - Revert autonomous changes with 10-step history
-- **Embedded Server** - No manual setup required, just install and add your OpenRouter key
-- **Zero Configuration** - Server starts automatically when VS Code opens
-- **Cost-Efficient** - Single API key for all models, ultra-cheap options available
-- **Privacy-First** - All requests go directly from your machine to OpenRouter
-- **Smart Model Selection** - Automatic model routing based on task complexity and cost
-- **Code Assistant** - Explain, review, optimize, fix bugs, generate tests autonomously
+1. Install extension from VS Code Marketplace
+2. Get API key from [openrouter.ai/keys](https://openrouter.ai/keys)
+3. Open Settings (`Ctrl+,`) and set `hybridmind.apiKey`
+4. Open HybridMind sidebar and start coding
 
-## 🚀 Quick Start
+## Workflows
 
-### 1. Install Extension
+**Chat** - Direct model interaction for quick questions  
+**Agentic (Autonomous)** - AI plans and executes multi-step tasks  
+**Custom** - Build your own model chains
 
-Install from VS Code Marketplace or:
-```bash
-code --install-extension hybridmind-1.5.0.vsix
+## Configuration
+
+```json
+{
+  "hybridmind.apiKey": "your-openrouter-key",
+  "hybridmind.defaultModel": "anthropic/claude-3.5-sonnet",
+  "hybridmind.autonomyLevel": "balanced"
+}
 ```
 
-### 2. Choose Your Tier
+## Commands
 
-**Start Free, Upgrade Anytime**
-
-- 🆓 **Free** - 5 models, 100K tokens/day + 7-day Pro trial, perfect for learning
-- 💎 **Pro ($19/mo)** - All 57+ models, 5M tokens/day, autonomous workflows
-- 🚀 **Pro Plus ($49/mo)** - 50M tokens/day, priority routing, team features
-- 🏢 **Enterprise** - Unlimited usage, SLA, dedicated support
-
-[Compare Plans →](https://hybridmind.dev/pricing)
-
-### 3. Get Your OpenRouter API Key
-
-HybridMind v1.5 uses **OpenRouter** for unified access to 40+ premium models with a single API key.
-
-1. Visit [openrouter.ai/keys](https://openrouter.ai/keys)
-2. Sign up or log in
-3. Create a new API key
-4. Copy your key
-
-**Why OpenRouter?**
-- ✅ Single API key for 40+ models (o1, Claude 4.5, Gemini 2.5, etc.)
-- ✅ Ultra-low cost models (starting at $0.09 per 1M tokens)
-- ✅ Transparent pricing - see exact costs before you use
-- ✅ Competitive pricing across all providers
-- ✅ Automatic failover and load balancing
-- ✅ Detailed usage tracking and analytics
-
-### 4. Configure Extension
-
-Press `Ctrl+,` (or `Cmd+,` on Mac) to open Settings, then search for "HybridMind" and add your OpenRouter API key:
-
-- **OpenRouter API Key**: Get from [openrouter.ai/keys](https://openrouter.ai/keys)
-
-> **Note:** You only need one API key to access all models!
-
-### 5. Start Using
-
-- **Open Chat Window**: `Ctrl+Shift+P` → "HybridMind: Open Chat Window"
-- **Quick Chat**: `Ctrl+Shift+P` → "HybridMind: Quick Chat"
-- **Autonomous Agent**: `Ctrl+Shift+P` → "HybridMind: Run Autonomous Workflow"
-- **Explain Code**: Select code → `Ctrl+Shift+P` → "HybridMind: Explain Code"
-- **Review Code**: Select code → `Ctrl+Shift+P` → "HybridMind: Review Code"
-- **Optimize Code**: Select code → `Ctrl+Shift+P` → "HybridMind: Optimize Code"
-- **Generate Tests**: Select function → `Ctrl+Shift+P` → "HybridMind: Generate Tests"
-- **Fix Bugs**: Select code → `Ctrl+Shift+P` → "HybridMind: Fix Bugs"
-- **Undo Last Change**: `Ctrl+Shift+P` → "HybridMind: Undo Last Autonomous Change"
+- `HybridMind: Open Chat Window` - Start interactive chat
+- `HybridMind: Run Autonomous Workflow` - Execute multi-step tasks
+- `HybridMind: Explain Code` - Get code explanations
+- `HybridMind: Review Code` - Code quality analysis
+- `HybridMind: Undo Last Change` - Revert autonomous changes
 
 ## 📊 Available Models (via OpenRouter)
 
@@ -192,7 +147,42 @@ The autonomous agent system automatically selects the best model for each task, 
 
 ## 🤖 Autonomous Agent System
 
-HybridMind v1.5 introduces a fully operational autonomous agent that can:
+## Supported Models
+
+GPT-4o, Claude Opus 4.5, Gemini 2.5 Flash, DeepSeek R1, Llama 3.3 70B, Qwen Coder, and 200+ more.
+
+Full list: [OpenRouter Models](https://openrouter.ai/models)
+
+## Requirements
+
+- VS Code 1.85.0+
+- OpenRouter API key (free tier available at [openrouter.ai](https://openrouter.ai/keys))
+
+## Troubleshooting
+
+**No models available**  
+Check API key is set in Settings and valid at [openrouter.ai/keys](https://openrouter.ai/keys)
+
+**Extension not activating**  
+Reload VS Code: `Ctrl+Shift+P` → "Developer: Reload Window"
+
+**Autonomous agent errors**  
+Verify API key, internet connection, and OpenRouter credits
+
+**Undo not available**  
+Undo only works for autonomous agent changes (last 10 modifications)
+
+## License
+
+MIT - See LICENSE file
+
+## Links
+
+[GitHub](https://github.com/itheroservices-hub/hybridmind) | [Issues](https://github.com/itheroservices-hub/hybridmind/issues) | [Discussions](https://github.com/itheroservices-hub/hybridmind/discussions)
+
+---
+
+Built for developers who want the best AI for every task.
 
 1. **Create Execution Plans** - AI analyzes your goal and creates multi-step modification plans
 2. **Execute Autonomously** - Steps are executed sequentially with real-time progress tracking

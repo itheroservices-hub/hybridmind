@@ -4,6 +4,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { LicenseManager } from '../auth/licenseManager';
 import { WorkspaceAnalyzer } from '../agents/workspaceAnalyzer';
 import { AutonomyManager, AutonomyLevel, ToolPermissions } from '../agents/autonomyManager';
@@ -43,6 +44,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   private _autonomyManager: AutonomyManager;
   private _agentPlanner: AgentPlanner;
   private _currentExecution: ExecutionResult | null = null;
+  private _lastPlan: any = null; // Store last plan for confirmation
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -163,17 +165,34 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       // Get active editor context if requested BEFORE adding message to chat
       const editor = vscode.window.activeTextEditor;
       let contextCode = '';
+      let contextFile = '';
       
       if (includeContext && editor && editor.selection) {
         contextCode = editor.document.getText(editor.selection);
+        contextFile = editor.document.fileName;
         
-        // If no selection, get the whole file
+        // If no selection, note that whole file is available
         if (!contextCode || contextCode.trim() === '') {
-          contextCode = editor.document.getText();
+          contextCode = ''; // Don't include whole file - agent will read it
         }
         
-        // Prepend context to message for better AI understanding
-        userMessage = `${userMessage}\n\nSelected code:\n\`\`\`\n${contextCode}\n\`\`\``;
+        // For agentic mode: Don't bloat prompt - pass file path for agent to read
+        // For non-agentic mode: Include small code snippets only
+        if (workflowMode === 'agentic') {
+          // Agentic mode: Just mention the file, agent will read it
+          if (contextCode) {
+            userMessage = `${userMessage}\n\n[Context: ${contextCode.length} characters selected in ${path.basename(contextFile)}]`;
+          } else {
+            userMessage = `${userMessage}\n\n[Context: File ${path.basename(contextFile)}]`;
+          }
+        } else {
+          // Non-agentic mode: Include code for simple Q&A (limit to 2000 chars)
+          if (contextCode && contextCode.length <= 2000) {
+            userMessage = `${userMessage}\n\nSelected code:\n\`\`\`\n${contextCode}\n\`\`\``;
+          } else if (contextCode) {
+            userMessage = `${userMessage}\n\n[Context: ${contextCode.length} characters selected - too large to include, please ask specific questions]`;
+          }
+        }
       }
 
       // Detect if user wants actual edits but is in non-agentic mode
@@ -204,7 +223,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       // Check if this should be autonomous execution (agentic mode)
       if (workflowMode === 'agentic') {
         // Use new autonomous agent system
-        await this._handleAutonomousExecution(userMessage, selectedModels);
+        await this._handleAutonomousExecution(userMessage, selectedModels, contextFile, contextCode);
         return;
       }
 
@@ -347,12 +366,16 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       this._updateWebview();
 
     } catch (error: any) {
-      vscode.window.showErrorMessage(`HybridMind Error: ${error.message}`);
+      // Use AI to analyze the error and suggest fixes
+      const context = `User message: unknown\nWorkflow mode: unknown`;
+      const suggestion = await this._analyzeError(error, context);
       
-      // Add error message to chat
+      vscode.window.showErrorMessage(`HybridMind Error: ${suggestion}`);
+      
+      // Add AI-analyzed error message to chat
       const errorMsg: ChatMessage = {
         role: 'assistant',
-        content: `❌ Error: ${error.message}`,
+        content: `❌ Error Analysis:\n\n**Problem:** ${error.message}\n\n**Suggestion:** ${suggestion}`,
         timestamp: new Date()
       };
       this._messages.push(errorMsg);
@@ -361,14 +384,436 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Use AI to detect user intent (confirm, cancel, adjust, or new request)
+   */
+  private async _detectIntent(userMessage: string): Promise<'confirm' | 'cancel' | 'adjust' | 'new_request'> {
+    try {
+      // Get last few messages for context
+      const recentContext = this._messages
+        .slice(-4)
+        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.substring(0, 200)}`)
+        .join('\n');
+      
+      // Call backend with fast model for intent classification
+      const response = await fetch(`http://localhost:3000/run/single`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile', // Fast, free model
+          prompt: `You are analyzing user intent in a conversation with an AI coding agent.
+
+Recent conversation:
+${recentContext}
+
+The agent just showed an execution plan and is waiting for confirmation.
+
+User's latest message: "${userMessage}"
+
+Classify the user's intent:
+- "confirm": User wants to execute the plan (examples: "ok", "sure", "do it", "yes", "go ahead", "sounds good", "let's do it", typos like "yess" or "okk")
+- "cancel": User wants to cancel (examples: "no", "cancel", "stop", "nevermind", "don't do it")
+- "adjust": User wants to modify the plan (examples: "change X", "adjust the plan", "modify step 2")
+- "new_request": User is asking something completely different, ignoring the plan
+
+Respond with ONLY one word: confirm, cancel, adjust, or new_request`,
+          maxTokens: 10
+        })
+      });
+
+      const data = await response.json();
+      const output = (data as any).data?.output || (data as any).output || '';
+      const intent = output.trim().toLowerCase() || 'new_request';
+      
+      // Debug log
+      console.log(`[Intent Detection] User: "${userMessage}" → Raw output: "${output}" → Intent: "${intent}"`);
+      
+      // Validate response
+      if (['confirm', 'cancel', 'adjust', 'new_request'].includes(intent)) {
+        return intent as any;
+      }
+      
+      return 'new_request'; // Default fallback
+    } catch (error) {
+      console.log(`[Intent Detection] Error: ${error}, falling back to regex`);
+      // Fallback to basic keyword matching on error
+      const msgLower = userMessage.toLowerCase();
+      if (/\b(ok|yes|sure|yep|yeah|yup|go|proceed)\b/.test(msgLower)) {
+        return 'confirm';
+      }
+      if (/\b(no|cancel|stop|abort)\b/.test(msgLower)) {
+        return 'cancel';
+      }
+      if (/\b(adjust|modify|change)\b/.test(msgLower)) {
+        return 'adjust';
+      }
+      return 'new_request';
+    }
+  }
+
+  /**
+   * Use AI to detect execution constraints from natural language
+   * Understands: "be gentle", "don't mess up", "you can look but don't touch", typos, etc.
+   */
+  private async _detectConstraints(message: string): Promise<{
+    readOnly?: boolean;
+    noDelete?: boolean;
+    noCreate?: boolean;
+    noTerminal?: boolean;
+  }> {
+    try {
+      const response = await fetch('http://localhost:3000/run/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'groq/llama-3.3-70b-versatile',
+          prompt: `Analyze this user message for execution constraints:
+
+"${message}"
+
+Identify if the user wants any of these constraints:
+- READ_ONLY: Just analyze/review, don't change anything ("just look", "be gentle", "don't mess up", "view only")
+- NO_DELETE: Don't delete files ("keep existing", "preserve files", "don't remove")
+- NO_CREATE: Don't create new files ("only modify existing", "no new files")
+- NO_TERMINAL: Don't run commands ("no terminal", "don't execute")
+
+Respond with ONLY a JSON object like: {"readOnly": true, "noDelete": false, "noCreate": false, "noTerminal": false}
+If no constraints are mentioned, all values should be false.`,
+          maxTokens: 50
+        })
+      });
+
+      const data = await response.json();
+      const output = (data as any).data?.output || (data as any).output || '{}';
+      const result = output.trim();
+      
+      // Parse JSON response
+      try {
+        const constraints = JSON.parse(result || '{}');
+        return {
+          readOnly: constraints.readOnly || constraints.READ_ONLY || false,
+          noDelete: constraints.noDelete || constraints.NO_DELETE || false,
+          noCreate: constraints.noCreate || constraints.NO_CREATE || false,
+          noTerminal: constraints.noTerminal || constraints.NO_TERMINAL || false
+        };
+      } catch {
+        return {}; // Invalid JSON, no constraints
+      }
+    } catch (error) {
+      // Fallback to basic keyword matching
+      const msgLower = message.toLowerCase();
+      return {
+        readOnly: /\b(just|only)\s+(review|look|analyze)|read.?only|don't\s+change|no\s+changes/i.test(message),
+        noDelete: /don't\s+delete|no\s+delet/i.test(message),
+        noCreate: /don't\s+create|no\s+(new\s+)?files/i.test(message),
+        noTerminal: /don't\s+run|no\s+terminal|no\s+commands/i.test(message)
+      };
+    }
+  }
+
+  /**
+   * Assess security risk of an operation using AI
+   */
+  private async _assessSecurityRisk(operation: string, filesAffected: string[]): Promise<'low' | 'medium' | 'high' | 'critical'> {
+    try {
+      const response = await fetch('http://localhost:3000/run/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'groq/llama-3.3-70b-versatile',
+          prompt: `Assess the security risk of this operation:
+
+Operation: ${operation}
+Files affected: ${filesAffected.join(', ')}
+
+Risk levels:
+- LOW: Read-only operations, safe file edits
+- MEDIUM: Creating files, modifying configs, installing known packages
+- HIGH: Deleting files, modifying system files, running terminal commands
+- CRITICAL: Deleting multiple files, rm -rf, system-wide changes, unknown packages
+
+Respond with ONLY one word: low, medium, high, or critical`,
+          maxTokens: 5
+        })
+      });
+
+      const data = await response.json();
+      const output = (data as any).data?.output || (data as any).output || 'medium';
+      const risk = output.trim().toLowerCase();
+      
+      if (['low', 'medium', 'high', 'critical'].includes(risk)) {
+        return risk as any;
+      }
+      return 'medium'; // Default
+    } catch (error) {
+      // Fallback: assess based on keywords
+      const opLower = operation.toLowerCase();
+      if (/delete|remove|rm\s+-rf|uninstall/i.test(operation)) return 'high';
+      if (/create|install|modify|update/i.test(operation)) return 'medium';
+      return 'low';
+    }
+  }
+
+  /**
+   * Analyze errors using AI to understand root cause and suggest fixes
+   */
+  private async _analyzeError(error: Error, context: string): Promise<string> {
+    try {
+      const response = await fetch('http://localhost:3000/run/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'groq/llama-3.3-70b-versatile',
+          prompt: `Analyze this error and suggest a fix:
+
+Error: ${error.message}
+Stack: ${error.stack?.slice(0, 200)}
+Context: ${context}
+
+Provide a clear, actionable suggestion in 1-2 sentences. Be specific about what to do next.`,
+          maxTokens: 100
+        })
+      });
+
+      const data = await response.json();
+      const output = (data as any).data?.output || (data as any).output || error.message;
+      return output.trim();
+    } catch {
+      return error.message;
+    }
+  }
+
+  /**
+   * Assess task complexity to determine if confirmation is needed
+   */
+  private async _assessTaskComplexity(task: string): Promise<'simple' | 'moderate' | 'complex'> {
+    try {
+      const response = await fetch('http://localhost:3000/run/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'groq/llama-3.3-70b-versatile',
+          prompt: `Assess the complexity of this coding task:
+
+"${task}"
+
+Complexity levels:
+- SIMPLE: Single file changes, adding a button, reviewing code, simple bug fixes
+- MODERATE: Multi-file changes, refactoring a module, adding a feature
+- COMPLEX: Architecture changes, refactoring entire systems, database migrations
+
+Respond with ONLY one word: simple, moderate, or complex`,
+          maxTokens: 5
+        })
+      });
+
+      const data = await response.json();
+      const output = (data as any).data?.output || (data as any).output || 'moderate';
+      const complexity = output.trim().toLowerCase();
+      
+      if (['simple', 'moderate', 'complex'].includes(complexity)) {
+        return complexity as any;
+      }
+      return 'moderate'; // Default
+    } catch (error) {
+      // Fallback: assess based on keywords
+      if (/review|analyze|check|look|read/i.test(task)) return 'simple';
+      if (/refactor|migrate|architecture|system|entire/i.test(task)) return 'complex';
+      return 'moderate';
+    }
+  }
+
+  /**
+   * Detect if user request is ambiguous and needs clarification
+   */
+  private async _detectAmbiguity(message: string): Promise<{ isAmbiguous: boolean; clarification?: string }> {
+    try {
+      const response = await fetch('http://localhost:3000/run/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'groq/llama-3.3-70b-versatile',
+          prompt: `Is this request clear and actionable, or ambiguous?
+
+"${message}"
+
+Ambiguous examples:
+- "fix it" (what needs fixing?)
+- "make it better" (better how?)
+- "update the code" (which code?)
+
+Clear examples:
+- "review package.json"
+- "add a login button to index.html"
+- "fix the authentication bug in auth.ts"
+
+If AMBIGUOUS, respond with: AMBIGUOUS: <specific question to ask user>
+If CLEAR, respond with: CLEAR`,
+          maxTokens: 50
+        })
+      });
+
+      const data = await response.json();
+      const output = (data as any).data?.output || (data as any).output || 'CLEAR';
+      const result = output.trim();
+      
+      if (result.startsWith('AMBIGUOUS:')) {
+        return {
+          isAmbiguous: true,
+          clarification: result.replace('AMBIGUOUS:', '').trim()
+        };
+      }
+      return { isAmbiguous: false };
+    } catch (error) {
+      // Fallback: check for obviously ambiguous phrases
+      const ambiguousPhrases = ['fix it', 'make it better', 'update', 'improve', 'change it'];
+      const isAmbiguous = ambiguousPhrases.some(phrase => message.toLowerCase().includes(phrase)) && message.split(' ').length < 5;
+      return {
+        isAmbiguous,
+        clarification: isAmbiguous ? 'Could you be more specific about what you want to change?' : undefined
+      };
+    }
+  }
+
+  /**
    * Handle autonomous agent execution with file discovery and planning
    */
-  private async _handleAutonomousExecution(userMessage: string, models: string[]) {
+  private async _handleAutonomousExecution(
+    userMessage: string, 
+    models: string[], 
+    contextFile: string = '', 
+    contextCode: string = ''
+  ) {
     try {
+      console.log(`[Autonomous] User message received: "${userMessage}"`);
+      console.log(`[Autonomous] _lastPlan exists: ${!!this._lastPlan}`);
+      
+      // Use AI to detect intent if we have a stored plan
+      if (this._lastPlan) {
+        console.log(`[Autonomous] Stored plan exists, detecting intent for: "${userMessage}"`);
+        const intent = await this._detectIntent(userMessage);
+        console.log(`[Autonomous] Detected intent: ${intent}`);
+        
+        if (intent === 'cancel') {
+          this._lastPlan = null;
+          const cancelMsg: ChatMessage = {
+            role: 'system',
+            content: '❌ Plan cancelled. How can I help you?',
+            timestamp: new Date()
+          };
+          this._messages.push(cancelMsg);
+          this._updateWebview();
+          return;
+        }
+        
+        if (intent === 'adjust') {
+          const adjustMsg: ChatMessage = {
+            role: 'assistant',
+            content: '📝 What would you like to adjust in the plan? Please describe the changes you want.',
+            timestamp: new Date()
+          };
+          this._messages.push(adjustMsg);
+          this._updateWebview();
+          return;
+        }
+        
+        if (intent === 'confirm') {
+          // Use AI to detect constraints from message (e.g., "ok, but just review")
+          const constraints = await this._detectConstraints(userMessage);
+          
+          // Show constraint acknowledgment if any
+          if (constraints.readOnly || constraints.noDelete || constraints.noCreate || constraints.noTerminal) {
+            const constraintParts = [];
+            if (constraints.readOnly) constraintParts.push('read-only mode');
+            if (constraints.noDelete) constraintParts.push('no deletions');
+            if (constraints.noCreate) constraintParts.push('no file creation');
+            if (constraints.noTerminal) constraintParts.push('no terminal commands');
+            
+            const constraintMsg: ChatMessage = {
+              role: 'system',
+              content: `🔒 Executing with constraints: ${constraintParts.join(', ')}`,
+              timestamp: new Date()
+            };
+            this._messages.push(constraintMsg);
+          }
+          
+          // STEP 3: Assess security risk before execution
+          const filesAffected = this._lastPlan.steps.map((s: any) => s.file || 'unknown');
+          const risk = await this._assessSecurityRisk(this._lastPlan.goal, filesAffected);
+          
+          // Show risk level and ask for confirmation on high/critical risk
+          if (risk === 'high' || risk === 'critical') {
+            const riskMsg: ChatMessage = {
+              role: 'system',
+              content: `⚠️ ${risk.toUpperCase()} RISK OPERATION detected!\n\nThis operation could potentially cause significant changes. Type "confirm ${risk}" to proceed.`,
+              timestamp: new Date()
+            };
+            this._messages.push(riskMsg);
+            this._updateWebview();
+            
+            // Check if user explicitly confirmed the risk
+            if (!userMessage.toLowerCase().includes(`confirm ${risk}`)) {
+              this._lastPlan = null; // Cancel plan
+              return;
+            }
+          }
+          
+          // Execute the stored plan with constraints
+          const executingMsg: ChatMessage = {
+            role: 'system',
+            content: constraints.readOnly ? '👁️ Reviewing previous plan (read-only)...' : `⚙️ Executing previous plan (${risk} risk)...`,
+            timestamp: new Date()
+          };
+          this._messages.push(executingMsg);
+          this._updateWebview();
+
+          const result = await this._agentPlanner.executePlan(this._lastPlan, (step, status) => {
+            const progressMsg: ChatMessage = {
+              role: 'system',
+              content: `${status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🔄'} Step ${step.id}: ${step.description}`,
+              timestamp: new Date()
+            };
+            this._messages.push(progressMsg);
+            this._updateWebview();
+          }, constraints);
+
+          this._currentExecution = result;
+          this._lastPlan = null; // Clear stored plan
+
+          const summaryMsg: ChatMessage = {
+            role: 'assistant',
+            content: result.summary,
+            model: 'Agent Summary',
+            timestamp: new Date()
+          };
+          this._messages.push(summaryMsg);
+          this._updateWebview();
+          return;
+        }
+        
+        // If intent is 'new_request', fall through to create new plan
+      }
+
+      // STEP 1: Check for ambiguity - ask for clarification if needed
+      const ambiguityCheck = await this._detectAmbiguity(userMessage);
+      if (ambiguityCheck.isAmbiguous) {
+        const clarificationMsg: ChatMessage = {
+          role: 'assistant',
+          content: `❓ ${ambiguityCheck.clarification || 'Could you be more specific about what you want to do?'}`,
+          timestamp: new Date()
+        };
+        this._messages.push(clarificationMsg);
+        this._updateWebview();
+        return;
+      }
+
+      // STEP 2: Assess task complexity - determines if we need confirmation
+      const complexity = await this._assessTaskComplexity(userMessage);
+      const needsConfirmation = complexity === 'complex'; // Complex tasks always need confirmation
+
       // Show planning message
       const planningMsg: ChatMessage = {
         role: 'system',
-        content: '🧠 Analyzing request and creating execution plan...',
+        content: `🧠 Analyzing request and creating execution plan... (${complexity} task)`,
         timestamp: new Date()
       };
       this._messages.push(planningMsg);
@@ -399,13 +844,32 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       const selectedModel = models[0] || 'llama-3.3-70b-versatile';
       this._agentPlanner.setModel(selectedModel);
 
-      // Create execution plan
-      const plan = await this._agentPlanner.createPlan(userMessage, recentMessages);
+      // Pass file context separately so agent can read it
+      const fileContext = contextFile ? {
+        filePath: contextFile,
+        hasSelection: contextCode.length > 0,
+        selectionLength: contextCode.length
+      } : undefined;
+
+      // STEP 4: Create execution plan with complexity and risk metadata
+      const plan = await this._agentPlanner.createPlan(userMessage, recentMessages, fileContext, complexity, undefined);
       
       if (!plan) {
         const errorMsg: ChatMessage = {
           role: 'assistant',
-          content: `I encountered an error analyzing your request. Please try again.`,
+          content: `I encountered an error analyzing your request. Please try again.\n\nIf this persists, try:\n- Reloading VS Code window\n- Checking Developer Console (Help > Toggle Developer Tools) for errors\n- Verifying your API keys are configured`,
+          timestamp: new Date()
+        };
+        this._messages.push(errorMsg);
+        this._updateWebview();
+        return;
+      }
+      
+      // Check if plan contains error
+      if (plan.goal === 'Error') {
+        const errorMsg: ChatMessage = {
+          role: 'assistant',
+          content: `## ❌ Error\n\n${plan.analysis}\n\n${plan.reasoning}`,
           timestamp: new Date()
         };
         this._messages.push(errorMsg);
@@ -426,91 +890,35 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
 
+      // STEP 5: Assess security risk after creating the plan
+      const filesAffected = plan.steps.map((s: any) => s.file || 'unknown');
+      const riskLevel = await this._assessSecurityRisk(plan.goal, filesAffected);
+      
+      // Store risk in plan metadata
+      plan.metadata = { complexity, riskLevel };
+      
+      // Show risk indicator in plan message
+      const riskEmoji = riskLevel === 'critical' ? '🔴' : riskLevel === 'high' ? '🟠' : riskLevel === 'medium' ? '🟡' : '🟢';
+      const confirmationText = (riskLevel === 'high' || riskLevel === 'critical') 
+        ? `\n\n⚠️ **${riskLevel.toUpperCase()} RISK OPERATION** - Type "confirm ${riskLevel}" to proceed.`
+        : `\n\n💬 *Reply "ok" to execute this plan, or provide feedback to adjust it.*`;
+
       // Show the plan with steps
       const planMsg: ChatMessage = {
         role: 'assistant',
-        content: `## 📋 Execution Plan\n\n**Goal:** ${plan.goal}\n\n**Analysis:** ${plan.analysis}\n\n**Steps:**\n${plan.steps.map(s => `${s.id}. ${s.description} (${s.type})`).join('\n')}\n\n**Reasoning:** ${plan.reasoning}\n\nAutonomy Level: **${this._autonomyManager.getLevelDescription()}**`,
+        content: `## 📋 Execution Plan\n\n**Goal:** ${plan.goal}\n\n**Analysis:** ${plan.analysis}\n\n**Steps:**\n${plan.steps.map((s: any) => `${s.id}. ${s.description} (${s.type})`).join('\n')}\n\n**Reasoning:** ${plan.reasoning}\n\n**Complexity:** ${complexity} | **Risk:** ${riskEmoji} ${riskLevel}\n**Autonomy Level:** ${this._autonomyManager.getLevelDescription()}${confirmationText}`,
         model: 'Agent Planner',
         timestamp: new Date()
       };
       this._messages.push(planMsg);
       this._updateWebview();
 
-      // Execute the plan
-      const executionMsg: ChatMessage = {
-        role: 'system',
-        content: '⚙️ Executing plan...',
-        timestamp: new Date()
-      };
-      this._messages.push(executionMsg);
-      this._updateWebview();
+      // Store the plan for confirmation
+      this._lastPlan = plan;
+      console.log(`[Autonomous] Plan stored! Goal: "${plan.goal}", Steps: ${plan.steps.length}`);
 
-      const result = await this._agentPlanner.executePlan(plan, (step, status) => {
-        // Update progress in chat
-        const progressMsg: ChatMessage = {
-          role: 'system',
-          content: `${status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🔄'} Step ${step.id}: ${step.description}`,
-          timestamp: new Date()
-        };
-        this._messages.push(progressMsg);
-        this._updateWebview();
-      });
-
-      // Store result for next steps
-      this._currentExecution = result;
-
-      // Show summary
-      const summaryMsg: ChatMessage = {
-        role: 'assistant',
-        content: result.summary,
-        model: 'Agent Summary',
-        timestamp: new Date()
-      };
-      this._messages.push(summaryMsg);
-
-      // Show file changes summary if any changes were made
-      const changeTracker = this._agentPlanner.getChangeTracker();
-      const changes = changeTracker.getChanges();
-      
-      if (changes.length > 0) {
-        const changeSummary = changeTracker.getSummary();
-        const changesMsg: ChatMessage = {
-          role: 'system',
-          content: JSON.stringify({
-            type: 'fileChanges',
-            summary: changeSummary,
-            changes: changes.map(c => ({
-              file: c.filePath,
-              type: c.changeType
-            }))
-          }),
-          timestamp: new Date()
-        };
-        this._messages.push(changesMsg);
-      }
-
-      // Show next steps as interactive buttons
-      if (result.nextSteps.length > 0) {
-        const nextStepsMsg: ChatMessage = {
-          role: 'system',
-          content: JSON.stringify({
-            type: 'nextSteps',
-            steps: result.nextSteps
-          }),
-          timestamp: new Date()
-        };
-        this._messages.push(nextStepsMsg);
-      } else {
-        const completeMsg: ChatMessage = {
-          role: 'assistant',
-          content: '✨ Task complete! No further actions recommended.',
-          timestamp: new Date()
-        };
-        this._messages.push(completeMsg);
-      }
-
-      this._updateWebview();
-
+      // Don't auto-execute - wait for user confirmation (especially for high/critical risk)
+      return;
     } catch (error: any) {
       const errorMsg: ChatMessage = {
         role: 'assistant',
@@ -537,7 +945,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
     // Execute the next step as a new autonomous task
     const nextStepMessage = `${step.title}: ${step.description}`;
-    await this._handleAutonomousExecution(nextStepMessage, models || this._selectedModels);
+    await this._handleAutonomousExecution(nextStepMessage, models || this._selectedModels, '', '');
   }
 
   /**

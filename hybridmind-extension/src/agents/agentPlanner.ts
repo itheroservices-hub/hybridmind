@@ -11,6 +11,10 @@ export interface ExecutionPlan {
   analysis: string;
   steps: ExecutionStep[];
   reasoning: string;
+  metadata?: {
+    complexity?: 'simple' | 'moderate' | 'complex';
+    riskLevel?: 'low' | 'medium' | 'high' | 'critical';
+  };
 }
 
 export interface ExecutionStep {
@@ -104,36 +108,89 @@ export class AgentPlanner {
   }
 
   /**
+   * Check if backend is available
+   */
+  private async checkBackendHealth(): Promise<{ available: boolean; error?: string }> {
+    try {
+      const axios = (await import('axios')).default;
+      const response = await axios.get('http://localhost:3000/health', { timeout: 5000 });
+      return { available: true };
+    } catch (error: any) {
+      if (error.code === 'ECONNREFUSED') {
+        return { 
+          available: false, 
+          error: 'Backend server is not running. Try reloading VS Code or check if port 3000 is in use.' 
+        };
+      }
+      return { 
+        available: false, 
+        error: `Backend health check failed: ${error.message}` 
+      };
+    }
+  }
+
+  /**
    * Analyze user request and create execution plan
    * @param userMessage - The user's request
    * @param conversationHistory - Recent conversation for context
-   * @param model - Optional model override (uses _currentModel if not provided)
+   * @param fileContext - Optional file context (path and selection info)
+   * @param complexity - Task complexity assessment (simple/moderate/complex)
+   * @param riskLevel - Security risk level (low/medium/high/critical)
    */
-  public async createPlan(userMessage: string, conversationHistory?: string, model?: string): Promise<ExecutionPlan | null> {
-    // Update model if provided
-    if (model) {
-      this._currentModel = model;
-    }
+  public async createPlan(
+    userMessage: string, 
+    conversationHistory?: string, 
+    fileContext?: { filePath: string; hasSelection: boolean; selectionLength: number },
+    complexity?: 'simple' | 'moderate' | 'complex',
+    riskLevel?: 'low' | 'medium' | 'high' | 'critical'
+  ): Promise<ExecutionPlan | null> {
     try {
-      // 1. Extract file references from message AND conversation history
-      let fileRefs = this._analyzer.extractFileReferences(userMessage);
-      
-      // Also check conversation history for file references (for follow-up messages like "execute")
-      if (conversationHistory && fileRefs.length === 0) {
-        const historyRefs = this._analyzer.extractFileReferences(conversationHistory);
-        fileRefs = historyRefs;
+      // 0. Check backend health first
+      const health = await this.checkBackendHealth();
+      if (!health.available) {
+        return {
+          goal: 'Error',
+          analysis: 'Backend Connection Failed',
+          steps: [],
+          reasoning: health.error || 'Could not connect to HybridMind backend server.',
+          metadata: { complexity, riskLevel }
+        };
       }
-      
-      // 2. Find and read files
-      const fileContexts = [];
-      for (const fileRef of fileRefs) {
-        const fileUri = await this._analyzer.findFile(fileRef);
-        if (fileUri) {
+
+      // 1. If file context provided directly, use it (don't extract from message)
+      let fileContexts = [];
+      if (fileContext?.filePath) {
+        try {
+          const fileUri = vscode.Uri.file(fileContext.filePath);
           const context = await this._analyzer.getFileContext(fileUri);
           if (context) {
             fileContexts.push(context);
-            // Remember this file's absolute path for follow-up requests
-            this._lastFoundFilePath = fileUri.fsPath;
+            this._lastFoundFilePath = fileContext.filePath;
+          }
+        } catch (e) {
+          // Fallback to extraction
+        }
+      }
+      
+      // 2. If no direct file context, extract from message/history
+      if (fileContexts.length === 0) {
+        let fileRefs = this._analyzer.extractFileReferences(userMessage);
+        
+        // Also check conversation history for file references
+        if (conversationHistory && fileRefs.length === 0) {
+          const historyRefs = this._analyzer.extractFileReferences(conversationHistory);
+          fileRefs = historyRefs;
+        }
+        
+        // Find and read extracted files
+        for (const fileRef of fileRefs) {
+          const fileUri = await this._analyzer.findFile(fileRef);
+          if (fileUri) {
+            const context = await this._analyzer.getFileContext(fileUri);
+            if (context) {
+              fileContexts.push(context);
+              this._lastFoundFilePath = fileUri.fsPath;
+            }
           }
         }
       }
@@ -184,9 +241,12 @@ export class AgentPlanner {
 
       // Get the first file reference for execution context (use absolute path)
       const targetFile = fileContexts.length > 0 ? fileContexts[0].absolutePath : null;
+      
+      // Get workspace root for new file creation
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
 
       // 5. Build context for protocol handler
-      const additionalContext = `${fullContext}\n\n**Target File:** ${targetFile || 'Not specified'}`;
+      const additionalContext = `${fullContext}\n\n**Target File:** ${targetFile || 'Not specified'}${workspaceRoot ? `\n**Workspace Root:** ${workspaceRoot}` : ''}`;
       
       // 6. Add to conversation history
       this._protocolHandler.addToHistory('user', userMessage);
@@ -195,12 +255,16 @@ export class AgentPlanner {
       const request = await this._protocolHandler.buildRequest(
         `Analyze the request and provide a detailed response.
 
-For REVIEW/ANALYSIS requests (only analyzing, no changes): Respond with a JSON object with empty steps array:
+For REVIEW/ANALYSIS requests (only analyzing, no changes): Respond with JSON including analysis steps:
 {
   "goal": "Review [filename] and provide feedback",
   "analysis": "detailed analysis with strengths, weaknesses, and suggestions",
   "reasoning": "why these improvements matter",
-  "steps": []
+  "steps": [
+    {"id": 1, "type": "refactor", "description": "Analyze code structure and patterns", "file": "${targetFile || 'FULL_PATH'}", "reasoning": "identify improvement areas"},
+    {"id": 2, "type": "refactor", "description": "Check for best practices and anti-patterns", "file": "${targetFile || 'FULL_PATH'}", "reasoning": "ensure code quality"},
+    {"id": 3, "type": "refactor", "description": "Provide specific recommendations", "file": "${targetFile || 'FULL_PATH'}", "reasoning": "actionable feedback"}
+  ]
 }
 
 For EXECUTION requests (making actual changes to files): Include specific steps WITH FILE PATHS:
@@ -209,13 +273,17 @@ For EXECUTION requests (making actual changes to files): Include specific steps 
   "analysis": "analysis of what needs to be done",
   "reasoning": "why this approach makes sense",
   "steps": [
-    {"id": 1, "type": "edit", "description": "specific change to make", "file": "${targetFile || 'FULL_PATH_REQUIRED'}", "reasoning": "why"},
-    {"id": 2, "type": "edit", "description": "another change", "file": "${targetFile || 'FULL_PATH_REQUIRED'}", "reasoning": "why"}
+    {"id": 1, "type": "create", "description": "create new file", "file": "${workspaceRoot}\\\\filename.ext", "reasoning": "why"},
+    {"id": 2, "type": "edit", "description": "specific change to make", "file": "${targetFile || workspaceRoot + '\\\\filename.ext'}", "reasoning": "why"}
   ]
 }
 
-CRITICAL: EVERY step must include the "file" property with the EXACT SAME file path: ${targetFile}
-If editing the same file multiple times, repeat the file path in each step.
+CRITICAL RULES:
+- For NEW file creation, use type "create" and provide the FULL PATH starting with workspace root: ${workspaceRoot}\\filename.ext
+- For EDITING existing files, use the exact file path: ${targetFile}
+- EVERY step must include the "file" property with a complete absolute path
+- If creating a file in the workspace root, use: ${workspaceRoot}\\filename.ext
+- If editing the same file multiple times, repeat the exact file path in each step
 
 User Request: ${userMessage}
 
@@ -230,6 +298,9 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
       const apiResponse = await axios.post('http://localhost:3000/run/single', {
         model: this._currentModel,
         prompt: request.systemPrompt + '\n\n' + request.userMessage
+      }, {
+        timeout: 60000, // 60 second timeout
+        validateStatus: (status) => status < 500 // Don't throw on 4xx errors
       });
 
       const rawResponse = apiResponse.data?.data || apiResponse.data;
@@ -244,46 +315,94 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
       const plan = this._parsePlanFromResponse(aiResponse.content, userMessage, fileContexts);
       return plan;
 
-    } catch (error) {
-      console.error('Error creating plan:', error);
-      return null;
+    } catch (error: any) {
+      console.error('[AgentPlanner] Error creating plan:', error);
+      
+      // Return a plan with error details instead of null
+      return {
+        goal: 'Error',
+        analysis: `Failed to analyze request: ${error.message || 'Unknown error'}`,
+        steps: [],
+        reasoning: error.code === 'ECONNREFUSED' 
+          ? 'Cannot connect to HybridMind backend. The embedded server may not be running. Try reloading the VS Code window.'
+          : error.response?.status === 500
+          ? `Backend error: ${error.response?.data?.error || 'Internal server error'}. Check if your API keys are configured correctly.`
+          : `Error details: ${error.stack || error.toString()}`
+      };
     }
   }
 
   /**
    * Execute a plan with autonomy checks
    */
-  public async executePlan(plan: ExecutionPlan, onProgress?: (step: ExecutionStep, status: string) => void): Promise<ExecutionResult> {
+  public async executePlan(
+    plan: ExecutionPlan, 
+    onProgress?: (step: ExecutionStep, status: string) => void,
+    constraints?: {
+      readOnly?: boolean;
+      noDelete?: boolean;
+      noCreate?: boolean;
+      noTerminal?: boolean;
+    }
+  ): Promise<ExecutionResult> {
     this._actionLog = [];
     let completed = 0;
     let failed = 0;
 
     for (const step of plan.steps) {
-      onProgress?.(step, 'checking-permission');
-
-      // Check autonomy permission
-      const allowed = await this._autonomy.requestPermission({
-        type: step.type as any,
-        description: step.description,
-        files: step.file ? [step.file] : undefined,
-        command: step.command
-      });
-
-      if (!allowed) {
+      // Check constraints before permission check
+      const violatesConstraints = this._checkConstraintViolation(step, constraints);
+      if (violatesConstraints) {
         this._actionLog.push({
           step: step.id,
           type: step.type,
           description: step.description,
           status: 'skipped',
-          details: 'User denied permission'
+          details: `Skipped due to constraint: ${violatesConstraints}`
         });
+        onProgress?.(step, 'skipped');
         continue;
+      }
+
+      // Skip permission check for read-only analysis steps
+      const isReadOnly = step.type === 'refactor';
+      
+      if (!isReadOnly) {
+        onProgress?.(step, 'checking-permission');
+
+        // Check autonomy permission for action steps
+        const allowed = await this._autonomy.requestPermission({
+          type: step.type as any,
+          description: step.description,
+          files: step.file ? [step.file] : undefined,
+          command: step.command
+        });
+
+        if (!allowed) {
+          this._actionLog.push({
+            step: step.id,
+            type: step.type,
+            description: step.description,
+            status: 'skipped',
+            details: 'User denied permission'
+          });
+          continue;
+        }
       }
 
       onProgress?.(step, 'executing');
 
-      // Execute the step
-      const result = await this._executeStep(step);
+      // Execute the step (unless read-only mode)
+      let result;
+      if (constraints?.readOnly) {
+        // In read-only mode, simulate execution
+        result = {
+          success: true,
+          details: 'Reviewed (read-only mode)'
+        };
+      } else {
+        result = await this._executeStep(step);
+      }
       
       if (result.success) {
         completed++;
@@ -320,6 +439,34 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
       summary,
       nextSteps
     };
+  }
+
+  /**
+   * Check if step violates execution constraints
+   */
+  private _checkConstraintViolation(
+    step: ExecutionStep, 
+    constraints?: { readOnly?: boolean; noDelete?: boolean; noCreate?: boolean; noTerminal?: boolean }
+  ): string | null {
+    if (!constraints) return null;
+    
+    if (constraints.readOnly && (step.type === 'edit' || step.type === 'create' || step.type === 'delete')) {
+      return 'read-only mode';
+    }
+    
+    if (constraints.noDelete && step.type === 'delete') {
+      return 'no deletions allowed';
+    }
+    
+    if (constraints.noCreate && step.type === 'create') {
+      return 'no file creation allowed';
+    }
+    
+    if (constraints.noTerminal && step.type === 'terminal') {
+      return 'no terminal commands allowed';
+    }
+    
+    return null;
   }
 
   /**
@@ -370,9 +517,20 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
                 }
               }
               
-              // Read file content for context
-              const fileContent = await vscode.workspace.fs.readFile(fileUri);
-              const content = Buffer.from(fileContent).toString('utf8');
+              // For create operations, don't try to read existing file
+              let content = '';
+              if (step.type === 'create') {
+                // For file creation, start with empty content
+                content = '';
+              } else {
+                // For edit/refactor, read existing file content for context
+                try {
+                  const fileContent = await vscode.workspace.fs.readFile(fileUri);
+                  content = Buffer.from(fileContent).toString('utf8');
+                } catch (error: any) {
+                  return { success: false, error: `Failed to read file ${targetFile}: ${error.message}` };
+                }
+              }
               
               // Ensure step has the correct file path for code generation
               step.file = targetFile;
@@ -416,8 +574,39 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
     try {
       const axios = (await import('axios')).default;
       
+      // Choose tool based on step type
+      const isCreateOperation = step.type === 'create';
+      
       // Use a simple, direct prompt WITHOUT the full system prompt to ensure JSON response
-      const directPrompt = `You are a code editor AI. Generate ONLY a JSON tool call, nothing else.
+      let directPrompt: string;
+      
+      if (isCreateOperation) {
+        // For create operations, use create_file tool
+        directPrompt = `You are a code editor AI. Generate ONLY a JSON tool call to create a new file.
+
+File to create: ${step.file}
+Task: ${step.description}
+
+CRITICAL: Respond with ONLY a valid JSON object. No explanations, no markdown, no code blocks.
+
+Required JSON format:
+{
+  "tool": "create_file",
+  "path": "${step.file}",
+  "content": "file content here"
+}
+
+Example:
+{
+  "tool": "create_file",
+  "path": "${step.file}",
+  "content": "<html>\\n<head><title>Test</title></head>\\n<body>Hello World</body>\\n</html>"
+}
+
+RESPOND WITH ONLY THE JSON OBJECT:`;
+      } else {
+        // For edit/refactor operations, use apply_edit tool
+        directPrompt = `You are a code editor AI. Generate ONLY a JSON tool call, nothing else.
 
 File: ${step.file}
 Task: ${step.description}
@@ -446,6 +635,7 @@ Example:
 }
 
 RESPOND WITH ONLY THE JSON OBJECT:`;
+      }
 
       console.log(`[AgentPlanner] Generating code with model: ${this._currentModel} for task: ${step.description}`);
       const response = await axios.post('http://localhost:3000/run/single', {
