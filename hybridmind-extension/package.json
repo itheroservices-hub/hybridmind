@@ -3,7 +3,7 @@
   "displayName": "HybridMind AI Assistant",
   "description": "Autonomous AI coding agent with 40+ premium models via OpenRouter. 4-tier pricing (Free, Pro $19, Pro Plus $49, Enterprise). Transparent costs ($0.09-$75/M tokens). Includes o1, Claude 4.5, Gemini 2.5, DeepSeek R1.",
   "publisher": "hybridmind",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {

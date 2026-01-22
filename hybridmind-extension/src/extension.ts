@@ -28,17 +28,22 @@ export async function activate(context: vscode.ExtensionContext) {
   // Reset warning flag every hour
   setInterval(() => usageTracker.resetWarning(), 3600000);
 
+  // DISABLED: Use standalone backend on port 3000 instead
   // Start the embedded server automatically
-  try {
-    serverPort = await startEmbeddedServer(context);
-    
-    // Show tier status
-    const tier = licenseManager.isPro() ? 'Pro' : 'Free';
-    vscode.window.showInformationMessage(`HybridMind ${tier} is ready! (Server on port ${serverPort})`);
-  } catch (error: any) {
-    vscode.window.showErrorMessage(`Failed to start HybridMind server: ${error.message}`);
-    return;
-  }
+  // try {
+  //   serverPort = await startEmbeddedServer(context);
+  //   
+  //   // Show tier status
+  //   const tier = licenseManager.isPro() ? 'Pro' : 'Free';
+  //   vscode.window.showInformationMessage(`HybridMind ${tier} is ready! (Server on port ${serverPort})`);
+  // } catch (error: any) {
+  //   vscode.window.showErrorMessage(`Failed to start HybridMind server: ${error.message}`);
+  //   return;
+  // }
+  
+  serverPort = 3000; // Use standalone backend
+  const tier = licenseManager.isPro() ? 'Pro' : 'Free';
+  vscode.window.showInformationMessage(`HybridMind ${tier} is ready! (Using backend on port ${serverPort})`);
 
   // Check if backend has models available (backend reads from .env)
   try {

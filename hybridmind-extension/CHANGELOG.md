@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.6.2] - 2026-01-21
+
+### Changed
+- Removed BYOK (bring your own key) instructions (not yet implemented)
+- Added hybridmind.ca website link
+
 ## [1.6.1] - 2026-01-21
 
 ### Changed
