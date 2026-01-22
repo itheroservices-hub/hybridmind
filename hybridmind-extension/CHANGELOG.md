@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1] - 2026-01-21
+
+### Changed
+- Simplified README to 30 lines (93% reduction) for better developer experience
+- Removed all emojis and marketing fluff
+- Clean, minimal overview like successful extensions
+
 ## [1.6.0] - 2026-01-21
 
 ### Added
