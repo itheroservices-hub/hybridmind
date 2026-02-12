@@ -1,0 +1,41 @@
+# Exclude source files - only ship compiled code
+src/**
+*.ts
+tsconfig.json
+.eslintrc.json
+
+# Exclude environment files
+.env
+.env.*
+*.env
+
+# Exclude development dependencies
+node_modules/@types/**
+node_modules/**/test/**
+node_modules/**/tests/**
+node_modules/**/*.md
+node_modules/**/*.txt
+node_modules/**/LICENSE
+node_modules/**/CHANGELOG.md
+
+# Exclude build artifacts
+.vscode-test/**
+coverage/**
+*.vsix
+
+# Exclude git files
+.git/**
+.gitignore
+.gitattributes
+
+# Exclude development files
+.vscode/**
+!.vscode/launch.json
+.editorconfig
+webpack.config.js
+tsup.config.js
+
+# Exclude documentation that's not needed in package
+docs/**
+examples/**
+*.log

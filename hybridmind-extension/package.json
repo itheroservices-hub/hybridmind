@@ -1,0 +1,292 @@
+{
+  "name": "hybridmind",
+  "displayName": "HybridMind AI Assistant",
+  "description": "Autonomous AI coding agent with 40+ premium models via OpenRouter. 4-tier pricing (Free, Pro $19, Pro Plus $49, Enterprise). Transparent costs ($0.09-$75/M tokens). Includes o1, Claude 4.5, Gemini 2.5, DeepSeek R1.",
+  "publisher": "hybridmind",
+  "version": "1.7.0",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itheroservices-hub/hybridmind.git"
+  },
+  "engines": {
+    "vscode": "^1.108.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "ai",
+    "artificial intelligence",
+    "llm",
+    "gpt",
+    "claude",
+    "gemini",
+    "code assistant",
+    "productivity"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hybridmind",
+          "title": "HybridMind",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "hybridmind": [
+        {
+          "type": "webview",
+          "id": "hybridmind.chatView",
+          "name": "Chat",
+          "icon": "$(comment-discussion)",
+          "contextualTitle": "HybridMind Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "hybridmind.openChat",
+        "title": "HybridMind: Open Chat Window",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "hybridmind.inlineChat",
+        "title": "HybridMind: Start Inline Chat",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "hybridmind.manageLicense",
+        "title": "HybridMind: Manage License",
+        "icon": "$(key)"
+      },
+      {
+        "command": "hybridmind.showUsageDetails",
+        "title": "HybridMind: Show Usage Statistics",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "hybridmind.quickChat",
+        "title": "HybridMind: Quick Chat"
+      },
+      {
+        "command": "hybridmind.explainCode",
+        "title": "HybridMind: Explain Code"
+      },
+      {
+        "command": "hybridmind.reviewCode",
+        "title": "HybridMind: Review Code"
+      },
+      {
+        "command": "hybridmind.optimizeCode",
+        "title": "HybridMind: Optimize Code"
+      },
+      {
+        "command": "hybridmind.generateTests",
+        "title": "HybridMind: Generate Tests"
+      },
+      {
+        "command": "hybridmind.fixBugs",
+        "title": "HybridMind: Fix Bugs"
+      },
+      {
+        "command": "hybridmind.refactorWithAI",
+        "title": "HybridMind: 🤖 Refactor with Autonomous Agent",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "hybridmind.autonomousDebug",
+        "title": "HybridMind: 🔧 Autonomous Debug (Fix All Errors)",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "hybridmind.runStrictJsonWorkflow",
+        "title": "HybridMind: ⚡ Run AI Workflow (Strict JSON)",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "hybridmind.strictJsonQuickFix",
+        "title": "HybridMind: ⚡ Quick Fix (Strict JSON)",
+        "icon": "$(wrench)"
+      },
+      {
+        "command": "hybridmind.strictJsonAddFeature",
+        "title": "HybridMind: ⚡ Add Feature (Strict JSON)",
+        "icon": "$(add)"
+      },
+      {
+        "command": "hybridmind.showAgentOutput",
+        "title": "HybridMind: Show Agent Output",
+        "icon": "$(output)"
+      },
+      {
+        "command": "hybridmind.selectChainTemplate",
+        "title": "HybridMind: Select Model Chain Template",
+        "icon": "$(link)"
+      },
+      {
+        "command": "hybridmind.configureCustomChain",
+        "title": "HybridMind: Configure Custom Model Chain",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "hybridmind.viewModelCapabilities",
+        "title": "HybridMind: View Model Capabilities",
+        "icon": "$(info)"
+      },
+      {
+        "command": "hybridmind.toggleModelMode",
+        "title": "HybridMind: Toggle Model Selection Mode",
+        "icon": "$(switch)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "hybridmind.inlineChat",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "hybridmind.openChat",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "hybridmind.openChat",
+          "when": "true"
+        },
+        {
+          "command": "hybridmind.inlineChat",
+          "when": "editorTextFocus"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "hybridmind.inlineChat",
+          "group": "hybridmind@0",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "hybridmind.explainCode",
+          "group": "hybridmind@1"
+        },
+        {
+          "command": "hybridmind.reviewCode",
+          "group": "hybridmind@2"
+        },
+        {
+          "command": "hybridmind.optimizeCode",
+          "group": "hybridmind@3"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "HybridMind",
+      "properties": {
+        "hybridmind.licenseKey": {
+          "type": "string",
+          "default": "",
+          "description": "HybridMind Pro license key. Get yours at https://hybridmind.dev/pricing"
+        },
+        "hybridmind.groqApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API Key (for Llama, Mixtral models). Get from: https://console.groq.com/keys"
+        },
+        "hybridmind.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key (for Gemini models). Get from: https://aistudio.google.com/app/apikey"
+        },
+        "hybridmind.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key (for DeepSeek models). Get from: https://platform.deepseek.com/api_keys"
+        },
+        "hybridmind.qwenApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Qwen API Key (for Qwen models). Get from: https://dashscope.console.aliyun.com/apiKey"
+        },
+        "hybridmind.modelSelection.mode": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "manual", "template"],
+          "description": "Model selection mode: auto (smart selection), manual (user picks), template (predefined chains)"
+        },
+
+        "hybridmind.modelSelection.defaultTemplate": {
+          "type": "string",
+          "default": "coding-standard",
+          "enum": ["coding-standard", "coding-premium", "coding-budget", "research-deep", "review-comprehensive", "quick-fix"],
+          "description": "Default chain template to use in template mode"
+        },
+        "hybridmind.modelSelection.customChain": {
+          "type": "object",
+          "default": {},
+          "description": "Custom model chain configuration (role -> model mapping)"
+        },
+        "hybridmind.modelSelection.autoAdjustForMargin": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically adjust model selection when profit margins are low"
+        },
+        "hybridmind.ui.theme": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "light", "dark"],
+          "description": "UI theme preference"
+        },
+        "hybridmind.ui.compactMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use compact UI layout"
+        },
+        "hybridmind.ui.showModelBadges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show tier badges on model selectors"
+        },
+        "hybridmind.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API Key (for GPT models). Get from: https://platform.openai.com/api-keys"
+        },
+        "hybridmind.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API Key (for Claude models). Get from: https://console.anthropic.com/settings/keys"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.5",
+    "@types/vscode": "^1.108.0",
+    "typescript": "^5.9.3"
+  }
+}

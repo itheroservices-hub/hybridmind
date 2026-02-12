@@ -1,0 +1,136 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment Variables (CRITICAL: Never commit these!)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.test
+
+# Keep the example template
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage
+*.lcov
+.nyc_output
+
+# IDEs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build outputs
+dist/
+build/
+out/
+
+# Temporary
+tmp/
+temp/
+.cache
+
+# Old backups
+*.old
+*.backup
+hybridmind-backend.old/
+
+# Test outputs
+test-results/
+
+# VSIX packages
+*.vsix
+
+# Extension build outputs
+hybridmind-extension/dist/
+hybridmind-extension/out/
+
+# Business-sensitive documentation
+PROFIT_MARGIN_PROTECTION.md
+SECURITY_*.md
+*SECURITY*.md
+*PRICING*.md
+*MARGIN*.md
+PAYMENT_SYSTEM_COMPLETE.md
+# Private Business Documentation (DO NOT COMMIT)
+
+# Business Strategy & Financials
+*PROFIT*.md
+*MARGIN*.md
+*PRICING*.md
+*PAYMENT*.md
+*STRIPE*.md
+*PREMIUM*.md
+*CONVERSION*.md
+STUDENT_BUDGET_MODE.md
+
+# Security & Audits
+*SECURITY*.md
+*AUDIT*.md
+PREFLIGHT_AUDIT_REPORT.md
+SECURITY_*.md
+
+# Internal Architecture & Implementation
+*ARCHITECTURE*.md
+*IMPLEMENTATION*.md
+*_COMPLETE.md
+*COMPLETE*.md
+V1.1_ARCHITECTURE.md
+ARCHITECTURE_FIX_V1.md
+
+# Internal Planning & Roadmaps
+*ROADMAP*.md
+*GAPS*.md
+IMPROVEMENT_ROADMAP.md
+CONVERSION_GAPS.md
+
+# Internal Checklists & Processes
+*CHECKLIST*.md
+PRODUCTION_READY_CHECKLIST.md
+FINAL_VERIFICATION.md
+PREFLIGHT_*.md
+
+# Internal Summaries & Reports
+EXECUTIVE_SUMMARY*.md
+*SUMMARY*.md
+
+# Task Documentation
+TASK_*.md
+
+# Test Results
+*TEST_RESULTS*.md
+MODEL_TEST_RESULTS.md
+
+# Internal Implementation Guides
+HYBRIDMIND_V1.1_IMPLEMENTATION_PLAN.md
+STRICT_JSON_IMPLEMENTATION.md
+hybridmind-backend/STRICT_JSON_IMPLEMENTATION.md
+
+# Internal How-To Docs
+HOW_TO_*.md
+FIXES_APPLIED.md
+
+# GitHub Release Drafts (use GitHub Releases instead)
+GITHUB_RELEASE_*.md
