@@ -60,6 +60,12 @@ hybridmind-backend.old/
 # Test outputs
 test-results/
 
+# Test scripts (often contain sensitive data or temp test code)
+test-*.js
+test-*.ts
+check-*.js
+debug-*.js
+
 # VSIX packages
 *.vsix
 
