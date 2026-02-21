@@ -188,7 +188,7 @@ export function registerMultiModelCommands(context: vscode.ExtensionContext, ser
     })
   );
 
-  // Note: Budget priority removed - cost control is handled server-side via profit margin protection
+  // Note: Budget priority removed - cost control is handled server-side via internal governance
   // Users don't control API costs since we use centralized API keys
 }
 

@@ -14,7 +14,7 @@ class UsageTracker {
   /**
    * Track a model request
    */
-  trackRequest({ userId, model, tokens, cost, duration, success }) {
+  trackRequest({ userId, model, tokens, cost, duration, success, routeType, projectedMargin }) {
     const key = userId || 'anonymous';
     const now = Date.now();
     const dayKey = this.getDayKey(now);
@@ -37,7 +37,8 @@ class UsageTracker {
         requests: 0,
         cost: 0,
         tokens: 0,
-        models: {}
+        models: {},
+        routes: {}
       });
     }
 
@@ -51,7 +52,9 @@ class UsageTracker {
       tokens: tokens || 0,
       cost: cost || 0,
       duration: duration || 0,
-      success: success !== false
+      success: success !== false,
+      routeType: routeType || 'unknown',
+      projectedMargin: typeof projectedMargin === 'number' ? projectedMargin : null
     };
 
     userData.requests.push(requestData);
@@ -70,6 +73,7 @@ class UsageTracker {
     dayData.cost += requestData.cost;
     dayData.tokens += requestData.tokens;
     dayData.models[model] = (dayData.models[model] || 0) + 1;
+    dayData.routes[requestData.routeType] = (dayData.routes[requestData.routeType] || 0) + 1;
 
     // Keep only last 30 days of requests
     const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
@@ -166,8 +170,25 @@ class UsageTracker {
       failedRequests,
       successRate: (successfulRequests / (totalRequests || 1) * 100).toFixed(2),
       averageCostPerRequest: (totalCost / (totalRequests || 1)).toFixed(4),
-      averageTokensPerRequest: Math.round(totalTokens / (totalRequests || 1))
+      averageTokensPerRequest: Math.round(totalTokens / (totalRequests || 1)),
+      routeMix: this.getGlobalRouteMix()
     };
+  }
+
+  /**
+   * Get global route distribution
+   */
+  getGlobalRouteMix() {
+    const routeCounts = {};
+
+    for (const userData of this.usage.values()) {
+      for (const request of userData.requests) {
+        const route = request.routeType || 'unknown';
+        routeCounts[route] = (routeCounts[route] || 0) + 1;
+      }
+    }
+
+    return routeCounts;
   }
 
   /**

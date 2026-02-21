@@ -618,8 +618,8 @@ function getEditorContext(editor: vscode.TextEditor): string {
  */
 async function selectModel(): Promise<string> {
   const models = [
-    { label: '$(star) GPT-4 Turbo', description: 'Most capable, best for complex tasks', value: 'gpt-4-turbo-preview' },
-    { label: '$(star) GPT-4o', description: 'Fast and capable', value: 'gpt-4o' },
+    { label: '$(star) GPT-4.1', description: 'Most capable OpenAI option', value: 'gpt-4.1' },
+    { label: '$(star) GPT-4 Turbo', description: 'Reliable fallback for complex tasks', value: 'gpt-4-turbo-preview' },
     { label: '$(zap) Llama 3.3 70B', description: 'Free, fast via Groq', value: 'llama-3.3-70b-versatile' },
     { label: '$(zap) DeepSeek V3', description: 'Excellent for coding, very cheap', value: 'deepseek-chat' },
     { label: '$(star) Claude Sonnet 4.5', description: 'Excellent reasoning', value: 'claude-sonnet-4-20250514' },
@@ -631,7 +631,7 @@ async function selectModel(): Promise<string> {
     ignoreFocusOut: true
   });
 
-  return selected?.value || 'gpt-4-turbo-preview';
+  return selected?.value || 'gpt-4.1';
 }
 
 /**

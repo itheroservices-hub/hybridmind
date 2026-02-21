@@ -47,6 +47,8 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   private _agentPlanner: AgentPlanner;
   private _currentExecution: ExecutionResult | null = null;
   private _lastPlan: any = null; // Store last plan for confirmation
+  private _activeRalphStreamId: string | null = null;
+  private _activeRalphChainId: string | null = null;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -143,13 +145,22 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           // Reject all file changes
           await this._rejectAllChanges();
           break;
+        case 'killRalphLoop':
+          await this._killRalphLoop();
+          break;
       }
     });
   }
 
   private async _handleSendMessage(userMessage: string, models?: string[], workflow?: string, includeContext?: boolean, isDirectExecution?: boolean) {
     const selectedModels = models || this._selectedModels;
-    const workflowMode = workflow || this._workflowMode;
+    let workflowMode = workflow || this._workflowMode;
+    const isDraftCommand = /(^|\s)draft\s+(init|new-track|new\s+track|status)\b/i.test(userMessage);
+
+    if (isDraftCommand && workflowMode !== 'agentic') {
+      workflowMode = 'agentic';
+      vscode.window.showInformationMessage('Draft command detected: switched workflow to Agentic mode for command execution.');
+    }
     
     // Enforce tier limits
     const maxModels = this._licenseManager.isPro() ? 4 : 2;
@@ -231,6 +242,20 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
       // Choose the appropriate endpoint based on workflow
       let endpoint = '';
+      const wantsRalphLoop = workflowMode === 'chain'
+        ? !/\b(no\s+ralph|disable\s+ralph|no\s+self[-\s]?heal)\b/i.test(userMessage)
+        : /\bralph\b|self[-\s]?heal/i.test(userMessage);
+
+      if (workflowMode === 'chain' && wantsRalphLoop) {
+        await this._streamRalphTelemetry({
+          selectedModels,
+          userMessage,
+          contextCode,
+          contextFile
+        });
+        return;
+      }
+
       let requestBody: any = {
         tier: this._licenseManager.isPro() ? 'pro' : 'free'
       };
@@ -249,7 +274,11 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           models: selectedModels,
           prompt: userMessage,
           code: contextCode,
-          options: { readOnly: this._readOnly }
+          options: {
+            readOnly: this._readOnly,
+            ralphLoop: wantsRalphLoop,
+            testCommand: 'npm test'
+          }
         };
       } else if (workflowMode === 'all-to-all') {
         endpoint = '/run/all-to-all';
@@ -323,6 +352,27 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
             cost: step.cost
           };
           this._messages.push(assistantMsg);
+        }
+
+        const ralphTelemetry = responseData.ralphTelemetry;
+        if (Array.isArray(ralphTelemetry) && ralphTelemetry.length > 0) {
+          const telemetryLines = ralphTelemetry
+            .map((entry: any, index: number) => {
+              const status = entry?.status || 'yellow';
+              const dot = status === 'green' ? '🟢' : status === 'red' ? '🔴' : '🟡';
+              const attempt = entry?.attempt || (index + 1);
+              const message = entry?.message || 'No telemetry message';
+              return `${dot} Attempt ${attempt}: ${message}`;
+            })
+            .join('\n\n');
+
+          const telemetryMsg: ChatMessage = {
+            role: 'assistant',
+            content: `**🧠 Ralph Live Thought Stream**\n\n${telemetryLines}`,
+            model: 'Ralph',
+            timestamp: new Date()
+          };
+          this._messages.push(telemetryMsg);
         }
       } else if (workflowMode === 'all-to-all' && responseData.mode === 'all-to-all') {
         // Show all-to-all mesh collaboration results
@@ -419,6 +469,8 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
    * Use AI to detect user intent (confirm, cancel, adjust, or new request)
    */
   private async _detectIntent(userMessage: string): Promise<'confirm' | 'cancel' | 'adjust' | 'new_request'> {
+    const msgLower = userMessage.toLowerCase().trim();
+
     try {
       // Get last few messages for context
       const recentContext = this._messages
@@ -432,7 +484,7 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile', // Fast, free model
-          prompt: `You are analyzing user intent in a conversation with an AI coding agent.
+          prompt: `You are classifying user intent in a coding-agent confirmation flow.
 
 Recent conversation:
 ${recentContext}
@@ -441,45 +493,99 @@ The agent just showed an execution plan and is waiting for confirmation.
 
 User's latest message: "${userMessage}"
 
-Classify the user's intent:
-- "confirm": User wants to execute the plan (examples: "ok", "sure", "do it", "yes", "go ahead", "sounds good", "let's do it", typos like "yess" or "okk")
-- "cancel": User wants to cancel (examples: "no", "cancel", "stop", "nevermind", "don't do it")
-- "adjust": User wants to modify the plan (examples: "change X", "adjust the plan", "modify step 2")
-- "new_request": User is asking something completely different, ignoring the plan
+Valid intents:
+- confirm: user approves execution of current stored plan
+- cancel: user rejects current stored plan
+- adjust: user wants to modify/refine current stored plan
+- new_request: user asks for a different task
 
-Respond with ONLY one word: confirm, cancel, adjust, or new_request`,
-          maxTokens: 10
+Respond ONLY with strict JSON:
+{"intent":"confirm|cancel|adjust|new_request","confidence":0-1,"reason":"short"}`,
+          maxTokens: 60
         })
       });
 
+      if (!response.ok) {
+        const fallback = this._fallbackIntent(userMessage);
+        console.log(`[Intent Detection] Backend status ${response.status}, fallback intent: ${fallback}`);
+        return fallback;
+      }
+
       const data = await response.json();
       const output = (data as any).data?.output || (data as any).output || '';
-      const intent = output.trim().toLowerCase() || 'new_request';
+      const modelIntent = this._extractIntentFromModelOutput(output);
       
       // Debug log
-      console.log(`[Intent Detection] User: "${userMessage}" → Raw output: "${output}" → Intent: "${intent}"`);
-      
-      // Validate response
-      if (['confirm', 'cancel', 'adjust', 'new_request'].includes(intent)) {
-        return intent as any;
+      console.log(`[Intent Detection] User: "${userMessage}" → Raw output: "${output}" → Intent: "${modelIntent}"`);
+
+      if (modelIntent) {
+        return modelIntent;
       }
-      
-      return 'new_request'; // Default fallback
+
+      const fallback = this._fallbackIntent(userMessage);
+      console.log(`[Intent Detection] Unparseable model output, fallback intent: ${fallback}`);
+      return fallback;
     } catch (error) {
-      console.log(`[Intent Detection] Error: ${error}, falling back to regex`);
-      // Fallback to basic keyword matching on error
-      const msgLower = userMessage.toLowerCase();
-      if (/\b(ok|yes|sure|yep|yeah|yup|go|proceed)\b/.test(msgLower)) {
-        return 'confirm';
-      }
-      if (/\b(no|cancel|stop|abort)\b/.test(msgLower)) {
-        return 'cancel';
-      }
-      if (/\b(adjust|modify|change)\b/.test(msgLower)) {
-        return 'adjust';
-      }
-      return 'new_request';
+      const fallback = this._fallbackIntent(userMessage);
+      console.log(`[Intent Detection] Error: ${error}, fallback intent: ${fallback}`);
+      return fallback;
     }
+  }
+
+  private _extractIntentFromModelOutput(output: string): 'confirm' | 'cancel' | 'adjust' | 'new_request' | null {
+    const normalized = String(output || '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    if (['confirm', 'cancel', 'adjust', 'new_request'].includes(normalized)) {
+      return normalized as any;
+    }
+
+    try {
+      const jsonMatch = normalized.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const intent = String(parsed.intent || '').toLowerCase();
+        if (['confirm', 'cancel', 'adjust', 'new_request'].includes(intent)) {
+          return intent as any;
+        }
+      }
+    } catch {
+      // Ignore JSON parse issues and continue with token extraction.
+    }
+
+    const tokenMatch = normalized.match(/\b(confirm|cancel|adjust|new_request)\b/);
+    return tokenMatch ? tokenMatch[1] as any : null;
+  }
+
+  private _fallbackIntent(userMessage: string): 'confirm' | 'cancel' | 'adjust' | 'new_request' {
+    const normalized = userMessage.toLowerCase().trim().replace(/[^a-z0-9\s']/g, ' ');
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+
+    const hasAny = (terms: string[]) => terms.some(term => normalized.includes(term));
+
+    const confirmTerms = [
+      'ok', 'okay', 'sure', 'yes', 'yep', 'yeah', 'affirmative', 'approved', 'approve',
+      'proceed', 'continue', 'execute', 'run', 'ship it', 'go ahead', 'go for it',
+      'sounds good', 'looks good', 'perfect', 'do it', 'lets do it', "let's do it"
+    ];
+    const cancelTerms = ['cancel', 'stop', 'abort', 'nevermind', 'never mind', "don't", 'do not', 'skip it', 'no thanks'];
+    const adjustTerms = ['adjust', 'modify', 'change', 'tweak', 'revise', 'update plan', 'different approach', 'instead'];
+
+    if (hasAny(cancelTerms)) {
+      return 'cancel';
+    }
+    if (hasAny(adjustTerms)) {
+      return 'adjust';
+    }
+
+    const shortAffirmation = tokens.length <= 4 && hasAny(confirmTerms);
+    if (shortAffirmation || hasAny(confirmTerms)) {
+      return 'confirm';
+    }
+
+    return 'new_request';
   }
 
   /**
@@ -1020,6 +1126,165 @@ If CLEAR, respond with: CLEAR`,
     this._updateWebview();
   }
 
+  private async _streamRalphTelemetry(params: {
+    selectedModels: string[];
+    userMessage: string;
+    contextCode: string;
+    contextFile: string;
+  }) {
+    const backendPort = 3000;
+    const payload = {
+      models: params.selectedModels,
+      prompt: params.userMessage,
+      code: params.contextCode,
+      options: {
+        ralphLoop: true,
+        workspacePath: params.contextFile ? path.dirname(params.contextFile) : undefined,
+        targetFile: params.contextFile || undefined,
+        testCommand: 'npm test'
+      }
+    };
+
+    this._view?.webview.postMessage({ type: 'telemetryClear' });
+    this._view?.webview.postMessage({ type: 'telemetryState', active: true, title: 'Ralph loop started…' });
+
+    const response = await fetch(`http://localhost:${backendPort}/run/chain/stream`, {
+      method: 'POST',
+      headers: this._licenseManager.getApiHeaders(),
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok || !response.body) {
+      const errorText = await response.text();
+      throw new Error(`SSE stream failed (${response.status}): ${errorText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const processEvent = (rawEvent: string) => {
+      const lines = rawEvent.split('\n').map(line => line.trim()).filter(Boolean);
+      if (!lines.length) return;
+
+      let eventName = 'message';
+      let dataText = '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          eventName = line.slice(6).trim();
+        }
+        if (line.startsWith('data:')) {
+          dataText += line.slice(5).trim();
+        }
+      }
+
+      if (!dataText) return;
+
+      let payload: any;
+      try {
+        payload = JSON.parse(dataText);
+      } catch {
+        payload = { raw: dataText };
+      }
+
+      if (eventName === 'connected') {
+        this._activeRalphStreamId = payload.streamId;
+        this._activeRalphChainId = payload.chainId;
+        this._view?.webview.postMessage({
+          type: 'telemetryState',
+          active: true,
+          title: `Ralph live stream (${payload.streamId})`
+        });
+        return;
+      }
+
+      if (eventName === 'telemetry') {
+        this._view?.webview.postMessage({
+          type: 'telemetryEvent',
+          event: payload
+        });
+        return;
+      }
+
+      if (eventName === 'done') {
+        const output = payload?.result?.output || 'Ralph loop completed.';
+        const doneMsg: ChatMessage = {
+          role: 'assistant',
+          content: `**🧠 Ralph Loop Complete**\n\n${output}`,
+          model: 'Ralph',
+          timestamp: new Date()
+        };
+        this._messages.push(doneMsg);
+        this._updateWebview();
+        this._view?.webview.postMessage({ type: 'telemetryState', active: false, title: 'Ralph loop completed' });
+        this._activeRalphStreamId = null;
+        this._activeRalphChainId = null;
+        return;
+      }
+
+      if (eventName === 'error') {
+        const errorMsg: ChatMessage = {
+          role: 'assistant',
+          content: `❌ Ralph stream error: ${payload.error || 'Unknown error'}`,
+          timestamp: new Date()
+        };
+        this._messages.push(errorMsg);
+        this._updateWebview();
+        this._view?.webview.postMessage({ type: 'telemetryState', active: false, title: 'Ralph loop stopped with error' });
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const eventChunk of events) {
+        processEvent(eventChunk);
+      }
+    }
+
+    this._view?.webview.postMessage({ type: 'telemetryState', active: false, title: 'Ralph stream closed' });
+  }
+
+  private async _killRalphLoop() {
+    try {
+      if (!this._activeRalphStreamId) {
+        vscode.window.showInformationMessage('No active Ralph loop to kill.');
+        return;
+      }
+
+      const backendPort = 3000;
+      const response = await fetch(`http://localhost:${backendPort}/run/chain/kill/${encodeURIComponent(this._activeRalphStreamId)}`, {
+        method: 'POST',
+        headers: this._licenseManager.getApiHeaders()
+      });
+
+      const data = await response.json() as any;
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `Kill failed (${response.status})`);
+      }
+
+      const killedMsg: ChatMessage = {
+        role: 'system',
+        content: `🛑 Ralph kill switch activated. Cleaned ${data.cleanedApprovalTickets?.updated || 0} pending approval ticket(s).`,
+        timestamp: new Date()
+      };
+      this._messages.push(killedMsg);
+      this._updateWebview();
+      this._view?.webview.postMessage({ type: 'telemetryState', active: false, title: 'Ralph loop killed by user' });
+
+      this._activeRalphStreamId = null;
+      this._activeRalphChainId = null;
+    } catch (error: any) {
+      vscode.window.showErrorMessage(`Failed to kill Ralph loop: ${error.message}`);
+    }
+  }
+
   private _updateWebview() {
     if (this._view) {
       this._view.webview.postMessage({
@@ -1067,7 +1332,7 @@ If CLEAR, respond with: CLEAR`,
     }
 
     .upgrade-banner {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #0b6a76 0%, #084a54 100%);
       border-radius: 6px;
       padding: 12px;
       margin: 12px 8px;
@@ -1079,12 +1344,12 @@ If CLEAR, respond with: CLEAR`,
       display: flex;
       flex-direction: column;
       gap: 6px;
-      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+      box-shadow: 0 2px 8px rgba(11, 106, 118, 0.35);
     }
 
     .upgrade-banner:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+      box-shadow: 0 4px 12px rgba(11, 106, 118, 0.45);
     }
 
     .upgrade-title {
@@ -1531,7 +1796,7 @@ If CLEAR, respond with: CLEAR`,
     
     .config-header {
       padding: 8px 16px;
-      background-color: var(--vscode-sideBar-background);
+      background: linear-gradient(90deg, rgba(11, 106, 118, 0.12) 0%, rgba(11, 106, 118, 0.04) 100%);
       cursor: pointer;
       display: flex;
       justify-content: space-between;
@@ -1539,10 +1804,11 @@ If CLEAR, respond with: CLEAR`,
       font-size: 11px;
       font-weight: 600;
       user-select: none;
+      border-left: 2px solid #0b6a76;
     }
     
     .config-header:hover {
-      background-color: var(--vscode-list-hoverBackground);
+      background: linear-gradient(90deg, rgba(11, 106, 118, 0.2) 0%, rgba(11, 106, 118, 0.08) 100%);
     }
     
     .config-content {
@@ -1570,9 +1836,49 @@ If CLEAR, respond with: CLEAR`,
       margin: 4px 0;
       background-color: var(--vscode-dropdown-background);
       color: var(--vscode-dropdown-foreground);
-      border: 1px solid var(--vscode-dropdown-border);
-      border-radius: 3px;
+      border: 1px solid rgba(11, 106, 118, 0.45);
+      border-radius: 6px;
       font-size: 11px;
+    }
+
+    .compact-select:focus {
+      outline: none;
+      border-color: #0b6a76;
+      box-shadow: 0 0 0 1px rgba(11, 106, 118, 0.35);
+    }
+
+    .toolbar-button {
+      padding: 6px 10px;
+      font-size: 11px;
+      background: rgba(11, 106, 118, 0.1);
+      color: var(--vscode-foreground);
+      border: 1px solid rgba(11, 106, 118, 0.35);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .toolbar-button:hover {
+      background: rgba(11, 106, 118, 0.2);
+      border-color: #0b6a76;
+    }
+
+    .button {
+      background: #0b6a76;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+
+    .button:hover {
+      background: #0a5a65;
+    }
+
+    .suggestion {
+      border-radius: 8px;
+      border-left: 2px solid rgba(11, 106, 118, 0.5);
+    }
+
+    .suggestion:hover {
+      border-left-color: #0b6a76;
     }
   </style>
 </head>
@@ -1615,7 +1921,7 @@ If CLEAR, respond with: CLEAR`,
             <option value="o1">OpenAI o1 (ULTRA)</option>
           </optgroup>
           <optgroup label="👑 Flagship">
-            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4.1">GPT-4.1</option>
             <option value="gpt-4.1">GPT-4.1 (1M ctx)</option>
             <option value="claude-sonnet-4">Claude Sonnet 4</option>
             <option value="claude-opus-4">Claude Opus 4 (ULTRA)</option>
@@ -1704,10 +2010,18 @@ If CLEAR, respond with: CLEAR`,
     <button class="toolbar-button" id="clearButton">🗑️ Clear Chat</button>
     <button class="toolbar-button" id="contextButton">📎 Include Selection</button>
   </div>
+
+  <div id="telemetryVisualizer" style="display:none; padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background);">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px;">
+      <span id="telemetryTitle" style="font-size:11px; font-weight:600;">🧠 Ralph Live Thought Stream</span>
+      <button id="killRalphButton" style="display:none; font-size:10px; padding:4px 8px; border:1px solid var(--vscode-button-border); border-radius:4px; background: var(--vscode-errorForeground); color:white; cursor:pointer;">🛑 Kill</button>
+    </div>
+    <div id="telemetryRows" style="display:flex; flex-direction:column; gap:4px;"></div>
+  </div>
   
   ${!isPro ? `
   <div style="padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border);">
-    <button class="upgrade-banner" id="upgradeButton" style="width: 100%; padding: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px;">
+    <button class="upgrade-banner" id="upgradeButton" style="width: 100%; padding: 8px; background: linear-gradient(135deg, #0b6a76 0%, #084a54 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 11px;">
       ⭐ Upgrade to Pro - Unlock Premium Models
     </button>
   </div>
@@ -1746,6 +2060,10 @@ If CLEAR, respond with: CLEAR`,
     const workflowSelector = document.getElementById('workflowSelector');
     const clearButton = document.getElementById('clearButton');
     const upgradeButton = document.getElementById('upgradeButton');
+    const telemetryVisualizer = document.getElementById('telemetryVisualizer');
+    const telemetryRows = document.getElementById('telemetryRows');
+    const telemetryTitle = document.getElementById('telemetryTitle');
+    const killRalphButton = document.getElementById('killRalphButton');
     
     const MAX_MODELS = ${maxModels};
     const IS_PRO = ${isPro};
@@ -1758,10 +2076,17 @@ If CLEAR, respond with: CLEAR`,
         });
       });
     }
+
+    if (killRalphButton) {
+      killRalphButton.addEventListener('click', () => {
+        vscode.postMessage({ type: 'killRalphLoop' });
+      });
+    }
     
     let messages = [];
     let includeContext = false;
     let selectedModels = ['llama-3.3-70b']; // Default
+    let telemetryItems = [];
     let autonomyLevel = 3; // Default to Full Auto
     let permissions = {
       read: true,
@@ -1814,7 +2139,7 @@ If CLEAR, respond with: CLEAR`,
           'llama-4-scout': '🦙 Llama 4 Scout',
           'gemini-2.0-flash': '⚡ Gemini 2.0 Flash',
           // Premium
-          'gpt-4o': '👑 GPT-4o',
+          'gpt-4o': '👑 GPT-4.1 (legacy alias)',
           'gpt-4.1': '👑 GPT-4.1',
           'claude-sonnet-4': '👑 Claude Sonnet 4',
           'claude-opus-4': '👑 Claude Opus 4',
@@ -2008,6 +2333,46 @@ If CLEAR, respond with: CLEAR`,
         messages = message.messages;
         renderMessages();
         sendButton.disabled = false;
+      } else if (message.type === 'telemetryClear') {
+        telemetryItems = [];
+        if (telemetryRows) {
+          telemetryRows.innerHTML = '';
+        }
+      } else if (message.type === 'telemetryState') {
+        if (telemetryVisualizer) {
+          telemetryVisualizer.style.display = 'block';
+        }
+        if (telemetryTitle) {
+          telemetryTitle.textContent = '🧠 ' + (message.title || 'Ralph Live Thought Stream');
+        }
+        if (killRalphButton) {
+          killRalphButton.style.display = message.active ? 'inline-block' : 'none';
+        }
+      } else if (message.type === 'telemetryEvent' && message.event) {
+        const status = message.event.status || 'yellow';
+        const dot = status === 'green' ? '🟢' : status === 'red' ? '🔴' : '🟡';
+        const attempt = message.event.attempt || (telemetryItems.length + 1);
+        const text = dot + ' Attempt ' + attempt + ': ' + (message.event.message || 'No telemetry message');
+        telemetryItems.push(text);
+
+        if (telemetryRows) {
+          const row = document.createElement('div');
+          row.style.fontSize = '12px';
+          row.style.opacity = '0';
+          row.style.transform = 'translateY(4px)';
+          row.style.transition = 'opacity 180ms ease, transform 180ms ease';
+          row.textContent = text;
+          telemetryRows.appendChild(row);
+
+          requestAnimationFrame(() => {
+            row.style.opacity = '1';
+            row.style.transform = 'translateY(0)';
+          });
+        }
+
+        if (telemetryVisualizer) {
+          telemetryVisualizer.style.display = 'block';
+        }
       }
     });
 

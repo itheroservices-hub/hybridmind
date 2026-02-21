@@ -14,10 +14,19 @@ export interface EnvironmentInfo {
   timestamp: string;
 }
 
+export interface PromptSegments {
+  stableCore: string;
+  stableRole: string;
+  volatileWorkspace: string;
+  volatileTask: string;
+  cacheKey: string;
+}
+
 /**
  * Build the complete system prompt for AI interactions
  */
 export class SystemPromptBuilder {
+  private static CACHE_VERSION = 'v1';
   
   /**
    * Get the core system instructions
@@ -137,23 +146,25 @@ Use KaTeX for math equations (wrap inline in $, blocks in $$).`;
   }
 
   /**
-   * Build the complete system prompt
+   * Build Anthropic cache-friendly prompt segments
    */
-  public static buildSystemPrompt(
+  public static buildPromptSegments(
     environmentInfo: EnvironmentInfo,
     workspaceInfo: WorkspaceInfo,
     additionalContext?: string
-  ): string {
-    const sections = [
+  ): PromptSegments {
+    const stableCore = [
       this.getCoreInstructions(),
       this.getWorkflowGuidance(),
-      this.getToolInstructions(),
+      this.getToolInstructions()
+    ].join('\n\n');
+
+    const stableRole = [
       this.getCommunicationStyle(),
       this.getOutputFormatting()
-    ];
+    ].join('\n\n');
 
-    // Add environment and workspace context
-    const contextSection = `
+    const volatileWorkspace = `
 **Environment:**
 - OS: ${environmentInfo.os}
 - Timestamp: ${environmentInfo.timestamp}
@@ -168,13 +179,62 @@ ${workspaceInfo.structure}
 \`\`\`
 `;
 
-    sections.push(contextSection);
+    const volatileTask = additionalContext
+      ? `\n**Additional Context:**\n${additionalContext}`
+      : '';
 
-    if (additionalContext) {
-      sections.push(`\n**Additional Context:**\n${additionalContext}`);
+    const cacheKey = this.buildCacheKey(stableCore, stableRole);
+
+    return {
+      stableCore,
+      stableRole,
+      volatileWorkspace,
+      volatileTask,
+      cacheKey
+    };
+  }
+
+  /**
+   * Build stable cache key for reusable prompt segments
+   */
+  public static buildCacheKey(stableCore: string, stableRole: string): string {
+    const input = `${this.CACHE_VERSION}:${stableCore.length}:${stableRole.length}:${stableCore.slice(0, 120)}:${stableRole.slice(0, 120)}`;
+    return `hm-cache-${this.simpleHash(input)}`;
+  }
+
+  /**
+   * Lightweight deterministic hash for cache keys
+   */
+  private static simpleHash(value: string): string {
+    let hash = 0;
+    for (let i = 0; i < value.length; i++) {
+      hash = (hash << 5) - hash + value.charCodeAt(i);
+      hash |= 0;
     }
+    return Math.abs(hash).toString(36);
+  }
 
-    return sections.join('\n\n');
+  /**
+   * Build the complete system prompt
+   */
+  public static buildSystemPrompt(
+    environmentInfo: EnvironmentInfo,
+    workspaceInfo: WorkspaceInfo,
+    additionalContext?: string
+  ): string {
+    const segments = this.buildPromptSegments(environmentInfo, workspaceInfo, additionalContext);
+
+    return [
+      `<!-- CACHE_KEY:${segments.cacheKey} -->`,
+      '<!-- CACHEABLE_START:stable-core -->',
+      segments.stableCore,
+      '<!-- CACHEABLE_END:stable-core -->',
+      '<!-- CACHEABLE_START:stable-role -->',
+      segments.stableRole,
+      '<!-- CACHEABLE_END:stable-role -->',
+      segments.volatileWorkspace,
+      segments.volatileTask
+    ].filter(Boolean).join('\n\n');
   }
 
   /**

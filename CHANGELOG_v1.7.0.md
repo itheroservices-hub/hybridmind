@@ -7,7 +7,7 @@
 
 ## 🎯 Overview
 
-Version 1.7.0 introduces **Smart Multi-Model Orchestration** - an intelligent system that automatically selects and chains the best AI models for each task, maximizing quality while protecting profit margins. This release also includes a complete UI/UX overhaul with our new #0b6a76 brand identity and powerful new commands for advanced model management.
+Version 1.7.0 introduces **Smart Multi-Model Orchestration** - an intelligent system that automatically selects and chains the best AI models for each task, maximizing quality while maintaining reliable platform operations. This release also includes a complete UI/UX overhaul with our new #0b6a76 brand identity and powerful new commands for advanced model management.
 
 ---
 
@@ -53,16 +53,16 @@ Version 1.7.0 introduces **Smart Multi-Model Orchestration** - an intelligent sy
 
 ---
 
-### 2. **Profit Margin Protection** (Task 14)
+### 2. **Server-Side Cost Governance** (Task 14)
 
 **Automatic Budget Adjustment:**
-- Real-time profit margin monitoring
+- Internal real-time cost governance
 - Three margin zones with automatic downgrade:
   - **Critical (<85%)**: Force low budget, cost priority
   - **Warning (85-87%)**: Medium budget, balanced approach
   - **Optimal (≥87%)**: Flexible, quality-focused
 - Chain cost estimation and recommendations
-- Margin-aware model selection
+- Cost-aware model selection
 
 **Integration:**
 - Seamless connection between model selector and profit margin protector
@@ -162,7 +162,6 @@ Version 1.7.0 introduces **Smart Multi-Model Orchestration** - an intelligent sy
 - `hybridmind.modelSelection.priority`: Speed/Quality/Cost/Balanced
 - `hybridmind.modelSelection.defaultTemplate`: Template selection
 - `hybridmind.modelSelection.customChain`: Custom role → model mapping
-- `hybridmind.modelSelection.autoAdjustForMargin`: Profit protection toggle
 
 **UI Preferences:**
 - `hybridmind.ui.theme`: Auto/Light/Dark
@@ -234,7 +233,7 @@ Version 1.7.0 introduces **Smart Multi-Model Orchestration** - an intelligent sy
 **Comprehensive Test Suite:**
 - 10/10 tests passed for multi-model orchestration
 - Model selection accuracy: 99.00 score for Qwen 480B on coding tasks
-- Profit margin downgrade logic validated
+- Cost-governance downgrade logic validated
 - TypeScript compilation: 0 errors
 - Design system CSS generation verified
 

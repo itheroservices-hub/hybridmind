@@ -433,6 +433,298 @@ const toolSchemas = {
         }
       }
     ]
+  },
+
+  // ========================================
+  // M365 Agents Toolkit Knowledge Tool
+  // ========================================
+  m365GetKnowledge: {
+    name: 'm365GetKnowledge',
+    version: '1.0.0',
+    description: 'Retrieve Microsoft 365 Agents Toolkit implementation guidance',
+    category: 'm365',
+    schema: {
+      type: 'object',
+      required: ['question'],
+      properties: {
+        question: {
+          type: 'string',
+          description: 'How-to or implementation question for Microsoft 365 agents/apps',
+          minLength: 3,
+          maxLength: 3000
+        }
+      }
+    },
+    permissions: ['m365_get_knowledge'],
+    riskLevel: 'low',
+    costPerCall: 0.001,
+    examples: [
+      {
+        description: 'Get implementation guidance for M365 declarative agent auth setup',
+        input: {
+          question: 'How do I configure authentication for a Microsoft 365 declarative agent?'
+        }
+      }
+    ]
+  },
+
+  // ========================================
+  // M365 Agents Toolkit Schema Tool
+  // ========================================
+  m365GetSchema: {
+    name: 'm365GetSchema',
+    version: '1.0.0',
+    description: 'Retrieve Microsoft 365 agents/app manifest schema',
+    category: 'm365',
+    schema: {
+      type: 'object',
+      required: ['schemaName', 'schemaVersion'],
+      properties: {
+        schemaName: {
+          type: 'string',
+          description: 'Schema identifier',
+          enum: ['app_manifest', 'declarative_agent_manifest', 'api_plugin_manifest', 'm365_agents_yaml']
+        },
+        schemaVersion: {
+          type: 'string',
+          description: 'Schema version, for example latest or v1.19',
+          minLength: 2,
+          maxLength: 20
+        }
+      }
+    },
+    permissions: ['m365_get_schema'],
+    riskLevel: 'low',
+    costPerCall: 0.001,
+    examples: [
+      {
+        description: 'Get latest app manifest schema',
+        input: {
+          schemaName: 'app_manifest',
+          schemaVersion: 'latest'
+        }
+      }
+    ]
+  },
+
+  // ========================================
+  // M365 Agents Toolkit Code Snippets Tool
+  // ========================================
+  m365GetCodeSnippets: {
+    name: 'm365GetCodeSnippets',
+    version: '1.0.0',
+    description: 'Retrieve Microsoft 365 agents/app code snippets before implementation changes',
+    category: 'm365',
+    schema: {
+      type: 'object',
+      required: ['question'],
+      properties: {
+        question: {
+          type: 'string',
+          description: 'Code generation/modification question for Microsoft 365 agents/apps',
+          minLength: 3,
+          maxLength: 3000
+        }
+      }
+    },
+    permissions: ['m365_get_code_snippets'],
+    riskLevel: 'medium',
+    costPerCall: 0.001,
+    examples: [
+      {
+        description: 'Get code snippet for app manifest update',
+        input: {
+          question: 'Show app manifest snippet for adding a bot command in Microsoft 365 agent app.'
+        }
+      }
+    ]
+  },
+
+  // ========================================
+  // M365 Agents Toolkit Troubleshooting Tool
+  // ========================================
+  m365Troubleshoot: {
+    name: 'm365Troubleshoot',
+    version: '1.0.0',
+    description: 'Retrieve troubleshooting guidance for Microsoft 365 agents/apps issues',
+    category: 'm365',
+    schema: {
+      type: 'object',
+      required: ['question'],
+      properties: {
+        question: {
+          type: 'string',
+          description: 'Issue description or error details',
+          minLength: 3,
+          maxLength: 3000
+        }
+      }
+    },
+    permissions: ['m365_troubleshoot'],
+    riskLevel: 'low',
+    costPerCall: 0.001,
+    examples: [
+      {
+        description: 'Troubleshoot manifest validation error',
+        input: {
+          question: 'My app manifest fails validation with missing capability fields.'
+        }
+      }
+    ]
+  },
+
+  // ========================================
+  // M365 Terminology Normalization Tool
+  // ========================================
+  m365NormalizeTerminology: {
+    name: 'm365NormalizeTerminology',
+    version: '1.0.0',
+    description: 'Normalize legacy Teams Toolkit terms to Microsoft 365 Agents Toolkit terminology',
+    category: 'm365',
+    schema: {
+      type: 'object',
+      required: ['text'],
+      properties: {
+        text: {
+          type: 'string',
+          description: 'Source text to normalize',
+          minLength: 1,
+          maxLength: 6000
+        }
+      }
+    },
+    permissions: ['m365_normalize_terms'],
+    riskLevel: 'low',
+    costPerCall: 0,
+    examples: [
+      {
+        description: 'Normalize Teams Toolkit wording',
+        input: {
+          text: 'Update teamsapp.yml and Teams app manifest using Teams Toolkit.'
+        }
+      }
+    ]
+  },
+
+  // ========================================
+  // Draft Init Tool
+  // ========================================
+  draftInit: {
+    name: 'draftInit',
+    version: '1.0.0',
+    description: 'Initialize Draft workspace files in the target project',
+    category: 'draft',
+    schema: {
+      type: 'object',
+      required: [],
+      properties: {
+        workspacePath: {
+          type: 'string',
+          description: 'Absolute workspace path to initialize'
+        },
+        force: {
+          type: 'boolean',
+          description: 'Overwrite base Draft files if already initialized',
+          default: false
+        }
+      }
+    },
+    permissions: ['draft_init'],
+    riskLevel: 'medium',
+    costPerCall: 0,
+    examples: [
+      {
+        description: 'Initialize Draft workspace in current repository',
+        input: {
+          workspacePath: 'E:/IThero/HybridMind'
+        }
+      }
+    ]
+  },
+
+  // ========================================
+  // Draft New Track Tool
+  // ========================================
+  draftNewTrack: {
+    name: 'draftNewTrack',
+    version: '1.0.0',
+    description: 'Create a new Draft track with initial spec/plan/metadata files',
+    category: 'draft',
+    schema: {
+      type: 'object',
+      required: ['title'],
+      properties: {
+        workspacePath: {
+          type: 'string',
+          description: 'Absolute workspace path'
+        },
+        title: {
+          type: 'string',
+          description: 'Track title',
+          minLength: 3,
+          maxLength: 200
+        },
+        description: {
+          type: 'string',
+          description: 'Track description',
+          maxLength: 5000
+        },
+        type: {
+          type: 'string',
+          description: 'Track type',
+          enum: ['feature', 'bugfix', 'refactor', 'quick'],
+          default: 'feature'
+        },
+        trackId: {
+          type: 'string',
+          description: 'Optional explicit track ID (kebab-case)'
+        }
+      }
+    },
+    permissions: ['draft_track_write'],
+    riskLevel: 'medium',
+    costPerCall: 0,
+    examples: [
+      {
+        description: 'Create feature track',
+        input: {
+          title: 'Add multi-model review command',
+          description: 'Implement staged review workflow for chain responses',
+          type: 'feature'
+        }
+      }
+    ]
+  },
+
+  // ========================================
+  // Draft Status Tool
+  // ========================================
+  draftStatus: {
+    name: 'draftStatus',
+    version: '1.0.0',
+    description: 'Summarize Draft track status for a workspace',
+    category: 'draft',
+    schema: {
+      type: 'object',
+      required: [],
+      properties: {
+        workspacePath: {
+          type: 'string',
+          description: 'Absolute workspace path'
+        }
+      }
+    },
+    permissions: ['draft_status_read'],
+    riskLevel: 'low',
+    costPerCall: 0,
+    examples: [
+      {
+        description: 'Get Draft status summary',
+        input: {
+          workspacePath: 'E:/IThero/HybridMind'
+        }
+      }
+    ]
   }
 };
 

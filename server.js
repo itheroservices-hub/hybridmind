@@ -28,6 +28,7 @@ const metricsRoutes = require('./hybridmind-backend/routes/metricsRoutes');
 const learningRoutes = require('./hybridmind-backend/routes/learningRoutes');
 const cacheRoutes = require('./hybridmind-backend/routes/cacheRoutes');
 const observabilityRoutes = require('./hybridmind-backend/routes/observabilityRoutes');
+const mcpRoutes = require('./hybridmind-backend/routes/mcpRoutes');
 
 // WebSocket collaboration server
 const collaborationServer = require('./hybridmind-backend/services/collaboration/collaborationServer');
@@ -87,6 +88,14 @@ app.use('/agent', (req, res, next) => {
   const limiter = req.user?.tier === 'pro' ? proTokenLimiter : freeTokenLimiter;
   limiter(req, res, next);
 });
+app.use('/mcp', validateLicense);
+app.use('/mcp', (req, res, next) => {
+  const tier = req.user?.tier;
+  const limiter = tier === 'pro' || tier === 'proplus' || tier === 'enterprise'
+    ? proTokenLimiter
+    : freeTokenLimiter;
+  limiter(req, res, next);
+});
 
 // CRITICAL: Apply rate limiting to API routes only
 app.use('/run', burstLimiter);
@@ -108,6 +117,9 @@ app.use('/api/metrics', metricsRoutes);
 app.use('/api/learning', learningRoutes);
 app.use('/api/cache', cacheRoutes);
 app.use('/api/observability', observabilityRoutes);// Root route
+app.use('/mcp', mcpRoutes);
+
+// Root route
 app.get('/', (req, res) => {
   res.json({
     name: 'HybridMind API',
@@ -117,7 +129,8 @@ app.get('/', (req, res) => {
       health: '/health',
       models: '/models',
       run: '/run',
-      agent: '/agent'
+      agent: '/agent',
+      mcp: '/mcp'
     }
   });
 });

@@ -189,71 +189,46 @@ export function stopEmbeddedServer() {
 
 function getAvailableModels() {
   const config = vscode.workspace.getConfiguration('hybridmind');
-  const models = [];
+  const openrouterKey = config.get('openrouterApiKey');
 
-  if (config.get('groqApiKey')) {
-    models.push(
-      { id: 'llama-3.3-70b', provider: 'groq', name: 'Llama 3.3 70B' },
-      { id: 'llama-3.1-8b', provider: 'groq', name: 'Llama 3.1 8B Instant' }
-    );
+  // OpenRouter provides access to ALL models through one API key
+  if (!openrouterKey) {
+    return [];
   }
 
-  if (config.get('geminiApiKey')) {
-    models.push(
-      { id: 'gemini-2.0-flash-exp', provider: 'gemini', name: 'Gemini 2.0 Flash' },
-      { id: 'gemini-1.5-pro', provider: 'gemini', name: 'Gemini 1.5 Pro' }
-    );
-  }
-
-  if (config.get('deepseekApiKey')) {
-    models.push(
-      { id: 'deepseek-chat', provider: 'deepseek', name: 'DeepSeek Chat' },
-      { id: 'deepseek-coder', provider: 'deepseek', name: 'DeepSeek Coder' }
-    );
-  }
-
-  if (config.get('qwenApiKey')) {
-    models.push(
-      { id: 'qwen-max', provider: 'qwen', name: 'Qwen Max' },
-      { id: 'qwen-plus', provider: 'qwen', name: 'Qwen Plus' }
-    );
-  }
-
-  if (config.get('openaiApiKey')) {
-    models.push(
-      { id: 'gpt-4-turbo', provider: 'openai', name: 'GPT-4 Turbo' },
-      { id: 'gpt-3.5-turbo', provider: 'openai', name: 'GPT-3.5 Turbo' }
-    );
-  }
-
-  if (config.get('anthropicApiKey')) {
-    models.push(
-      { id: 'claude-3-opus', provider: 'anthropic', name: 'Claude 3 Opus' },
-      { id: 'claude-3-sonnet', provider: 'anthropic', name: 'Claude 3 Sonnet' }
-    );
-  }
-
-  return models;
+  return [
+    // === FREE MODELS (via OpenRouter) ===
+    { id: 'meta-llama/llama-3.3-70b-instruct', provider: 'openrouter', name: '🆓 Llama 3.3 70B', tier: 'free' },
+    { id: 'deepseek/deepseek-r1', provider: 'openrouter', name: '🆓 DeepSeek R1', tier: 'free' },
+    { id: 'google/gemini-2.0-flash-thinking-exp:free', provider: 'openrouter', name: '🆓 Gemini 2.0 Flash', tier: 'free' },
+    { id: 'qwen/qwen-2.5-coder-32b-instruct', provider: 'openrouter', name: '🆓 Qwen 2.5 Coder 32B', tier: 'free' },
+    { id: 'mistralai/mixtral-8x7b-instruct', provider: 'openrouter', name: '🆓 Mixtral 8x7B', tier: 'free' },
+    
+    // === BUDGET MODELS ($0.09-$0.50/M tokens) ===
+    { id: 'google/gemini-flash-1.5', provider: 'openrouter', name: '💰 Gemini Flash 1.5', tier: 'budget' },
+    { id: 'anthropic/claude-haiku-3.5', provider: 'openrouter', name: '💰 Claude Haiku 3.5', tier: 'budget' },
+    { id: 'openai/gpt-4.1-mini', provider: 'openrouter', name: '💰 GPT-4.1 Mini', tier: 'budget' },
+    
+    // === STANDARD MODELS ($2-$5/M tokens) ===
+    { id: 'openai/gpt-4.1', provider: 'openrouter', name: '⭐ GPT-4.1', tier: 'standard' },
+    { id: 'anthropic/claude-sonnet-4', provider: 'openrouter', name: '⭐ Claude Sonnet 4', tier: 'standard' },
+    { id: 'google/gemini-pro-1.5', provider: 'openrouter', name: '⭐ Gemini Pro 1.5', tier: 'standard' },
+    { id: 'x-ai/grok-2', provider: 'openrouter', name: '⭐ Grok 2', tier: 'standard' },
+    
+    // === PREMIUM MODELS ($15-$75/M tokens) ===
+    { id: 'openai/o1', provider: 'openrouter', name: '💎 OpenAI o1 (Reasoning)', tier: 'premium' },
+    { id: 'anthropic/claude-opus-4', provider: 'openrouter', name: '💎 Claude Opus 4', tier: 'premium' },
+    { id: 'google/gemini-pro-1.5-exp', provider: 'openrouter', name: '💎 Gemini Pro 1.5 Exp', tier: 'premium' }
+  ];
 }
 
 async function runModel(modelId: string, prompt: string, context: vscode.ExtensionContext): Promise<any> {
   const config = vscode.workspace.getConfiguration('hybridmind');
+  const openrouterKey = config.get<string>('openrouterApiKey') || '';
   
-  // Map model IDs to actual API model names
-  const modelMapping: { [key: string]: string } = {
-    'llama-3.3-70b': 'llama-3.3-70b-versatile',
-    'llama-3.1-8b': 'llama-3.1-8b-instant',
-    'gemini-2.0-flash-exp': 'gemini-2.0-flash-exp',
-    'gemini-1.5-pro': 'gemini-1.5-pro',
-    'gemini-flash': 'gemini-2.0-flash-exp',
-    'deepseek-chat': 'deepseek-chat',
-    'deepseek-coder': 'deepseek-coder',
-    'deepseek-v3': 'deepseek-chat',
-    'qwen-max': 'qwen-max',
-    'qwen-plus': 'qwen-plus'
-  };
-  
-  const actualModel = modelMapping[modelId] || modelId;
+  if (!openrouterKey) {
+    throw new Error('OpenRouter API key not configured. Add it in VS Code Settings > Extensions > HybridMind > OpenRouter API Key');
+  }
   
   // COST PROTECTION: Limit prompt size to prevent accidental huge bills
   const MAX_CHARS = 50000; // ~12,500 tokens (~$0.15 for GPT-4, ~$0.05 for Claude)
@@ -270,22 +245,8 @@ async function runModel(modelId: string, prompt: string, context: vscode.Extensi
     console.warn(`Large prompt: ${prompt.length} characters. Estimated cost: $0.10-$0.50`);
   }
   
-  // Route to appropriate provider based on model ID
-  if (modelId.startsWith('llama')) {
-    return runGroq(actualModel, prompt, config.get('groqApiKey') || '');
-  } else if (modelId.startsWith('gemini')) {
-    return runGemini(actualModel, prompt, config.get('geminiApiKey') || '');
-  } else if (modelId.startsWith('deepseek')) {
-    return runDeepseek(actualModel, prompt, config.get('deepseekApiKey') || '');
-  } else if (modelId.startsWith('qwen')) {
-    return runQwen(actualModel, prompt, config.get('qwenApiKey') || '');
-  } else if (modelId.startsWith('gpt')) {
-    return runOpenAI(actualModel, prompt, config.get('openaiApiKey') || '');
-  } else if (modelId.startsWith('claude')) {
-    return runAnthropic(actualModel, prompt, config.get('anthropicApiKey') || '');
-  }
-  
-  throw new Error(`Unknown model: ${modelId}`);
+  // All models now go through OpenRouter
+  return runOpenRouter(modelId, prompt, openrouterKey);
 }
 
 async function runGroq(model: string, prompt: string, apiKey: string): Promise<any> {
@@ -588,6 +549,64 @@ async function runAnthropic(model: string, prompt: string, apiKey: string): Prom
     clearTimeout(timeout);
     if (error.name === 'AbortError') {
       throw new Error('Request timed out after 30 seconds.');
+    }
+    throw error;
+  }
+}
+
+async function runOpenRouter(model: string, prompt: string, apiKey: string): Promise<any> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000); // 60s for potentially slower models
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://hybridmind.app',
+        'X-Title': 'HybridMind VS Code Extension'
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 4000,
+        temperature: 0.7
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      if (response.status === 401) {
+        throw new Error('Invalid OpenRouter API key. Check your settings at: VS Code Settings > HybridMind > OpenRouter API Key');
+      } else if (response.status === 429) {
+        throw new Error('OpenRouter rate limit exceeded. Wait a few seconds and try again.');
+      } else if (response.status === 402) {
+        throw new Error('Insufficient OpenRouter credits. Top up at: https://openrouter.ai/credits');
+      } else {
+        throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+      }
+    }
+
+    const data: any = await response.json();
+    
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      throw new Error('Invalid response from OpenRouter API');
+    }
+
+    return {
+      content: data.choices[0].message.content,
+      model: model,
+      provider: 'openrouter',
+      usage: data.usage // OpenRouter provides usage stats
+    };
+  } catch (error: any) {
+    clearTimeout(timeout);
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out after 60 seconds. The model may be overloaded.');
     }
     throw error;
   }

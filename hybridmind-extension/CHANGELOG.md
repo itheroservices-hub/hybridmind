@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0] - 2026-02-18
+
+### Added
+- Live Ralph telemetry streaming UI in sidebar with animated thought rows for long self-healing loops
+- SSE-powered chain execution stream support for real-time backend-to-UI telemetry delivery
+- Kill-switch UX for active Ralph loops from the sidebar telemetry panel
+- MCP approval status command and chat insight rendering for approval ticket visibility
+- Backend kill-flow integration to deny pending approval tickets and prevent ghost commands
+
+### Changed
+- Upgraded chain orchestration path to support abort-aware self-healing execution
+- Improved trust and observability UX during autonomous loop execution
+- Added Phase I multi-project core blueprint documentation for reusable platform architecture
+
 ## [1.7.0] - 2026-02-08
 
 ### Added
@@ -8,7 +22,7 @@
 - Intelligent model selection based on task requirements, budget, and user tier
 - Model Capabilities Viewer to compare model strengths across 9 dimensions
 - Custom Chain Builder for creating sequential multi-model workflows
-- Profit Margin Protection with automatic budget optimization
+- Server-side cost governance with automatic budget optimization
 - Modern UI/UX with #0b6a76 brand color and WCAG AA accessibility
 - 6 modular UI component systems (model selector, chain templates, loading states)
 

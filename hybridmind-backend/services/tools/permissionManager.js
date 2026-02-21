@@ -20,7 +20,11 @@ class PermissionManager {
           'web_search', 'external_api',
           'generate_code', 'ai_generation',
           'read_files', 'write_files',
-          'http_request'
+          'http_request',
+          'draft_init', 'draft_track_write', 'draft_status_read',
+          'm365_get_knowledge', 'm365_get_schema',
+          'm365_get_code_snippets', 'm365_troubleshoot',
+          'm365_normalize_terms'
         ],
         riskLevel: 'high'
       },
@@ -28,7 +32,10 @@ class PermissionManager {
         name: 'Analyst',
         permissions: [
           'read_database', 'query_database',
-          'web_search', 'external_api'
+          'web_search', 'external_api',
+          'draft_status_read',
+          'm365_get_knowledge', 'm365_troubleshoot',
+          'm365_normalize_terms'
         ],
         riskLevel: 'medium'
       },
@@ -36,7 +43,9 @@ class PermissionManager {
         name: 'Marketing',
         permissions: [
           'write_crm', 'modify_contacts',
-          'web_search', 'external_api'
+          'web_search', 'external_api',
+          'm365_get_knowledge', 'm365_get_code_snippets',
+          'm365_normalize_terms'
         ],
         riskLevel: 'medium'
       },
@@ -45,7 +54,10 @@ class PermissionManager {
         permissions: [
           'read_database',
           'web_search',
-          'read_files'
+          'read_files',
+          'draft_status_read',
+          'm365_get_knowledge',
+          'm365_normalize_terms'
         ],
         riskLevel: 'low'
       }

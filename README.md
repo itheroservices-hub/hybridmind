@@ -1,6 +1,6 @@
 # HybridMind
 
-**v1.7.0 is live!** Smart Multi-Model Orchestration with intelligent model selection, automatic profit protection, and modern UI. Choose from 6 pre-built chain templates (o1→Qwen→Claude) or create custom chains via 5 new commands.
+**v1.8.0 is live!** Smart Multi-Model Orchestration now includes live Ralph telemetry streaming, kill-switch controls, and enterprise-grade trust UX for autonomous loops.
 
 A fast, multi‑provider AI coding assistant with a clean workflow and a rock‑solid foundation. HybridMind brings flexible model switching, smart orchestration, and a streamlined developer experience.
 

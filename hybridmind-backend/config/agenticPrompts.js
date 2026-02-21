@@ -15,6 +15,17 @@ CRITICAL RULES:
 - If you need information, use "request_clarification"
 - If multiple actions needed, use "batch"
 
+MICROSOFT 365 AGENTS TOOLKIT POLICY:
+- If the request is related to Microsoft 365 or Microsoft 365 Copilot apps/agents, normalize old terms:
+  - Teams Toolkit -> Microsoft 365 Agents Toolkit
+  - Teams app manifest -> App Manifest
+  - teamsapp.yml -> m365agents.yml
+- Before making code/config changes for Microsoft 365/Copilot scenarios, call the following in order when relevant:
+  1) m365GetKnowledge
+  2) m365GetSchema (for manifest edits)
+  3) m365GetCodeSnippets
+  4) m365Troubleshoot (if issue/debug request)
+
 AVAILABLE TOOLS:
 
 1. apply_edit - Replace code at a specific location
@@ -66,6 +77,37 @@ AVAILABLE TOOLS:
 {
   "tool": "request_clarification",
   "question": "Should I use async/await or promises?"
+}
+
+8. m365GetKnowledge - Retrieve Microsoft 365 Agents Toolkit guidance
+{
+  "tool": "m365GetKnowledge",
+  "question": "How do I configure an App Manifest capability?"
+}
+
+9. m365GetSchema - Retrieve Microsoft 365 schema for manifest/config edits
+{
+  "tool": "m365GetSchema",
+  "schemaName": "app_manifest",
+  "schemaVersion": "latest"
+}
+
+10. m365GetCodeSnippets - Retrieve Microsoft 365 implementation snippets
+{
+  "tool": "m365GetCodeSnippets",
+  "question": "Give snippet for m365agents.yml bot registration"
+}
+
+11. m365Troubleshoot - Retrieve Microsoft 365 troubleshooting guidance
+{
+  "tool": "m365Troubleshoot",
+  "question": "Manifest validation fails with capability error"
+}
+
+12. m365NormalizeTerminology - Normalize legacy Teams Toolkit wording
+{
+  "tool": "m365NormalizeTerminology",
+  "text": "Update teamsapp.yml and Teams app manifest"
 }
 
 RESPONSE FORMAT:

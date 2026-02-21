@@ -3,7 +3,7 @@
   "displayName": "HybridMind AI Assistant",
   "description": "Autonomous AI coding agent with 40+ premium models via OpenRouter. 4-tier pricing (Free, Pro $19, Pro Plus $49, Enterprise). Transparent costs ($0.09-$75/M tokens). Includes o1, Claude 4.5, Gemini 2.5, DeepSeek R1.",
   "publisher": "hybridmind",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
@@ -59,6 +59,12 @@
         }
       ]
     },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "hybridmind.mcpRegistry",
+        "label": "HybridMind MCP Registry"
+      }
+    ],
     "commands": [
       {
         "command": "hybridmind.openChat",
@@ -79,6 +85,11 @@
         "command": "hybridmind.showUsageDetails",
         "title": "HybridMind: Show Usage Statistics",
         "icon": "$(pulse)"
+      },
+      {
+        "command": "hybridmind.checkMcpApproval",
+        "title": "HybridMind: Check MCP Approval Ticket",
+        "icon": "$(shield)"
       },
       {
         "command": "hybridmind.quickChat",
@@ -177,6 +188,10 @@
         {
           "command": "hybridmind.inlineChat",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "hybridmind.checkMcpApproval",
+          "when": "true"
         }
       ],
       "editor/context": [
@@ -208,25 +223,10 @@
           "default": "",
           "description": "HybridMind Pro license key. Get yours at https://hybridmind.dev/pricing"
         },
-        "hybridmind.groqApiKey": {
+        "hybridmind.openrouterApiKey": {
           "type": "string",
           "default": "",
-          "description": "Groq API Key (for Llama, Mixtral models). Get from: https://console.groq.com/keys"
-        },
-        "hybridmind.geminiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Google Gemini API Key (for Gemini models). Get from: https://aistudio.google.com/app/apikey"
-        },
-        "hybridmind.deepseekApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "DeepSeek API Key (for DeepSeek models). Get from: https://platform.deepseek.com/api_keys"
-        },
-        "hybridmind.qwenApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Qwen API Key (for Qwen models). Get from: https://dashscope.console.aliyun.com/apiKey"
+          "description": "OpenRouter API Key - Unified access to ALL 200+ AI models (GPT-4, Claude, Gemini, Llama, DeepSeek, etc.). Get from: https://openrouter.ai/keys"
         },
         "hybridmind.modelSelection.mode": {
           "type": "string",
@@ -246,11 +246,6 @@
           "default": {},
           "description": "Custom model chain configuration (role -> model mapping)"
         },
-        "hybridmind.modelSelection.autoAdjustForMargin": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically adjust model selection when profit margins are low"
-        },
         "hybridmind.ui.theme": {
           "type": "string",
           "default": "auto",
@@ -266,16 +261,6 @@
           "type": "boolean",
           "default": true,
           "description": "Show tier badges on model selectors"
-        },
-        "hybridmind.openaiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI API Key (for GPT models). Get from: https://platform.openai.com/api-keys"
-        },
-        "hybridmind.anthropicApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Anthropic API Key (for Claude models). Get from: https://console.anthropic.com/settings/keys"
         }
       }
     }

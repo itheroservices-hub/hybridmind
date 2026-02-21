@@ -81,6 +81,37 @@ function validateToolCall(obj) {
         if (!tool.question) errors.push('request_clarification requires "question"');
         break;
 
+      case 'm365GetKnowledge':
+        if (!tool.question) errors.push('m365GetKnowledge requires "question"');
+        break;
+
+      case 'm365GetSchema':
+        if (!tool.schemaName) errors.push('m365GetSchema requires "schemaName"');
+        if (!tool.schemaVersion) errors.push('m365GetSchema requires "schemaVersion"');
+        break;
+
+      case 'm365GetCodeSnippets':
+        if (!tool.question) errors.push('m365GetCodeSnippets requires "question"');
+        break;
+
+      case 'm365Troubleshoot':
+        if (!tool.question) errors.push('m365Troubleshoot requires "question"');
+        break;
+
+      case 'm365NormalizeTerminology':
+        if (!tool.text) errors.push('m365NormalizeTerminology requires "text"');
+        break;
+
+      case 'draftInit':
+        break;
+
+      case 'draftNewTrack':
+        if (!tool.title) errors.push('draftNewTrack requires "title"');
+        break;
+
+      case 'draftStatus':
+        break;
+
       default:
         errors.push(`Unknown tool type: ${tool.tool}`);
     }

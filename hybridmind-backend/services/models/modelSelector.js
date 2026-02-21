@@ -10,6 +10,7 @@ const {
   TASK_CAPABILITY_REQUIREMENTS,
   MODEL_CHAIN_TEMPLATES 
 } = require('../../config/modelCapabilities');
+const intelligenceTierRouter = require('./intelligenceTierRouter');
 const logger = require('../../utils/logger');
 
 class ModelSelector {
@@ -38,8 +39,29 @@ class ModelSelector {
   }) {
     this.stats.totalSelections++;
     this.stats.autoSelections++;
+
+    const routingDecision = intelligenceTierRouter.routeRequest({
+      userTier: tier,
+      taskType,
+      role,
+      prompt: requirements?.userPrompt || requirements?.prompt || '',
+      metadata: requirements?.metadata || {}
+    });
     
     logger.info(`Selecting model for ${taskType} (role: ${role}, priority: ${prioritize})`);
+
+    if (routingDecision.route === 'local_sentry') {
+      return {
+        modelId: 'local/llama-3.2-1b-sentry',
+        capabilities: null,
+        score: 100,
+        reasoning: 'Routed to local sentry for discovery task',
+        selectedRoute: routingDecision.route,
+        decisionTrace: routingDecision,
+        profitSignals: routingDecision.profitSignals,
+        localExecution: true
+      };
+    }
 
     // Get available models based on tier
     const models = availableModels || this._getModelsForTier(tier);
@@ -60,6 +82,8 @@ class ModelSelector {
     };
 
     // Score each model
+    const preferredModels = new Set(routingDecision.preferredModels || []);
+
     const scored = candidates.map(modelId => {
       const capabilities = MODEL_CAPABILITIES[modelId];
       
@@ -67,7 +91,7 @@ class ModelSelector {
         return { modelId, score: 0 };
       }
 
-      const score = this._scoreModel({
+      let score = this._scoreModel({
         capabilities,
         taskReqs,
         requirements,
@@ -75,6 +99,10 @@ class ModelSelector {
         budget,
         role
       });
+
+      if (preferredModels.has(modelId)) {
+        score += 8;
+      }
 
       return { modelId, score, capabilities };
     });
@@ -94,7 +122,10 @@ class ModelSelector {
       modelId: selected.modelId,
       capabilities: selected.capabilities,
       score: selected.score,
-      reasoning: this._explainSelection(selected, scored.slice(1, 3))
+      reasoning: this._explainSelection(selected, scored.slice(1, 3)),
+      selectedRoute: routingDecision.route,
+      decisionTrace: routingDecision,
+      profitSignals: routingDecision.profitSignals
     };
   }
 

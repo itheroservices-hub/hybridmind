@@ -6,6 +6,9 @@ const logger = require('../../utils/logger');
 const toolRegistry = require('./toolRegistry');
 const permissionManager = require('./permissionManager');
 const toolLogger = require('./toolLogger');
+const m365Policy = require('./m365Policy');
+const m365AgentsToolkitTool = require('./m365AgentsToolkitTool');
+const draftCommandRouter = require('./draftCommandRouter');
 
 // Import tool implementations
 const databaseTool = require('./databaseTool');
@@ -17,6 +20,8 @@ class ToolExecutor {
   constructor() {
     // Register tool handlers
     this._registerHandlers();
+
+    this.m365PreflightByAgent = new Map();
     
     // Execution queue for rate limiting
     this.executionQueue = [];
@@ -32,6 +37,30 @@ class ToolExecutor {
     toolRegistry.registerHandler('webSearch', webSearchTool.execute.bind(webSearchTool));
     toolRegistry.registerHandler('crmWrite', crmTool.execute.bind(crmTool));
     toolRegistry.registerHandler('codeGenerate', codeGeneratorTool.execute.bind(codeGeneratorTool));
+    toolRegistry.registerHandler('m365GetKnowledge', (parameters) =>
+      m365AgentsToolkitTool.execute('m365GetKnowledge', parameters)
+    );
+    toolRegistry.registerHandler('m365GetSchema', (parameters) =>
+      m365AgentsToolkitTool.execute('m365GetSchema', parameters)
+    );
+    toolRegistry.registerHandler('m365GetCodeSnippets', (parameters) =>
+      m365AgentsToolkitTool.execute('m365GetCodeSnippets', parameters)
+    );
+    toolRegistry.registerHandler('m365Troubleshoot', (parameters) =>
+      m365AgentsToolkitTool.execute('m365Troubleshoot', parameters)
+    );
+    toolRegistry.registerHandler('m365NormalizeTerminology', (parameters) =>
+      m365AgentsToolkitTool.execute('m365NormalizeTerminology', parameters)
+    );
+    toolRegistry.registerHandler('draftInit', (parameters) =>
+      draftCommandRouter.execute('draftInit', parameters)
+    );
+    toolRegistry.registerHandler('draftNewTrack', (parameters) =>
+      draftCommandRouter.execute('draftNewTrack', parameters)
+    );
+    toolRegistry.registerHandler('draftStatus', (parameters) =>
+      draftCommandRouter.execute('draftStatus', parameters)
+    );
 
     // TODO: Register additional tools (fileOperation, httpRequest)
     
@@ -49,6 +78,7 @@ class ToolExecutor {
   async executeTool({ toolName, parameters, agentId = 'system' }) {
     const startTime = Date.now();
     let result = null;
+    let policyContext = null;
 
     try {
       // 1. Validate tool exists
@@ -63,6 +93,18 @@ class ToolExecutor {
       }
 
       const toolSchema = toolRegistry.getTool(toolName);
+
+      policyContext = this._evaluateM365Policy({ toolName, parameters, agentId });
+      if (policyContext.applies && !policyContext.allowed) {
+        result = {
+          success: false,
+          error: `M365 preflight required before '${toolName}'`,
+          m365Policy: policyContext,
+          executionTime: Date.now() - startTime
+        };
+        await this._logExecution({ toolName, parameters, agentId, ...result, policyTags: ['m365', 'policy-blocked'], policyContext });
+        return result;
+      }
 
       // 2. Check permissions
       const permissionCheck = permissionManager.canUseTool(agentId, toolName, toolSchema);
@@ -142,14 +184,22 @@ class ToolExecutor {
         success: result.success,
         executionTime,
         error: result.error,
-        cost: toolSchema.costPerCall || 0
+        cost: toolSchema.costPerCall || 0,
+        policyTags: this._buildPolicyTags(policyContext, toolName),
+        policyContext
       });
+
+      if (result.success) {
+        this._registerM365Preflight(agentId, toolName);
+      }
 
       return {
         ...result,
         toolName,
         agentId,
-        cost: toolSchema.costPerCall || 0
+        cost: toolSchema.costPerCall || 0,
+        policyTags: this._buildPolicyTags(policyContext, toolName),
+        m365Policy: policyContext
       };
 
     } catch (error) {
@@ -178,7 +228,9 @@ class ToolExecutor {
         toolName,
         parameters,
         agentId,
-        ...result
+        ...result,
+        policyTags: this._buildPolicyTags(policyContext, toolName),
+        policyContext
       });
 
       return result;
@@ -241,22 +293,29 @@ class ToolExecutor {
     // SIMPLIFIED IMPLEMENTATION
     // In production, use LLM to parse natural language into tool calls
     
+    const normalizedPrompt = m365Policy.normalizeTerminology(prompt || '');
     const toolCalls = [];
+
+    const preflightCalls = m365Policy.buildPreflightToolCalls(normalizedPrompt);
+    toolCalls.push(...preflightCalls);
 
     // Simple pattern matching (replace with LLM in production)
     const patterns = {
       databaseQuery: /(?:query|search|find in|select from)\s+database/i,
       webSearch: /(?:search|google|find|look up)(?:\s+(?:the\s+)?web)?/i,
       crmWrite: /(?:create|update|add to|write to)\s+(?:crm|salesforce|hubspot)/i,
-      codeGenerate: /(?:generate|create|write)\s+(?:code|function|class|component)/i
+      codeGenerate: /(?:generate|create|write)\s+(?:code|function|class|component)/i,
+      draftInit: /\bdraft\s+init\b|\binitialize\s+draft\b/i,
+      draftNewTrack: /\bdraft\s+new-track\b|\bdraft\s+new track\b|\bcreate\s+new\s+track\b/i,
+      draftStatus: /\bdraft\s+status\b|\bshow\s+draft\s+status\b|\btrack\s+status\b/i
     };
 
     for (const [toolName, pattern] of Object.entries(patterns)) {
-      if (pattern.test(prompt)) {
+      if (pattern.test(normalizedPrompt)) {
         // Extract parameters from prompt (simplified)
         toolCalls.push({
           toolName,
-          parameters: this._extractParameters(toolName, prompt),
+          parameters: this._extractParameters(toolName, normalizedPrompt),
           confidence: 0.8
         });
       }
@@ -264,8 +323,10 @@ class ToolExecutor {
 
     return {
       prompt,
+      normalizedPrompt,
       toolCalls,
-      parsed: toolCalls.length > 0
+      parsed: toolCalls.length > 0,
+      m365PolicyApplied: preflightCalls.length > 0
     };
   }
 
@@ -300,6 +361,23 @@ class ToolExecutor {
         description: prompt.replace(/(?:generate|create|write)\s+/i, ''),
         template: 'custom'
       };
+    } else if (toolName === 'draftInit') {
+      return {
+        workspacePath: process.cwd(),
+        force: false
+      };
+    } else if (toolName === 'draftNewTrack') {
+      const titleMatch = prompt.match(/(?:new[-\s]track|track)\s+(?:for\s+)?(.+)$/i);
+      return {
+        workspacePath: process.cwd(),
+        title: (titleMatch?.[1] || 'New Track').trim(),
+        description: prompt,
+        type: 'feature'
+      };
+    } else if (toolName === 'draftStatus') {
+      return {
+        workspacePath: process.cwd()
+      };
     }
 
     return {};
@@ -315,6 +393,121 @@ class ToolExecutor {
     } catch (error) {
       logger.error(`Failed to log tool execution: ${error.message}`);
     }
+  }
+
+  _evaluateM365Policy({ toolName, parameters, agentId }) {
+    const inputText = this._collectPolicyInput(parameters);
+    const context = m365Policy.inferContext(inputText);
+
+    if (String(toolName || '').toLowerCase().startsWith('m365')) {
+      return {
+        applies: context.m365Intent,
+        allowed: true,
+        required: [],
+        missing: [],
+        context,
+        normalizedInput: m365Policy.normalizeTerminology(inputText)
+      };
+    }
+
+    if (!context.m365Intent) {
+      return {
+        applies: false,
+        allowed: true,
+        context
+      };
+    }
+
+    const requiresCodePreflight = toolName === 'codeGenerate' || context.codeGeneration || context.manifest;
+    const requiresManifestPreflight = context.manifest || this._looksLikeManifestOperation(parameters);
+    const requiresTroubleshootPreflight = context.troubleshooting;
+
+    const required = [];
+    if (requiresCodePreflight) {
+      required.push('knowledge', 'snippets');
+    }
+    if (requiresManifestPreflight) {
+      required.push('schema');
+    }
+    if (requiresTroubleshootPreflight) {
+      required.push('troubleshoot');
+    }
+
+    const currentState = this._getM365PreflightState(agentId);
+    const missing = required.filter(check => !currentState[check]);
+
+    return {
+      applies: true,
+      allowed: missing.length === 0,
+      required,
+      missing,
+      context,
+      normalizedInput: m365Policy.normalizeTerminology(inputText)
+    };
+  }
+
+  _collectPolicyInput(parameters = {}) {
+    if (!parameters || typeof parameters !== 'object') {
+      return '';
+    }
+
+    const candidates = [
+      parameters.question,
+      parameters.description,
+      parameters.query,
+      parameters.path,
+      parameters.content,
+      parameters.context
+    ]
+      .filter(Boolean)
+      .map(value => (typeof value === 'string' ? value : JSON.stringify(value)));
+
+    return candidates.join(' ');
+  }
+
+  _looksLikeManifestOperation(parameters = {}) {
+    const source = `${parameters.path || ''} ${parameters.description || ''} ${parameters.question || ''}`.toLowerCase();
+    return /app manifest|declarative agent manifest|api plugin manifest|m365agents\.yml|teamsapp\.yml|manifest/.test(source);
+  }
+
+  _getM365PreflightState(agentId) {
+    if (!this.m365PreflightByAgent.has(agentId)) {
+      this.m365PreflightByAgent.set(agentId, {
+        knowledge: null,
+        schema: null,
+        snippets: null,
+        troubleshoot: null
+      });
+    }
+
+    return this.m365PreflightByAgent.get(agentId);
+  }
+
+  _registerM365Preflight(agentId, toolName) {
+    const state = this._getM365PreflightState(agentId);
+    const now = new Date().toISOString();
+
+    if (toolName === 'm365GetKnowledge') state.knowledge = now;
+    if (toolName === 'm365GetSchema') state.schema = now;
+    if (toolName === 'm365GetCodeSnippets') state.snippets = now;
+    if (toolName === 'm365Troubleshoot') state.troubleshoot = now;
+  }
+
+  _buildPolicyTags(policyContext, toolName) {
+    const tags = [];
+
+    if (String(toolName).toLowerCase().startsWith('m365')) {
+      tags.push('m365', 'policy-tool');
+    }
+
+    if (policyContext?.applies) {
+      tags.push('m365-policy-applied');
+      if (!policyContext.allowed) {
+        tags.push('m365-policy-blocked');
+      }
+    }
+
+    return tags;
   }
 
   /**

@@ -1,10 +1,15 @@
 const { modelSelectionStrategies } = require('../../config/models');
 const modelRegistry = require('../models/modelRegistry');
+const intelligenceTierRouter = require('../models/intelligenceTierRouter');
 
 /**
  * Model Selector - Intelligently selects models for tasks
  */
 class ModelSelector {
+  constructor() {
+    this.lastRoutingDecision = null;
+  }
+
   /**
    * Select best model for a step
    */
@@ -23,6 +28,26 @@ class ModelSelector {
     };
 
     const task = taskMapping[action] || 'code-generation';
+
+    const routingDecision = intelligenceTierRouter.routeRequest({
+      userTier: step.tier || 'free',
+      taskType: task,
+      role: step.role || action || 'worker',
+      prompt: step.goal || step.description || step.prompt || '',
+      metadata: {
+        chainType: step.chainType,
+        forceDiscovery: action === 'analyze' && Boolean(step.symbolSearch)
+      }
+    });
+    this.lastRoutingDecision = routingDecision;
+
+    if (routingDecision.route === 'sonnet_4_5_thinking') {
+      return this.selectModelForTask(task, 'quality');
+    }
+
+    if (routingDecision.route === 'local_sentry') {
+      return this.selectModelForTask(task, 'cost');
+    }
 
     // Determine strategy based on priority and complexity
     let strategy;
@@ -176,6 +201,13 @@ class ModelSelector {
     }
 
     return taskModels.slice(0, count);
+  }
+
+  /**
+   * Retrieve latest route decision for observability
+   */
+  getLastRoutingDecision() {
+    return this.lastRoutingDecision;
   }
 }
 

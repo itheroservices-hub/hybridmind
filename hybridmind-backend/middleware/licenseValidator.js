@@ -5,6 +5,14 @@
 
 const logger = require('../utils/logger');
 
+function normalizeTier(tier = 'free') {
+  const value = String(tier || 'free').toLowerCase();
+  if (value === 'proplus' || value === 'pro_plus' || value === 'pro-plus' || value === 'pro plus') {
+    return 'pro-plus';
+  }
+  return value;
+}
+
 // Cache for license verification (avoid hitting landing page API too often)
 const licenseCache = new Map();
 const CACHE_DURATION = 3600000; // 1 hour
@@ -33,35 +41,58 @@ async function validateLicense(req, res, next) {
       return next();
     }
 
-    // Verify with landing page API
+    // Verify with license APIs (primary + fallback)
     try {
-      const response = await fetch('https://hybridmind.ca/api/license/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licenseKey })
-      });
+      const verificationUrls = [
+        process.env.LICENSE_VERIFY_URL,
+        'https://api.hybridmind.dev/v1/license/verify',
+        'https://hybridmind.ca/api/license/verify'
+      ].filter(Boolean);
 
-      if (!response.ok) {
-        logger.warn(`License verification failed: ${response.status}`);
+      let data = null;
+      let verified = false;
+
+      for (const verifyUrl of verificationUrls) {
+        try {
+          const response = await fetch(verifyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ licenseKey })
+          });
+
+          if (!response.ok) {
+            logger.warn(`License verification failed at ${verifyUrl}: ${response.status}`);
+            continue;
+          }
+
+          data = await response.json();
+          verified = true;
+          break;
+        } catch (endpointError) {
+          logger.warn(`License verification endpoint error at ${verifyUrl}: ${endpointError.message}`);
+        }
+      }
+
+      if (!verified || !data) {
         req.user = { tier: 'free' };
         req.tier = 'free';
         return next();
       }
 
-      const data = await response.json();
+      const normalizedTier = normalizeTier(data.tier);
 
       // Support both 'pro' ($19.99) and 'proplus' ($49.99) tiers
-      if (data.valid && (data.tier === 'pro' || data.tier === 'proplus')) {
+      if (data.valid && (normalizedTier === 'pro' || normalizedTier === 'pro-plus' || normalizedTier === 'enterprise')) {
         // Valid Pro or Pro Plus license
         licenseCache.set(licenseKey, {
-          tier: data.tier,
+          tier: normalizedTier,
           timestamp: Date.now()
         });
 
-        req.user = { tier: data.tier, licenseKey };
-        req.tier = data.tier;
+        req.user = { tier: normalizedTier, licenseKey };
+        req.tier = normalizedTier;
         
-        logger.info(`✅ ${data.tier === 'proplus' ? 'Pro Plus' : 'Pro'} license validated: ${licenseKey.substring(0, 8)}...`);
+        logger.info(`✅ ${normalizedTier === 'pro-plus' ? 'Pro Plus' : normalizedTier === 'enterprise' ? 'Enterprise' : 'Pro'} license validated: ${licenseKey.substring(0, 8)}...`);
         return next();
       } else {
         // Invalid or expired license

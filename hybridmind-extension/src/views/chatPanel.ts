@@ -25,6 +25,60 @@ export class ChatPanel {
   private _currentModel: string = 'gpt-4';
   private _licenseManager: LicenseManager;
 
+  public pushMcpTestDashboard(data: {
+    title?: string;
+    passCount?: number;
+    failCount?: number;
+    durationMs?: number;
+    details?: string[];
+  }) {
+    this._panel.webview.postMessage({
+      command: 'renderMcpTestDashboard',
+      payload: data
+    });
+  }
+
+  public pushMcpDiffPreview(data: {
+    file?: string;
+    additions?: number;
+    deletions?: number;
+    summary?: string;
+  }) {
+    this._panel.webview.postMessage({
+      command: 'renderMcpDiffPreview',
+      payload: data
+    });
+  }
+
+  public pushMcpApprovalStatus(data: {
+    id?: string;
+    status?: string;
+    command?: string;
+    requestId?: string;
+    updatedAt?: string;
+    reason?: string;
+  }) {
+    this._panel.webview.postMessage({
+      command: 'renderMcpApprovalStatus',
+      payload: data
+    });
+  }
+
+  public pushTelemetryVisualizer(data: {
+    agent?: string;
+    attempts?: Array<{
+      attempt?: number;
+      status?: 'green' | 'yellow' | 'red';
+      message?: string;
+      timestamp?: string;
+    }>;
+  }) {
+    this._panel.webview.postMessage({
+      command: 'renderTelemetryVisualizer',
+      payload: data
+    });
+  }
+
   public static createOrShow(extensionUri: vscode.Uri, serverPort: number) {
     const column = vscode.window.activeTextEditor
       ? vscode.window.activeTextEditor.viewColumn
@@ -609,6 +663,13 @@ export class ChatPanel {
 
   <div class="messages" id="messages"></div>
 
+  <div class="mcp-insights" id="mcpInsights" style="display:none; padding: 8px 16px; border-top: 1px solid var(--vscode-panel-border);">
+    <div id="telemetryVisualizer" style="display:none; margin-bottom: 8px;"></div>
+    <div id="mcpTestDashboard" style="display:none; margin-bottom: 8px;"></div>
+    <div id="mcpDiffPreview" style="display:none;"></div>
+    <div id="mcpApprovalStatus" style="display:none; margin-top: 8px;"></div>
+  </div>
+
   <div class="quick-actions">
     <button class="quick-action" id="explainBtn">📖 Explain</button>
     <button class="quick-action" id="refactorBtn">♻️ Refactor</button>
@@ -633,6 +694,11 @@ export class ChatPanel {
     const sendButton = document.getElementById('sendButton');
     const modelSelect = document.getElementById('modelSelect');
     const clearButton = document.getElementById('clearButton');
+    const mcpInsights = document.getElementById('mcpInsights');
+    const telemetryVisualizer = document.getElementById('telemetryVisualizer');
+    const mcpTestDashboard = document.getElementById('mcpTestDashboard');
+    const mcpDiffPreview = document.getElementById('mcpDiffPreview');
+    const mcpApprovalStatus = document.getElementById('mcpApprovalStatus');
 
     let isThinking = false;
 
@@ -708,6 +774,21 @@ export class ChatPanel {
         case 'updateTierInfo':
           updateTierBadge(message.tierInfo);
           break;
+        case 'modelChanged':
+          modelSelect.value = message.model;
+          break;
+        case 'renderMcpTestDashboard':
+          renderMcpTestDashboard(message.payload || {});
+          break;
+        case 'renderMcpDiffPreview':
+          renderMcpDiffPreview(message.payload || {});
+          break;
+        case 'renderMcpApprovalStatus':
+          renderMcpApprovalStatus(message.payload || {});
+          break;
+        case 'renderTelemetryVisualizer':
+          renderTelemetryVisualizer(message.payload || {});
+          break;
       }
     });
 
@@ -734,10 +815,7 @@ export class ChatPanel {
           }
         }, 50);
       }
-    }   modelSelect.value = message.model;
-          break;
-      }
-    });
+    }
 
     function renderMessages(messages) {
       hideThinking();
@@ -783,6 +861,91 @@ export class ChatPanel {
       if (thinking) {
         thinking.remove();
       }
+    }
+
+    function renderMcpTestDashboard(payload) {
+      const title = payload.title || 'Live Test Dashboard';
+      const passCount = payload.passCount || 0;
+      const failCount = payload.failCount || 0;
+      const durationMs = payload.durationMs || 0;
+      const details = Array.isArray(payload.details) ? payload.details : [];
+
+      mcpInsights.style.display = 'block';
+      mcpTestDashboard.style.display = 'block';
+      const detailItems = details.length
+        ? '<ul style="margin: 6px 0 0 16px; font-size: 12px;">' + details.map(d => '<li>' + d + '</li>').join('') + '</ul>'
+        : '';
+
+      mcpTestDashboard.innerHTML =
+        '<div style="border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px;">' +
+          '<div style="font-weight: 600; margin-bottom: 4px;">🧪 ' + title + '</div>' +
+          '<div style="font-size: 12px; opacity: 0.9;">✅ ' + passCount + ' pass · ❌ ' + failCount + ' fail · ⏱️ ' + durationMs + 'ms</div>' +
+          detailItems +
+        '</div>';
+    }
+
+    function renderTelemetryVisualizer(payload) {
+      const agent = payload.agent || 'Ralph';
+      const attempts = Array.isArray(payload.attempts) ? payload.attempts : [];
+
+      if (!attempts.length) {
+        return;
+      }
+
+      mcpInsights.style.display = 'block';
+      telemetryVisualizer.style.display = 'block';
+
+      const rows = attempts.map((entry, index) => {
+        const status = entry.status || 'yellow';
+        const dot = status === 'green' ? '🟢' : status === 'red' ? '🔴' : '🟡';
+        const attempt = entry.attempt || (index + 1);
+        const message = entry.message || 'No telemetry message';
+        return '<div style="font-size: 12px; margin: 4px 0;">' + dot + ' Attempt ' + attempt + ': ' + message + '</div>';
+      }).join('');
+
+      telemetryVisualizer.innerHTML =
+        '<div style="border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px;">' +
+          '<div style="font-weight: 600; margin-bottom: 4px;">🧠 ' + agent + ' Live Thought Stream</div>' +
+          rows +
+        '</div>';
+    }
+
+    function renderMcpDiffPreview(payload) {
+      const file = payload.file || 'unknown-file';
+      const additions = payload.additions || 0;
+      const deletions = payload.deletions || 0;
+      const summary = payload.summary || 'No summary provided';
+
+      mcpInsights.style.display = 'block';
+      mcpDiffPreview.style.display = 'block';
+      mcpDiffPreview.innerHTML =
+        '<div style="border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px;">' +
+          '<div style="font-weight: 600; margin-bottom: 4px;">🧩 Diff Preview</div>' +
+          '<div style="font-size: 12px; opacity: 0.9; margin-bottom: 4px;">' + file + '</div>' +
+          '<div style="font-size: 12px; opacity: 0.9;">+' + additions + ' / -' + deletions + '</div>' +
+          '<div style="font-size: 12px; margin-top: 6px;">' + summary + '</div>' +
+        '</div>';
+    }
+
+    function renderMcpApprovalStatus(payload) {
+      const id = payload.id || 'unknown-ticket';
+      const status = payload.status || 'unknown';
+      const command = payload.command || 'n/a';
+      const requestId = payload.requestId || 'n/a';
+      const updatedAt = payload.updatedAt || '';
+      const reason = payload.reason || '';
+
+      mcpInsights.style.display = 'block';
+      mcpApprovalStatus.style.display = 'block';
+      mcpApprovalStatus.innerHTML =
+        '<div style="border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px;">' +
+          '<div style="font-weight: 600; margin-bottom: 4px;">🛡️ MCP Approval Ticket</div>' +
+          '<div style="font-size: 12px; opacity: 0.9; margin-bottom: 4px;">Ticket: ' + id + ' · Status: ' + status + '</div>' +
+          '<div style="font-size: 12px; opacity: 0.9; margin-bottom: 4px;">Request: ' + requestId + '</div>' +
+          '<div style="font-size: 12px; opacity: 0.9; margin-bottom: 4px;">Command: ' + command + '</div>' +
+          (reason ? '<div style="font-size: 12px; opacity: 0.9; margin-bottom: 4px;">Reason: ' + reason + '</div>' : '') +
+          (updatedAt ? '<div style="font-size: 12px; opacity: 0.7;">Updated: ' + updatedAt + '</div>' : '') +
+        '</div>';
     }
   </script>
 </body>

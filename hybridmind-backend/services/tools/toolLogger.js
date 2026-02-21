@@ -34,7 +34,9 @@ class ToolLogger {
       executionTime: execution.executionTime,
       error: execution.error || null,
       cost: execution.cost || 0,
-      result: execution.success ? 'success' : 'failed'
+      result: execution.success ? 'success' : 'failed',
+      policyTags: execution.policyTags || [],
+      policyContext: execution.policyContext || null
     };
 
     this.logBuffer.push(logEntry);
