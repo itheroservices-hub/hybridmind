@@ -9,6 +9,7 @@
  */
 
 const axios = require('axios');
+const https = require('https');
 const environment = require('../config/environment');
 const logger = require('../utils/logger');
 
@@ -29,6 +30,19 @@ class ModelProxy {
    * Model configuration - maps friendly names to OpenRouter model IDs
    */
   getModelConfig(modelId) {
+    const aliases = {
+      'gpt-4o': 'gpt-4.1',
+      'gpt-4o-mini': 'gpt-4.1',
+      'openai/gpt-4o': 'gpt-4.1',
+      'openai/gpt-4o-mini': 'gpt-4.1',
+      'openai/gpt-4o-realtime-preview': 'gpt-4.1'
+    };
+
+    const normalizedModelId = aliases[modelId] || modelId;
+    if (aliases[modelId]) {
+      logger.warn(`[ModelProxy] Model '${modelId}' is deprecated; auto-mapped to '${normalizedModelId}'`);
+    }
+
     const models = {
       // ============================================
       // FREE TIER - $0 cost models
@@ -256,16 +270,18 @@ class ModelProxy {
     };
 
     // Return config or default to free Llama
-    return models[modelId] || models['llama-3.3-70b'];
+    return models[normalizedModelId] || models['llama-3.3-70b'];
   }
 
   /**
    * Main call method - all routes go through OpenRouter
+   * Supports both streaming and non-streaming modes
    */
   async call(modelId, prompt, options = {}) {
-    const { temperature = 0.7, maxTokens = 4096, code = '', userId } = options;
+    const { temperature = 0.7, maxTokens = 4096, code = '', userId, stream = false, onToken, onThinking } = options;
     const modelConfig = this.getModelConfig(modelId);
-    const userTier = await this.getUserTier(userId);
+    const userTierRaw = await this.getUserTier(userId);
+    const userTier = userTierRaw === 'pro-plus' ? 'proplus' : userTierRaw;
 
     // Check tier access
     if (modelConfig.tier === 'ultra' && userTier !== 'proplus') {
@@ -278,7 +294,17 @@ class ModelProxy {
     // Build full prompt with code context
     const fullPrompt = code ? `${prompt}\n\nCode:\n${code}` : prompt;
 
-    logger.info(`[OpenRouter] Calling ${modelId} -> ${modelConfig.openRouterId}`);
+    logger.info(`[OpenRouter] Calling ${modelId} -> ${modelConfig.openRouterId}${stream ? ' (streaming)' : ''}`);
+
+    if (stream) {
+      return await this.callOpenRouterStream(
+        modelConfig.openRouterId, 
+        fullPrompt, 
+        temperature, 
+        maxTokens,
+        { onToken, onThinking, modelId }
+      );
+    }
 
     return await this.callOpenRouter(modelConfig.openRouterId, fullPrompt, temperature, maxTokens);
   }
@@ -352,6 +378,185 @@ class ModelProxy {
       logger.error(`[OpenRouter] Error: ${errorMsg}`);
       throw new Error(`API Error: ${errorMsg}`);
     }
+  }
+
+  /**
+   * Call OpenRouter API with streaming support
+   * Emits tokens and thinking/reasoning as they arrive
+   */
+  async callOpenRouterStream(model, prompt, temperature, maxTokens, callbacks = {}) {
+    const { onToken, onThinking, modelId } = callbacks;
+    
+    if (!this.apiKey) {
+      throw new Error('OPENROUTER_API_KEY not configured');
+    }
+
+    return new Promise((resolve, reject) => {
+      const postData = JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature,
+        max_tokens: maxTokens,
+        stream: true
+      });
+
+      const options = {
+        hostname: 'openrouter.ai',
+        path: '/api/v1/chat/completions',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://hybridmind.app',
+          'X-Title': 'HybridMind - Multi-Model AI Platform',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+
+      let fullContent = '';
+      let thinkingContent = '';
+      let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      let buffer = '';
+
+      const req = https.request(options, (res) => {
+        if (res.statusCode !== 200) {
+          let errorBody = '';
+          res.on('data', chunk => errorBody += chunk);
+          res.on('end', () => {
+            try {
+              const error = JSON.parse(errorBody);
+              reject(new Error(error.error?.message || `HTTP ${res.statusCode}`));
+            } catch {
+              reject(new Error(`HTTP ${res.statusCode}: ${errorBody}`));
+            }
+          });
+          return;
+        }
+
+        res.on('data', (chunk) => {
+          buffer += chunk.toString();
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.trim() || line.startsWith(':')) continue;
+            
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6);
+              if (dataStr === '[DONE]') {
+                resolve({
+                  content: fullContent,
+                  thinking: thinkingContent,
+                  model: model || modelId,
+                  usage
+                });
+                return;
+              }
+
+              try {
+                const data = JSON.parse(dataStr);
+                const choice = data.choices?.[0];
+                
+                if (!choice) continue;
+
+                // Extract thinking/reasoning for models that support it (o1, o3, deepseek-r1)
+                if (choice.delta?.reasoning) {
+                  thinkingContent += choice.delta.reasoning;
+                  if (onThinking) {
+                    onThinking(choice.delta.reasoning, thinkingContent);
+                  }
+                }
+
+                // Extract content tokens
+                if (choice.delta?.content) {
+                  fullContent += choice.delta.content;
+                  if (onToken) {
+                    onToken(choice.delta.content, fullContent);
+                  }
+                }
+
+                // Extract usage if available
+                if (data.usage) {
+                  usage = {
+                    promptTokens: data.usage.prompt_tokens || usage.promptTokens,
+                    completionTokens: data.usage.completion_tokens || usage.completionTokens,
+                    totalTokens: data.usage.total_tokens || usage.totalTokens
+                  };
+                }
+
+                // Check finish reason
+                if (choice.finish_reason) {
+                  if (choice.finish_reason === 'error') {
+                    reject(new Error('Model returned error finish reason'));
+                    return;
+                  }
+                }
+              } catch (parseError) {
+                logger.warn(`[OpenRouter] Failed to parse SSE chunk: ${dataStr}`);
+              }
+            }
+          }
+        });
+
+        res.on('end', () => {
+          if (buffer.trim()) {
+            // Process remaining buffer
+            if (buffer.startsWith('data: ')) {
+              const dataStr = buffer.slice(6);
+              if (dataStr !== '[DONE]') {
+                try {
+                  const data = JSON.parse(dataStr);
+                  const choice = data.choices?.[0];
+                  if (choice?.delta?.content) {
+                    fullContent += choice.delta.content;
+                  }
+                  if (choice?.delta?.reasoning) {
+                    thinkingContent += choice.delta.reasoning;
+                  }
+                } catch (e) {
+                  // Ignore parse errors on final chunk
+                }
+              }
+            }
+          }
+
+          resolve({
+            content: fullContent,
+            thinking: thinkingContent,
+            model: model || modelId,
+            usage
+          });
+        });
+
+        res.on('error', (error) => {
+          reject(error);
+        });
+      });
+
+      req.on('error', (error) => {
+        reject(error);
+      });
+
+      req.setTimeout(120000, () => {
+        req.destroy();
+        reject(new Error('Stream timeout after 2 minutes'));
+      });
+
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  /**
+   * Check if a model supports reasoning/thinking output
+   */
+  supportsReasoning(modelId) {
+    const reasoningModels = [
+      'o1', 'o1-pro', 'o3-mini', 'o3',
+      'deepseek-r1', 'deepseek/deepseek-r1',
+      'claude-sonnet-4', 'claude-opus-4'
+    ];
+    return reasoningModels.some(m => modelId.includes(m));
   }
 
   /**

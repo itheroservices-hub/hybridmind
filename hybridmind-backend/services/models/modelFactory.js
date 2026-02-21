@@ -32,18 +32,17 @@ class ModelFactory {
     // Use model's default maxTokens if not specified
     const effectiveMaxTokens = maxTokens || Math.min(config.maxTokens / 2, 4096);
 
-    // Prepare request
-    const request = {
-      model: this.mapModelIdToApiModel(model),
-      prompt,
-      code,
-      temperature,
-      maxTokens: effectiveMaxTokens
-    };
+    // Map model ID to API model identifier
+    const apiModelId = this.mapModelIdToApiModel(model);
 
-    // Execute with retry
+    // Execute with retry - call provider with correct signature: (modelId, prompt, options)
     return this.executeWithRetry(
-      () => provider.call(request),
+      () => provider.call(apiModelId, prompt, {
+        code,
+        temperature,
+        maxTokens: effectiveMaxTokens,
+        userId: options.userId
+      }),
       model,
       options.retries || this.maxRetries
     );

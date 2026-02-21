@@ -143,11 +143,19 @@ const TIER_CONFIG = {
  */
 const requestTracking = new Map();
 
+function normalizeTier(tier = 'free') {
+  const value = String(tier || 'free').toLowerCase();
+  if (value === 'proplus' || value === 'pro_plus' || value === 'pro-plus' || value === 'pro plus') {
+    return 'pro-plus';
+  }
+  return value;
+}
+
 /**
  * Get tier configuration for a user
  */
 function getTierConfig(tier = 'free') {
-  return TIER_CONFIG[tier] || TIER_CONFIG.free;
+  return TIER_CONFIG[normalizeTier(tier)] || TIER_CONFIG.free;
 }
 
 /**
@@ -157,7 +165,7 @@ async function validateTier(req, res, next) {
   try {
     // Get tier from license validation middleware (should run before this)
     // License validator sets req.tier and req.user
-    const tier = req.tier || req.user?.tier || 'free';
+    const tier = normalizeTier(req.tier || req.user?.tier || 'free');
     const config = getTierConfig(tier);
 
     // Check model count limit
@@ -238,23 +246,25 @@ async function validateTier(req, res, next) {
 
     // Check limits
     if (hourlyCount > config.maxRequestsPerHour) {
+      const nextHourMs = 3600000 - (now % 3600000);
       return res.status(429).json({
         error: 'Rate limit exceeded',
         message: `${tier === 'free' ? 'Free tier' : 'Your tier'} allows ${config.maxRequestsPerHour} requests per hour`,
         tier,
         limit: config.maxRequestsPerHour,
-        resetIn: 3600 - (now % 3600000),
+        resetIn: Math.ceil(nextHourMs / 1000),
         upgradeUrl: 'https://hybridmind.dev/pricing'
       });
     }
 
     if (dailyCount > config.maxRequestsPerDay) {
+      const nextDayMs = 86400000 - (now % 86400000);
       return res.status(429).json({
         error: 'Daily limit exceeded',
         message: `${tier === 'free' ? 'Free tier' : 'Your tier'} allows ${config.maxRequestsPerDay} requests per day`,
         tier,
         limit: config.maxRequestsPerDay,
-        resetIn: 86400 - (now % 86400000),
+        resetIn: Math.ceil(nextDayMs / 1000),
         upgradeUrl: 'https://hybridmind.dev/pricing'
       });
     }
@@ -296,7 +306,7 @@ async function validateTier(req, res, next) {
  */
 function requireFeature(featureName) {
   return (req, res, next) => {
-    const tier = req.tier || process.env.DEFAULT_TIER || 'pro'; // Changed from 'free' to 'pro' for development
+    const tier = normalizeTier(req.tier || process.env.DEFAULT_TIER || 'pro'); // Changed from 'free' to 'pro' for development
     const config = getTierConfig(tier);
 
     if (!config.features.includes(featureName)) {
@@ -333,7 +343,8 @@ function getTierStats(userId) {
 async function validateWorkflowAccess(req, res, next) {
   try {
     const tier = req.tier || req.user?.tier || 'free';
-    const workflowMode = req.body.workflow || req.body.mode || req.params.mode || 'single';
+    // Use workflowMode set by route middleware, fallback to body/params
+    const workflowMode = req.workflowMode || req.body.workflow || req.body.mode || req.params.mode || 'single';
     const models = req.body.models || [];
     const modelCount = Array.isArray(models) ? models.length : 1;
 

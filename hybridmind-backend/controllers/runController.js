@@ -1,12 +1,40 @@
 const modelFactory = require('../services/models/modelFactory');
 const modelProxy = require('../services/modelProxy');
+const chainOrchestrator = require('../services/orchestration/chainOrchestrator');
+const mcpApprovalStore = require('../services/mcp/mcpApprovalStore');
 const responseFormatter = require('../utils/responseFormatter');
 const logger = require('../utils/logger');
+
+const ACTIVE_RALPH_STREAMS = new Map();
 
 /**
  * Run Controller - Handles single and multi-model execution
  */
 class RunController {
+  _buildRalphChainConfig(modelArray = [], req = {}, options = {}) {
+    const fallbackModel = modelArray[0] || 'llama-3.3-70b';
+    const roleModels = {
+      coder: modelArray[0] || fallbackModel,
+      tester: modelArray[1] || fallbackModel,
+      reviewer: modelArray[2] || fallbackModel
+    };
+
+    return {
+      mode: 'manual',
+      chainType: 'self-healing',
+      models: roleModels,
+      tier: req.user?.tier || 'free',
+      workspacePath: options?.workspacePath,
+      targetFile: options?.targetFile,
+      searchQuery: options?.searchQuery,
+      testCommand: options?.testCommand || 'npm test',
+      metadata: {
+        memoryTags: options?.memoryTags || [],
+        selfHealing: true
+      }
+    };
+  }
+
   /**
    * Execute single model
    * POST /run/single
@@ -44,6 +72,42 @@ class RunController {
 
       logger.info(`Executing chain with ${modelArray.length} models`);
 
+      const enableRalphLoop = Boolean(options?.ralphLoop);
+
+      if (enableRalphLoop) {
+        const orchestrated = await chainOrchestrator.executeChain({
+          task: prompt || 'Run Ralph self-healing loop',
+          ...this._buildRalphChainConfig(modelArray, req, options)
+        });
+
+        const resultMap = orchestrated.results || {};
+        const orderedSteps = ['coder', 'tester', 'reviewer']
+          .map(role => resultMap[role])
+          .filter(Boolean);
+
+        const finalOutput = resultMap.selfHealing?.finalCode
+          || resultMap.healedOutput
+          || resultMap.reviewer?.output
+          || resultMap.coder?.output
+          || '';
+
+        return res.json(
+          responseFormatter.success(
+            {
+              output: finalOutput,
+              steps: orderedSteps,
+              ralphTelemetry: resultMap.selfHealing?.telemetryStream || orchestrated.selfHealingTelemetry || [],
+              selfHealing: resultMap.selfHealing || null
+            },
+            {
+              usage: null,
+              chainId: orchestrated.chainId,
+              duration: orchestrated.duration
+            }
+          )
+        );
+      }
+
       const result = await modelFactory.chain({
         models: modelArray,
         prompt,
@@ -62,6 +126,144 @@ class RunController {
           }
         )
       );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Execute chain via SSE with live Ralph telemetry streaming
+   * POST /run/chain/stream
+   */
+  async executeChainStream(req, res, next) {
+    let streamId = null;
+
+    try {
+      const { models, prompt, code, options } = req.body;
+      const modelArray = Array.isArray(models) ? models : [models].filter(Boolean);
+
+      streamId = `ralph_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const chainId = `chain_${streamId}`;
+      const projectId = options?.projectId || `project-${chainId}`;
+
+      const abortController = new AbortController();
+      ACTIVE_RALPH_STREAMS.set(streamId, {
+        streamId,
+        chainId,
+        projectId,
+        abortController,
+        createdAt: Date.now()
+      });
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no'
+      });
+
+      const sendEvent = (eventName, payload) => {
+        res.write(`event: ${eventName}\n`);
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      };
+
+      sendEvent('connected', {
+        streamId,
+        chainId,
+        killEndpoint: `/run/chain/kill/${streamId}`
+      });
+
+      req.on('close', () => {
+        if (ACTIVE_RALPH_STREAMS.has(streamId)) {
+          const stream = ACTIVE_RALPH_STREAMS.get(streamId);
+          stream?.abortController?.abort();
+        }
+      });
+
+      const orchestrated = await chainOrchestrator.executeChain({
+        chainId,
+        task: prompt || code || 'Run Ralph self-healing loop',
+        ...this._buildRalphChainConfig(modelArray, req, options),
+        abortSignal: abortController.signal,
+        stream: true, // Enable streaming for real-time telemetry
+        onSelfHealingTelemetry: (event) => {
+          sendEvent('telemetry', {
+            streamId,
+            chainId,
+            ...event
+          });
+        },
+        onModelTelemetry: (telemetry) => {
+          // Emit model streaming telemetry (tokens, thinking) as it happens
+          sendEvent('model-telemetry', {
+            streamId,
+            chainId,
+            ...telemetry
+          });
+        }
+      });
+
+      sendEvent('done', {
+        streamId,
+        chainId,
+        success: orchestrated.success,
+        duration: orchestrated.duration,
+        result: {
+          selfHealing: orchestrated.results?.selfHealing || null,
+          output: orchestrated.results?.selfHealing?.finalCode || orchestrated.results?.reviewer?.output || ''
+        }
+      });
+
+      ACTIVE_RALPH_STREAMS.delete(streamId);
+      res.end();
+    } catch (error) {
+      if (streamId && ACTIVE_RALPH_STREAMS.has(streamId)) {
+        ACTIVE_RALPH_STREAMS.delete(streamId);
+      }
+
+      if (res.writableEnded) {
+        return;
+      }
+
+      res.write(`event: error\n`);
+      res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+      res.end();
+    }
+  }
+
+  /**
+   * Kill an active Ralph streaming chain execution
+   * POST /run/chain/kill/:streamId
+   */
+  async killChainStream(req, res, next) {
+    try {
+      const { streamId } = req.params;
+      const active = ACTIVE_RALPH_STREAMS.get(streamId);
+
+      if (!active) {
+        return res.status(404).json({
+          success: false,
+          error: `Stream '${streamId}' not found or already completed`
+        });
+      }
+
+      active.abortController.abort();
+      chainOrchestrator.stopChain(active.chainId);
+
+      const cleanup = mcpApprovalStore.cleanupPendingByProject(
+        active.projectId,
+        'Cancelled via kill switch',
+        'kill-switch'
+      );
+
+      ACTIVE_RALPH_STREAMS.delete(streamId);
+
+      res.json({
+        success: true,
+        streamId,
+        chainId: active.chainId,
+        cleanedApprovalTickets: cleanup
+      });
     } catch (error) {
       next(error);
     }
