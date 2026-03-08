@@ -10,18 +10,39 @@ const approvalWorkflow = require('../services/guardrails/approvalWorkflow');
 const logger = require('../utils/logger');
 
 /**
+ * Derive action type from the request method and path.
+ * Never trust client-supplied actionType — derive it server-side.
+ *
+ * @param {import('express').Request} req
+ * @returns {string}
+ */
+function deriveActionType(req) {
+  const method = String(req.method || '').toUpperCase();
+  const p = req.path || '/';
+
+  if (method === 'DELETE') return 'delete_file';
+  if (method === 'GET' && p.startsWith('/mcp/filesystem/')) return 'read_file';
+  if (method === 'POST' && p.startsWith('/mcp/filesystem/')) return 'edit_file';
+  if (method === 'POST' && p.startsWith('/mcp/terminal/')) return 'terminal_execute';
+  if (method === 'POST' && p.startsWith('/mcp/web-search/')) return 'search_web';
+  if (method === 'POST' && (p === '/run' || p.startsWith('/run/'))) return 'generate_code';
+  if (method === 'POST' && (p === '/agent' || p.startsWith('/agent/'))) return 'generate_code';
+  return 'generate_code';
+}
+
+/**
  * Guardrail middleware for action enforcement
  * Checks if action requires approval before proceeding
  */
 async function enforceGuardrails(req, res, next) {
   try {
     // Extract action details from request
-    const actionType = req.body.actionType || req.headers['x-action-type'];
+    const actionType = deriveActionType(req);
     const tier = req.tier || req.user?.tier || 'free';
     const userId = req.user?.id || req.ip;
 
     // Skip guardrails for safe routes
-    if (!actionType || req.path.startsWith('/api/guardrails')) {
+    if (req.path.startsWith('/api/guardrails')) {
       return next();
     }
 
@@ -82,7 +103,9 @@ async function enforceGuardrails(req, res, next) {
  */
 function applyGuardrails(actionTypes = []) {
   return async (req, res, next) => {
-    const actionType = req.body.actionType || req.headers['x-action-type'];
+    const actionType = deriveActionType(req);
+    const tier = req.tier || req.user?.tier || 'free';
+    const userId = req.user?.id || req.ip;
 
     // If actionTypes specified, only apply to those
     if (actionTypes.length > 0 && !actionTypes.includes(actionType)) {
@@ -99,7 +122,7 @@ function applyGuardrails(actionTypes = []) {
  */
 async function waitForApproval(req, res, next) {
   try {
-    const actionType = req.body.actionType || req.headers['x-action-type'];
+    const actionType = deriveActionType(req);
     const tier = req.tier || req.user?.tier || 'free';
     const userId = req.user?.id || req.ip;
 
@@ -168,7 +191,7 @@ function checkTierAutonomy(req, res, next) {
  * Adds guardrail logging to request lifecycle
  */
 function logGuardedAction(req, res, next) {
-  const actionType = req.body.actionType || req.headers['x-action-type'];
+  const actionType = deriveActionType(req);
 
   if (!actionType) {
     return next();

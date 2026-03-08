@@ -1,15 +1,6 @@
 const path = require('path');
 const mcpApprovalStore = require('../services/mcp/mcpApprovalStore');
-
-const DANGEROUS_TERMINAL_PATTERNS = [
-  /rm\s+-rf/i,
-  /del\s+\/s/i,
-  /format\s+/i,
-  /shutdown\s+/i,
-  /reboot\s+/i,
-  /powershell\s+-enc/i,
-  /curl\s+.*\|\s*(bash|sh|powershell|pwsh)/i
-];
+const { validateCommand, requiresApprovalByPolicy } = require('../config/terminalAllowlist');
 
 function validateMcpRequest(req, res, next) {
   const allowedCapabilities = new Set(['filesystem', 'terminal', 'web-search', 'graphiti-memory', 'm365agentstoolkit']);
@@ -41,7 +32,8 @@ function enforceTerminalApproval(req, res, next) {
   const approvalTicketId = String(req.headers['x-mcp-approval-ticket'] || '').trim();
   const tier = req.mcp?.tier || 'free';
 
-  const isDangerous = DANGEROUS_TERMINAL_PATTERNS.some(pattern => pattern.test(command));
+  const validation = validateCommand(command);
+  const isDangerous = !validation.valid || requiresApprovalByPolicy(command);
 
   if (tier === 'free' && !dryRun) {
     return res.status(403).json({

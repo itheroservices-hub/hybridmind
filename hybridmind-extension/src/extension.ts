@@ -3,7 +3,9 @@ import { startEmbeddedServer, stopEmbeddedServer } from './embeddedServer';
 import { ChatPanel } from './views/chatPanel';
 import { ChatSidebarProvider } from './views/chatSidebarProvider';
 import { InlineChatProvider } from './views/inlineChatProvider';
+import { AgentSidebarProvider } from './views/agentSidebarProvider';
 import { LicenseManager } from './auth/licenseManager';
+import { AgentConfig } from './agents/agentConfig';
 import { registerAgenticCommands } from './commands/agenticCommands';
 import { registerMultiModelCommands } from './commands/multiModelCommands';
 import { UsageTracker } from './utils/usageTracker';
@@ -83,6 +85,12 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, sidebarProvider)
   );
 
+  // Register agent manager sidebar view
+  const agentProvider = new AgentSidebarProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(AgentSidebarProvider.viewType, agentProvider)
+  );
+
   // Register inline chat provider
   inlineChatProvider = new InlineChatProvider(serverPort);
   context.subscriptions.push(inlineChatProvider);
@@ -109,6 +117,61 @@ function registerCommands(context: vscode.ExtensionContext) {
         ChatPanel.createOrShow(context.extensionUri, serverPort);
       } else {
         vscode.window.showErrorMessage('Server not running');
+      }
+    })
+  );
+
+  // Open Agent Mode (agent customization & teams)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.openAgentMode', async () => {
+      // reveal the view in the sidebar
+      await vscode.commands.executeCommand(
+        'workbench.view.extension.hybridmind.agentSidebar'
+      );
+    })
+  );
+
+  // Run a configured agent team
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.runAgentTeam', async () => {
+      const cfg = AgentConfig.load();
+      if (!cfg.teams.length) {
+        vscode.window.showInformationMessage('No teams configured. Add agents and create a team first.');
+        return;
+      }
+      type TeamPick = { label: string; index: number };
+      const pick = await vscode.window.showQuickPick<TeamPick>(
+        cfg.teams.map((team, idx) => ({
+          label: team.map(t => t.display).join(', '),
+          index: idx
+        })),
+        { placeHolder: 'Select team to execute' }
+      );
+      if (!pick) return;
+      const team = cfg.teams[pick.index];
+      // translate slot IDs to backend agent types (simple mapping example)
+      const map: Record<string,string> = {
+        'code-generator': 'code_generator',
+        'code-reviewer': 'code_reviewer',
+        'architect': 'architect',
+        'reasoner': 'reasoner',
+        // add other mappings or assume id matches
+      };
+      const agentTypes = team.map((s: any) => map[s.id] || s.id);
+      // ask for task description
+      const task = await vscode.window.showInputBox({ prompt: 'Describe the task for this team' });
+      if (!task) return;
+
+      try {
+        const res = await fetch(`http://localhost:${serverPort}/agent/team-collaboration`, {
+          method: 'POST',
+          headers: licenseManager.getApiHeaders(),
+          body: JSON.stringify({ task, agents: agentTypes })
+        });
+        const data: any = await res.json();
+        vscode.window.showInformationMessage(`Team result: ${data.result}`);
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Team execution failed: ${e.message}`);
       }
     })
   );
@@ -153,6 +216,25 @@ function registerCommands(context: vscode.ExtensionContext) {
           vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.dev/pricing'));
           break;
       }
+    })
+  );
+
+  // Bring‑Your‑Own‑Key (BYOK) command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('hybridmind.setApiKey', async () => {
+      const provider = await vscode.window.showInputBox({
+        prompt: 'Enter the name of your AI provider (e.g. OpenAI, Anthropic)',
+        placeHolder: 'OpenAI'
+      });
+      if (!provider) return;
+      const key = await vscode.window.showInputBox({
+        prompt: `Enter the API key for ${provider}`,
+        password: true
+      });
+      if (!key) return;
+      const lm = LicenseManager.getInstance();
+      await lm.setUserApiKey(provider, key);
+      vscode.window.showInformationMessage('API key saved. HybridMind will use this key for AI calls.');
     })
   );
 

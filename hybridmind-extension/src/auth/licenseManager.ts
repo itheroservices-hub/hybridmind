@@ -22,6 +22,10 @@ export class LicenseManager {
   private verificationCache: LicenseStatus | null = null;
   private readonly CACHE_DURATION = 3600000; // 1 hour
 
+  // optional user-supplied API key (BYOK) and provider name
+  private userApiKey: string | null = null;
+  private userApiProvider: string | null = null;
+
   private constructor() {
     this.loadLicenseFromSettings();
   }
@@ -36,6 +40,8 @@ export class LicenseManager {
   private loadLicenseFromSettings() {
     const config = vscode.workspace.getConfiguration('hybridmind');
     this.licenseKey = config.get('licenseKey') || null;
+    this.userApiKey = config.get('userApiKey') || null;
+    this.userApiProvider = config.get('userApiProvider') || null;
   }
 
   async verifyLicense(key?: string): Promise<LicenseStatus> {
@@ -128,6 +134,27 @@ export class LicenseManager {
       case 'pro': return 200;           // 200 per hour
       default: return 20;               // 20 per hour
     }
+  }
+
+  /**
+   * Maximum number of agent slots allowed for the current tier. Used by
+   * the sidebar UI and when validating configuration changes.
+   */
+  maxAgentSlots(): number {
+    switch (this.tier) {
+      case 'enterprise': return 10;
+      case 'pro-plus': return 6;
+      case 'pro': return 4;
+      default: return 2; // free tier gets two basic slots
+    }
+  }
+
+  /**
+   * Whether the user may create agent teams / workflows in the UI.
+   * Only Pro Plus and Enterprise allow multiple agent teams.
+   */
+  allowsTeamCreation(): boolean {
+    return this.tier === 'pro-plus' || this.tier === 'enterprise';
   }
 
   private isCacheValid(): boolean {
@@ -253,7 +280,25 @@ export class LicenseManager {
       headers['X-License-Key'] = this.licenseKey;
     }
 
+    if (this.userApiKey) {
+      // allow user to supply their own API key for AI provider
+      headers['Authorization'] = `Bearer ${this.userApiKey}`;
+      headers['X-User-Api-Provider'] = this.userApiProvider || '';
+    }
+
     return headers;
+  }
+
+  /**
+   * Store a user-provided API key (BYOK) in settings.  This can be used by
+   * the webview or other UI to offer a simple modal box to collect the key.
+   */
+  async setUserApiKey(provider: string, key: string): Promise<void> {
+    this.userApiProvider = provider;
+    this.userApiKey = key;
+    const config = vscode.workspace.getConfiguration('hybridmind');
+    await config.update('userApiProvider', provider, true);
+    await config.update('userApiKey', key, true);
   }
 
   async promptForUpgrade(featureName: string): Promise<void> {

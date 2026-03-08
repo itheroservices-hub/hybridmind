@@ -1,0 +1,8 @@
+/* basic styles for agent sidebar */
+body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 8px; }
+.slot-container { display: flex; flex-wrap: wrap; gap: 4px; }
+.slot { background: var(--vscode-button-background); padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.team-list .team { margin: 4px 0; padding: 4px; border: 1px solid var(--vscode-foreground); border-radius: 4px; }
+button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+button.small { font-size: 0.8em; padding: 2px 6px; }
+button { margin-top:8px; }
