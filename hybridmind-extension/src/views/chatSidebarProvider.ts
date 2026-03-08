@@ -2390,11 +2390,11 @@ Respond with ONLY one word: simple, moderate, or complex`,
     let activeAgents = new Set(); // active agent IDs whose persona will be prepended
 
     function bindAgentChips() {
-      document.querySelectorAll('.agent-chip').forEach(chip => {
-        chip.addEventListener('click', (e) => {
+      document.querySelectorAll('.agent-chip').forEach(function(chip) {
+        chip.addEventListener('click', function(e) {
           // Ignore clicks on the × remove button
-          if ((e.target as Element).classList.contains('chip-remove')) return;
-          const id = (chip as HTMLElement).dataset.id || '';
+          if (e.target.classList.contains('chip-remove')) return;
+          const id = chip.dataset.id || '';
           if (activeAgents.has(id)) {
             activeAgents.delete(id);
             chip.classList.remove('active-agent');
@@ -2404,10 +2404,10 @@ Respond with ONLY one word: simple, moderate, or complex`,
           }
         });
       });
-      document.querySelectorAll('.chip-remove').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.chip-remove').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
           e.stopPropagation();
-          const id = (btn as HTMLElement).dataset.id || '';
+          const id = btn.dataset.id || '';
           const chip = document.querySelector('.agent-chip[data-id="' + id + '"]');
           if (chip) chip.remove();
           activeAgents.delete(id);
@@ -2427,15 +2427,15 @@ Respond with ONLY one word: simple, moderate, or complex`,
     });
 
     // BYOK panel save & verify
-    document.getElementById('byokSaveBtn')?.addEventListener('click', () => {
-      const provider = (document.getElementById('byokProvider') as HTMLSelectElement)?.value || '';
-      const key = (document.getElementById('byokKey') as HTMLInputElement)?.value || '';
-      vscode.postMessage({ type: 'saveApiKey', provider, key });
+    document.getElementById('byokSaveBtn').addEventListener('click', function() {
+      const provider = document.getElementById('byokProvider').value || '';
+      const key = document.getElementById('byokKey').value || '';
+      vscode.postMessage({ type: 'saveApiKey', provider: provider, key: key });
     });
-    document.getElementById('byokVerifyBtn')?.addEventListener('click', () => {
-      const provider = (document.getElementById('byokProvider') as HTMLSelectElement)?.value || '';
-      const key = (document.getElementById('byokKey') as HTMLInputElement)?.value || '';
-      vscode.postMessage({ type: 'verifyApiKey', provider, key });
+    document.getElementById('byokVerifyBtn').addEventListener('click', function() {
+      const provider = document.getElementById('byokProvider').value || '';
+      const key = document.getElementById('byokKey').value || '';
+      vscode.postMessage({ type: 'verifyApiKey', provider: provider, key: key });
     });
 
     // ── Active model pill update ──────────────────────────────────────────────
@@ -2628,7 +2628,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
 
       // Prepend active agent persona hints to the message
       if (activeAgents.size > 0) {
-        const agentLabels: Record<string, string> = {
+        const agentLabels = {
           'bug-hunter': 'Bug Hunter (find issues)',
           'code-generator': 'Code Generator (write production code)',
           'refactoring': 'Refactoring Expert (clean code)',
@@ -2644,7 +2644,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
           'perf-optimizer': 'Performance Optimizer (speed)',
           'test-writer': 'Test Writer (write tests)',
         };
-        const activeLabels = Array.from(activeAgents).map(id => agentLabels[id as string] || id).join(', ');
+        const activeLabels = Array.from(activeAgents).map(function(id) { return agentLabels[id] || id; }).join(', ');
         message = '[Active agents: ' + activeLabels + ']\n\n' + message;
       }
 
