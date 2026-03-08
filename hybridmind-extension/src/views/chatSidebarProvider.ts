@@ -298,11 +298,18 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           }
         };
       } else {
-        // Single model mode
+        // Single model mode — include conversation history for context
         endpoint = '/run/single';
+        const historyForContext = this._messages
+          .slice(-10)
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.substring(0, 500)}`)
+          .join('\n');
         requestBody = {
           model: selectedModels[0],
-          prompt: userMessage
+          prompt: historyForContext
+            ? `Previous conversation:\n${historyForContext}\n\nUser: ${userMessage}`
+            : userMessage
         };
       }
 
@@ -770,52 +777,12 @@ Respond with ONLY one word: simple, moderate, or complex`,
    * Detect if user request is ambiguous and needs clarification
    */
   private async _detectAmbiguity(message: string): Promise<{ isAmbiguous: boolean; clarification?: string }> {
-    try {
-      const response = await fetch('http://localhost:3000/run/single', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'groq/llama-3.3-70b-versatile',
-          prompt: `Is this request clear and actionable, or ambiguous?
-
-"${message}"
-
-Ambiguous examples:
-- "fix it" (what needs fixing?)
-- "make it better" (better how?)
-- "update the code" (which code?)
-
-Clear examples:
-- "review package.json"
-- "add a login button to index.html"
-- "fix the authentication bug in auth.ts"
-
-If AMBIGUOUS, respond with: AMBIGUOUS: <specific question to ask user>
-If CLEAR, respond with: CLEAR`,
-          maxTokens: 50
-        })
-      });
-
-      const data = await response.json();
-      const output = (data as any).data?.output || (data as any).output || 'CLEAR';
-      const result = output.trim();
-      
-      if (result.startsWith('AMBIGUOUS:')) {
-        return {
-          isAmbiguous: true,
-          clarification: result.replace('AMBIGUOUS:', '').trim()
-        };
-      }
-      return { isAmbiguous: false };
-    } catch (error) {
-      // Fallback: check for obviously ambiguous phrases
-      const ambiguousPhrases = ['fix it', 'make it better', 'update', 'improve', 'change it'];
-      const isAmbiguous = ambiguousPhrases.some(phrase => message.toLowerCase().includes(phrase)) && message.split(' ').length < 5;
-      return {
-        isAmbiguous,
-        clarification: isAmbiguous ? 'Could you be more specific about what you want to change?' : undefined
-      };
+    // Only flag truly empty or single-word messages — let the agent handle everything else.
+    const words = message.trim().split(/\s+/);
+    if (words.length <= 1 && message.trim().length < 3) {
+      return { isAmbiguous: true, clarification: 'What would you like me to do?' };
     }
+    return { isAmbiguous: false };
   }
 
   /**
