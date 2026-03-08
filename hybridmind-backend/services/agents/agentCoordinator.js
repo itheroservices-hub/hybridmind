@@ -21,6 +21,7 @@ const agentDecisionLogger = require('./agentDecisionLogger');
 const modelSelector = require('./modelSelector');
 const decompositionEngine = require('../decomposition/decompositionEngine');
 const workflowRouter = require('../decomposition/workflowRouter');
+const pythonBridge = require('./pythonBridge');
 const logger = require('../../utils/logger');
 
 /**
@@ -102,6 +103,64 @@ class AgentCoordinator {
     const execStrategy = strategy || this.strategy;
 
     logger.info(`Starting workflow ${workflowId}: ${taskType}`);
+
+    // Check if task should use Python AI service
+    if (pythonBridge.shouldUsePython(task, context)) {
+      logger.info(`🐍 Routing to Python AI service for ${taskType}`);
+      
+      try {
+        // Determine agent roles needed
+        const assignedAgents = this._assignAgentsToTask(taskType, execStrategy);
+        
+        // Use team collaboration if multiple agents, single agent otherwise
+        let pythonResult;
+        if (assignedAgents.length > 1 && context.complexity === 'high') {
+          pythonResult = await pythonBridge.executeTeamCollaboration({
+            task,
+            agentRoles: assignedAgents.map(a => a.role),
+            context,
+            temperature: context.temperature || 0.7
+          });
+        } else {
+          pythonResult = await pythonBridge.executeAgent({
+            task,
+            agentRole: assignedAgents[0]?.role || 'planner',
+            context,
+            temperature: context.temperature || 0.7,
+            maxIterations: context.maxIterations || 10
+          });
+        }
+
+        // If Python execution succeeded, return result
+        if (pythonResult.success) {
+          agentDecisionLogger.logDecision({
+            agentId: 'coordinator',
+            role: 'coordinator',
+            action: 'python_routing',
+            decision: 'Task completed by Python AI service',
+            reasoning: 'Task complexity and type suitable for AutoGen agents',
+            context: { workflowId, taskType, pythonMetadata: pythonResult.metadata }
+          });
+
+          return {
+            success: true,
+            result: pythonResult.result,
+            workflowId,
+            source: 'python_service',
+            metadata: pythonResult.metadata
+          };
+        }
+
+        // If Python failed but fallback is enabled, continue with Node.js
+        if (pythonResult.shouldFallback) {
+          logger.info('↩️ Python service fallback - continuing with Node.js agents');
+        }
+
+      } catch (error) {
+        logger.error('Python service error, falling back to Node.js:', error.message);
+        // Continue to Node.js execution
+      }
+    }
 
     // Use decomposition engine for intelligent routing
     let decompositionAnalysis = null;

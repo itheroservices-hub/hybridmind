@@ -29,6 +29,7 @@ const learningRoutes = require('./hybridmind-backend/routes/learningRoutes');
 const cacheRoutes = require('./hybridmind-backend/routes/cacheRoutes');
 const observabilityRoutes = require('./hybridmind-backend/routes/observabilityRoutes');
 const mcpRoutes = require('./hybridmind-backend/routes/mcpRoutes');
+const agentSyncRoutes = require('./hybridmind-backend/routes/agentSyncRoutes');
 
 // WebSocket collaboration server
 const collaborationServer = require('./hybridmind-backend/services/collaboration/collaborationServer');
@@ -36,8 +37,48 @@ const realtimeMonitor = require('./hybridmind-backend/services/observability/rea
 
 const app = express();
 
+// CORS: restrict to known origins only
+const isProduction = process.env.NODE_ENV === 'production';
+const defaultCorsOrigins = isProduction
+  ? ['https://hybridmind.ca', 'https://hybridmind.app', 'https://hybridmind.dev']
+  : [
+      'https://hybridmind.ca',
+      'https://hybridmind.app',
+      'https://hybridmind.dev',
+      'http://localhost:3000',
+      'http://localhost:5173',
+    ];
+
+const corsAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter((o) => o.length > 0);
+
+const allowedOrigins = corsAllowedOrigins.length > 0 ? corsAllowedOrigins : defaultCorsOrigins;
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'x-license-key',
+    'x-agent-id',
+    'x-project-id',
+    'x-mcp-approval',
+    'x-mcp-approval-ticket',
+    'x-admin-secret',
+  ],
+  credentials: true,
+  maxAge: 86400,
+};
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '100kb' })); // Reduced from 10mb to save costs
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
@@ -55,22 +96,33 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 💰 COST MONITORING ENDPOINT (Check your daily spend!)
-app.get('/cost-stats', (req, res) => {
+// 💰 COST MONITORING ENDPOINT (Pro/Pro-Plus/Enterprise only, requires ADMIN_SECRET)
+const requireCostStatsAdminSecret = (req, res, next) => {
+  const configuredSecret = (process.env.ADMIN_SECRET || '').trim();
+  if (!configuredSecret) return next();
+  const providedSecret = req.headers['x-admin-secret'];
+  if (providedSecret !== configuredSecret) {
+    return res.status(403).json({ success: false, error: 'Forbidden' });
+  }
+  return next();
+};
+
+app.get('/cost-stats', validateLicense, requireCostStatsAdminSecret, (req, res) => {
+  const eligibleTiers = new Set(['pro', 'pro-plus', 'enterprise']);
+  const tier = String(req.tier || req.user?.tier || '').toLowerCase();
+  if (!eligibleTiers.has(tier)) {
+    return res.status(403).json({ success: false, error: 'Forbidden' });
+  }
   const { rateLimiter } = require('./hybridmind-backend/middleware/rateLimiter');
-  const stats = rateLimiter.getStats(req.ip || 'default');
+  const stats = rateLimiter.getStats();
   
   res.json({
     success: true,
     data: {
-      dailyBudget: 2.0,
-      dailySpent: stats.costLastDay.toFixed(4),
-      dailyRemaining: (2.0 - stats.costLastDay).toFixed(4),
-      percentUsed: ((stats.costLastDay / 2.0) * 100).toFixed(1),
-      requestsToday: stats.requestsLastDay,
-      requestsLastHour: stats.requestsLastHour,
-      warning: stats.costLastDay > 1.6 ? '⚠️ Approaching daily budget limit!' : null,
-      resetsIn: Math.ceil((86400000 - (Date.now() % 86400000)) / 3600000) + ' hours'
+      activeRequestWindows: stats.requests,
+      activeTokenWindows: stats.tokens,
+      activeCostWindows: stats.costs,
+      resetsIn: `${Math.ceil((86400000 - (Date.now() % 86400000)) / 3600000)} hours`
     }
   });
 });
@@ -118,6 +170,7 @@ app.use('/api/learning', learningRoutes);
 app.use('/api/cache', cacheRoutes);
 app.use('/api/observability', observabilityRoutes);// Root route
 app.use('/mcp', mcpRoutes);
+app.use('/api/agentsync', agentSyncRoutes);
 
 // Root route
 app.get('/', (req, res) => {

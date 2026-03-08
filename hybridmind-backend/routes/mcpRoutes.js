@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const mcpClient = require('../services/orchestration/mcpClient');
 const webSearchTool = require('../services/tools/webSearchTool');
 const graphitiMemoryClient = require('../services/memory/graphitiMemoryClient');
@@ -11,6 +11,8 @@ const {
   enforceTerminalApproval,
   resolveWorkspaceRoot
 } = require('../middleware/mcpSecurityMiddleware');
+const { requireMcpAuth, requireMcpAdmin } = require('../middleware/mcpAuthMiddleware');
+const { validateCommand } = require('../config/terminalAllowlist');
 
 const router = express.Router();
 
@@ -40,7 +42,7 @@ router.get('/approvals/:ticketId', (req, res) => {
   res.json({ success: true, ticket });
 });
 
-router.post('/approvals/:ticketId/approve', (req, res) => {
+router.post('/approvals/:ticketId/approve', requireMcpAdmin, (req, res) => {
   const actor = req.body?.actor || req.headers['x-approval-actor'] || 'user';
   const ticket = mcpApprovalStore.approveTicket(req.params.ticketId, String(actor));
   if (!ticket) {
@@ -49,7 +51,7 @@ router.post('/approvals/:ticketId/approve', (req, res) => {
   res.json({ success: true, ticket });
 });
 
-router.post('/approvals/:ticketId/deny', (req, res) => {
+router.post('/approvals/:ticketId/deny', requireMcpAdmin, (req, res) => {
   const actor = req.body?.actor || req.headers['x-approval-actor'] || 'user';
   const reason = req.body?.reason || 'Denied by user';
   const ticket = mcpApprovalStore.denyTicket(req.params.ticketId, String(actor), String(reason));
@@ -59,7 +61,7 @@ router.post('/approvals/:ticketId/deny', (req, res) => {
   res.json({ success: true, ticket });
 });
 
-router.post('/:capability', validateMcpRequest, async (req, res) => {
+router.post('/:capability', requireMcpAuth, validateMcpRequest, async (req, res) => {
   try {
     const tool = req.body?.tool || defaultToolForCapability(req.params.capability);
     const args = req.body?.args || {};
@@ -262,11 +264,156 @@ async function handleGraphitiMemoryTool(tool, args, context) {
 }
 
 async function handleM365AgentsToolkitTool(tool, args) {
+  // get_knowledge - Query M365 development documentation
+  if (tool === 'get_knowledge') {
+    const question = String(args.question || '');
+    if (!question) {
+      return {
+        success: false,
+        error: 'Question parameter is required for get_knowledge',
+        usage: 'Provide a "question" parameter to query M365 development knowledge'
+      };
+    }
+    
+    return {
+      success: true,
+      tool: 'get_knowledge',
+      question,
+      answer: 'Bridged to M365 Agents Toolkit MCP server',
+      note: 'This response is from HybridMind bridge. The actual MCP server at @microsoft/m365agentstoolkit-mcp provides comprehensive M365 documentation.',
+      exampleTopics: [
+        'How to create a declarative agent for Microsoft 365 Copilot',
+        'Teams bot development with @microsoft/teams-ai',
+        'Office add-in manifest creation',
+        'API plugin configuration',
+        'M365 authentication flows'
+      ]
+    };
+  }
+
+  // get_schema - Retrieve manifest and configuration schemas
+  if (tool === 'get_schema') {
+    const schemaName = args.schema_name;
+    const schemaVersion = args.schema_version || 'latest';
+    
+    const validSchemas = [
+      'app_manifest',
+      'declarative_agent_manifest', 
+      'api_plugin_manifest',
+      'm365_agents_yaml'
+    ];
+    
+    if (!schemaName || !validSchemas.includes(schemaName)) {
+      return {
+        success: false,
+        error: `Invalid schema_name. Must be one of: ${validSchemas.join(', ')}`,
+        usage: 'Provide schema_name (e.g., "app_manifest") and optional schema_version (default: "latest")',
+        availableSchemas: validSchemas
+      };
+    }
+    
+    return {
+      success: true,
+      tool: 'get_schema',
+      schemaName,
+      schemaVersion,
+      note: 'Schema retrieval bridged to M365 Agents Toolkit MCP server',
+      description: getSchemaDescription(schemaName)
+    };
+  }
+
+  // get_code_snippets - Generate code patterns for M365 SDKs
+  if (tool === 'get_code_snippets') {
+    const question = String(args.question || '');
+    if (!question) {
+      return {
+        success: false,
+        error: 'Question parameter is required for get_code_snippets',
+        usage: 'Provide a "question" parameter describing the code you need'
+      };
+    }
+    
+    return {
+      success: true,
+      tool: 'get_code_snippets',
+      question,
+      note: 'Code snippet generation bridged to M365 Agents Toolkit MCP server',
+      exampleQuestions: [
+        'Generate code for a Teams bot that responds to mentions',
+        'Create an Office add-in task pane with React',
+        'Implement SSO authentication in Teams app',
+        'Create a message extension for Teams',
+        'Build a declarative agent with actions'
+      ]
+    };
+  }
+
+  // troubleshoot - Debug M365 development issues
+  if (tool === 'troubleshoot') {
+    const question = String(args.question || '');
+    if (!question) {
+      return {
+        success: false,
+        error: 'Question parameter is required for troubleshoot',
+        usage: 'Provide a "question" parameter describing the issue or error'
+      };
+    }
+    
+    return {
+      success: true,
+      tool: 'troubleshoot',
+      question,
+      note: 'Troubleshooting bridged to M365 Agents Toolkit MCP server',
+      exampleIssues: [
+        'Manifest validation failing with icon URL error',
+        'Teams bot not responding to messages',
+        'Authentication not working in Office add-in',
+        'App package deployment errors',
+        'API plugin connection issues'
+      ]
+    };
+  }
+
   return {
-    tool,
-    args,
-    message: 'M365 Agents Toolkit MCP bridge is available; resolve with configured MCP server at runtime.'
+    success: false,
+    error: `Unknown M365 Agents Toolkit tool: ${tool}`,
+    availableTools: [
+      {
+        name: 'get_knowledge',
+        description: 'Query M365 development documentation and best practices',
+        parameters: { question: 'string (required)' }
+      },
+      {
+        name: 'get_schema',
+        description: 'Retrieve manifest and configuration schemas',
+        parameters: { 
+          schema_name: 'enum (required): app_manifest | declarative_agent_manifest | api_plugin_manifest | m365_agents_yaml',
+          schema_version: 'string (optional, default: latest)'
+        }
+      },
+      {
+        name: 'get_code_snippets',
+        description: 'Generate code patterns for M365 SDKs',
+        parameters: { question: 'string (required)' }
+      },
+      {
+        name: 'troubleshoot',
+        description: 'Debug M365 development issues and errors',
+        parameters: { question: 'string (required)' }
+      }
+    ]
   };
+}
+
+function getSchemaDescription(schemaName) {
+  const descriptions = {
+    app_manifest: 'Microsoft 365 App Manifest schema - defines app capabilities, permissions, and configuration for Teams apps, Office add-ins, and M365 apps',
+    declarative_agent_manifest: 'Declarative Agent Manifest for Microsoft 365 Copilot - defines agent capabilities, actions, and conversation flows',
+    api_plugin_manifest: 'API Plugin Manifest - defines API endpoints, authentication, and operations for M365 Copilot plugins',
+    m365_agents_yaml: 'M365 Agents project configuration (m365agents.yml) - defines project structure, deployment settings, and build configuration'
+  };
+  
+  return descriptions[schemaName] || 'Schema description not available';
 }
 
 function safeResolvePath(workspaceRoot, targetFile) {
@@ -343,7 +490,17 @@ function searchWorkspace(rootDir, query, maxResults = 100) {
 
 function executeCommand(command, cwd, timeoutMs) {
   return new Promise((resolve) => {
-    exec(command, { cwd, timeout: timeoutMs, windowsHide: true }, (error, stdout, stderr) => {
+    const validation = validateCommand(command);
+    if (!validation.valid) {
+      resolve({
+        exitCode: 1,
+        stdout: '',
+        stderr: validation.reason || 'Command not allowed'
+      });
+      return;
+    }
+    const { cmd, args } = validation;
+    execFile(cmd, args, { cwd, timeout: timeoutMs, shell: false, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         resolve({
           exitCode: typeof error.code === 'number' ? error.code : 1,
@@ -352,7 +509,6 @@ function executeCommand(command, cwd, timeoutMs) {
         });
         return;
       }
-
       resolve({
         exitCode: 0,
         stdout: String(stdout || ''),

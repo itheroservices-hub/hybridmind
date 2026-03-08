@@ -1,138 +1,237 @@
 /**
- * HybridMind v1.5 - License Validator Middleware
- * Validates Pro licenses and sets user tier
+ * HybridMind License Validator Middleware
+ * - Negative cache (10-min TTL) for invalid keys to reduce API load
+ * - Per-key rate limiting on verification calls (10/60s)
+ * - Admin alerting on consecutive outage threshold
  */
 
+const axios = require('axios');
 const logger = require('../utils/logger');
 
-function normalizeTier(tier = 'free') {
-  const value = String(tier || 'free').toLowerCase();
-  if (value === 'proplus' || value === 'pro_plus' || value === 'pro-plus' || value === 'pro plus') {
-    return 'pro-plus';
+const POSITIVE_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+const NEGATIVE_CACHE_DURATION = 600000;           // 10 minutes
+const VERIFY_RATE_LIMIT_WINDOW_MS = 60 * 1000;   // 60 seconds
+const MAX_VERIFY_CALLS_PER_WINDOW = 10;
+const LICENSE_API_TIMEOUT_MS = 5000;
+const OUTAGE_ALERT_THRESHOLD = 3;
+const ONE_HOUR_MS = 60 * 60 * 1000;
+
+const RECOGNIZED_TIERS = new Set(['free', 'pro', 'pro-plus', 'enterprise']);
+
+const licenseCache = new Map();    // licenseKey -> { valid, tier, expiresAt }
+const verifyCallMap = new Map();   // licenseKey -> number[] (timestamps)
+const licenseVerifyFailures = new Map(); // licenseKey -> consecutive outage count
+const outageEvents = [];           // timestamps of network outages in last hour
+
+const LICENSE_VERIFY_ENDPOINTS = (
+  process.env.LICENSE_VERIFY_ENDPOINTS ||
+  process.env.LICENSE_API_URL ||
+  ''
+)
+  .split(',')
+  .map((e) => e.trim())
+  .filter(Boolean);
+
+class LicenseOutageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'LicenseOutageError';
   }
-  return value;
 }
 
-// Cache for license verification (avoid hitting landing page API too often)
-const licenseCache = new Map();
-const CACHE_DURATION = 3600000; // 1 hour
+function getCachedLicense(licenseKey) {
+  const cached = licenseCache.get(licenseKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    licenseCache.delete(licenseKey);
+    return null;
+  }
+  return cached;
+}
+
+function setCachedLicense(licenseKey, result) {
+  const isNegative = result.valid === false || !RECOGNIZED_TIERS.has(result.tier);
+  const ttl = isNegative ? NEGATIVE_CACHE_DURATION : POSITIVE_CACHE_DURATION;
+  licenseCache.set(licenseKey, {
+    valid: !isNegative,
+    tier: isNegative ? 'free' : result.tier,
+    expiresAt: Date.now() + ttl
+  });
+}
+
+function normalizeVerificationData(data) {
+  const valid = Boolean(data && data.valid === true);
+  const rawTier = typeof data?.tier === 'string' ? data.tier.toLowerCase() : 'free';
+  const tier = rawTier === 'proplus' || rawTier === 'pro_plus' ? 'pro-plus' : rawTier;
+  return { valid, tier };
+}
+
+function isRateLimited(licenseKey) {
+  const now = Date.now();
+  const windowStart = now - VERIFY_RATE_LIMIT_WINDOW_MS;
+  const timestamps = verifyCallMap.get(licenseKey) || [];
+  const recent = timestamps.filter((ts) => ts >= windowStart);
+  if (recent.length >= MAX_VERIFY_CALLS_PER_WINDOW) {
+    verifyCallMap.set(licenseKey, recent);
+    return true;
+  }
+  recent.push(now);
+  verifyCallMap.set(licenseKey, recent);
+  return false;
+}
+
+function getOutageCountLastHour() {
+  const cutoff = Date.now() - ONE_HOUR_MS;
+  while (outageEvents.length > 0 && outageEvents[0] < cutoff) {
+    outageEvents.shift();
+  }
+  return outageEvents.length;
+}
+
+function notifyAdminOfLicenseOutage() {
+  const affectedCount = getOutageCountLastHour();
+  logger.error(
+    `ALERT [LICENSE_OUTAGE] Consecutive verification outage threshold reached. ` +
+    `Affected verification failures in the last hour: ${affectedCount}`
+  );
+}
+
+function recordOutageFailure(licenseKey) {
+  const count = (licenseVerifyFailures.get(licenseKey) || 0) + 1;
+  licenseVerifyFailures.set(licenseKey, count);
+  outageEvents.push(Date.now());
+  if (count === OUTAGE_ALERT_THRESHOLD) {
+    notifyAdminOfLicenseOutage();
+  }
+}
+
+function clearOutageFailure(licenseKey) {
+  licenseVerifyFailures.delete(licenseKey);
+}
+
+function isNetworkOutageError(error) {
+  return Boolean(
+    error &&
+      (error.code === 'ECONNABORTED' ||
+        error.code === 'ENOTFOUND' ||
+        error.code === 'ECONNREFUSED' ||
+        error.code === 'ETIMEDOUT' ||
+        !error.response)
+  );
+}
+
+async function verifyLicenseWithEndpoints(licenseKey) {
+  if (LICENSE_VERIFY_ENDPOINTS.length === 0) {
+    throw new LicenseOutageError('No license verification endpoints configured');
+  }
+
+  let sawNonOutageResponse = false;
+
+  for (const endpoint of LICENSE_VERIFY_ENDPOINTS) {
+    try {
+      const response = await axios.post(
+        endpoint,
+        { licenseKey },
+        { timeout: LICENSE_API_TIMEOUT_MS }
+      );
+      sawNonOutageResponse = true;
+      return normalizeVerificationData(response.data);
+    } catch (error) {
+      if (isNetworkOutageError(error)) {
+        logger.warn(`License API endpoint unreachable (${endpoint}): ${error.message}`);
+        continue;
+      }
+      sawNonOutageResponse = true;
+      logger.error(`License API endpoint returned error (${endpoint}): ${error.message}`);
+      if (error.response?.data) {
+        return normalizeVerificationData(error.response.data);
+      }
+      return { valid: false, tier: 'free' };
+    }
+  }
+
+  if (!sawNonOutageResponse) {
+    throw new LicenseOutageError('All license verification endpoints unreachable');
+  }
+
+  return { valid: false, tier: 'free' };
+}
 
 /**
- * Middleware: Validate license key and set tier
+ * Express middleware: validate license key and assign req.user / req.tier.
  */
-async function validateLicense(req, res, next) {
-  try {
-    // Extract license key from header
-    const licenseKey = req.headers['x-license-key'] || req.headers['authorization']?.replace('Bearer ', '');
-    
-    // No license = free tier
-    if (!licenseKey) {
-      req.user = { tier: 'free' };
-      req.tier = 'free';
-      return next();
-    }
+async function licenseValidator(req, res, next) {
+  const licenseKey = req.header('x-license-key') ||
+    String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim() ||
+    null;
 
-    // Check cache first
-    const cached = licenseCache.get(licenseKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-      logger.debug(`License cache hit: ${licenseKey.substring(0, 8)}...`);
-      req.user = { tier: cached.tier, licenseKey };
-      req.tier = cached.tier;
-      return next();
-    }
+  // Allow test bypass in NODE_ENV=test only
+  if (
+    process.env.NODE_ENV === 'test' &&
+    process.env.TEST_LICENSE_KEY &&
+    licenseKey === process.env.TEST_LICENSE_KEY
+  ) {
+    req.user = { tier: 'pro', licenseKey };
+    req.tier = 'pro';
+    return next();
+  }
 
-    // Verify with license APIs (primary + fallback)
-    try {
-      const verificationUrls = [
-        process.env.LICENSE_VERIFY_URL,
-        'https://api.hybridmind.dev/v1/license/verify',
-        'https://hybridmind.ca/api/license/verify'
-      ].filter(Boolean);
-
-      let data = null;
-      let verified = false;
-
-      for (const verifyUrl of verificationUrls) {
-        try {
-          const response = await fetch(verifyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ licenseKey })
-          });
-
-          if (!response.ok) {
-            logger.warn(`License verification failed at ${verifyUrl}: ${response.status}`);
-            continue;
-          }
-
-          data = await response.json();
-          verified = true;
-          break;
-        } catch (endpointError) {
-          logger.warn(`License verification endpoint error at ${verifyUrl}: ${endpointError.message}`);
-        }
-      }
-
-      if (!verified || !data) {
-        req.user = { tier: 'free' };
-        req.tier = 'free';
-        return next();
-      }
-
-      const normalizedTier = normalizeTier(data.tier);
-
-      // Support both 'pro' ($19.99) and 'proplus' ($49.99) tiers
-      if (data.valid && (normalizedTier === 'pro' || normalizedTier === 'pro-plus' || normalizedTier === 'enterprise')) {
-        // Valid Pro or Pro Plus license
-        licenseCache.set(licenseKey, {
-          tier: normalizedTier,
-          timestamp: Date.now()
-        });
-
-        req.user = { tier: normalizedTier, licenseKey };
-        req.tier = normalizedTier;
-        
-        logger.info(`✅ ${normalizedTier === 'pro-plus' ? 'Pro Plus' : normalizedTier === 'enterprise' ? 'Enterprise' : 'Pro'} license validated: ${licenseKey.substring(0, 8)}...`);
-        return next();
-      } else {
-        // Invalid or expired license
-        req.user = { tier: 'free' };
-        req.tier = 'free';
-        return next();
-      }
-
-    } catch (error) {
-      logger.error(`License API error: ${error.message}`);
-      
-      // Fallback: if landing page API is down, check cache or allow temporarily
-      if (cached) {
-        logger.warn('Using cached license (API unavailable)');
-        req.user = { tier: cached.tier, licenseKey };
-        req.tier = cached.tier;
-      } else {
-        // Default to free if we can't verify
-        req.user = { tier: 'free' };
-        req.tier = 'free';
-      }
-      
-      return next();
-    }
-
-  } catch (error) {
-    logger.error(`License validation error: ${error.message}`);
+  if (!licenseKey) {
     req.user = { tier: 'free' };
     req.tier = 'free';
-    next();
+    return next();
+  }
+
+  const normalizedKey = licenseKey.trim();
+  const cached = getCachedLicense(normalizedKey);
+
+  if (cached) {
+    req.user = { tier: cached.tier, licenseKey: normalizedKey };
+    req.tier = cached.tier;
+    return next();
+  }
+
+  if (isRateLimited(normalizedKey)) {
+    logger.warn(`License verification rate limit exceeded for key: ${normalizedKey.slice(0, 8)}...`);
+    req.user = { tier: 'free' };
+    req.tier = 'free';
+    return next();
+  }
+
+  try {
+    const verification = await verifyLicenseWithEndpoints(normalizedKey);
+    clearOutageFailure(normalizedKey);
+
+    const tierRecognized = RECOGNIZED_TIERS.has(verification.tier);
+    const finalResult = verification.valid && tierRecognized
+      ? verification
+      : { valid: false, tier: 'free' };
+
+    setCachedLicense(normalizedKey, finalResult);
+    req.user = { tier: finalResult.tier, licenseKey: normalizedKey };
+    req.tier = finalResult.tier;
+    return next();
+  } catch (error) {
+    if (error instanceof LicenseOutageError) {
+      recordOutageFailure(normalizedKey);
+      logger.warn(`License verification outage for key: ${normalizedKey.slice(0, 8)}...: ${error.message}`);
+    } else {
+      logger.error(`License validation error for key: ${normalizedKey.slice(0, 8)}...: ${error.message}`);
+    }
+    // Fail open: grant free tier during outage
+    req.user = { tier: 'free' };
+    req.tier = 'free';
+    return next();
   }
 }
 
 /**
- * Clear license cache (call when license is revoked)
+ * Clear license cache (call when license is revoked).
  */
 function clearLicenseCache(licenseKey) {
   if (licenseKey) {
     licenseCache.delete(licenseKey);
-    logger.info(`License cache cleared: ${licenseKey.substring(0, 8)}...`);
+    logger.info(`License cache cleared: ${licenseKey.slice(0, 8)}...`);
   } else {
     licenseCache.clear();
     logger.info('All license cache cleared');
@@ -140,17 +239,17 @@ function clearLicenseCache(licenseKey) {
 }
 
 /**
- * Get cache stats (for monitoring)
+ * Get cache stats (for monitoring).
  */
 function getCacheStats() {
   return {
     size: licenseCache.size,
-    keys: Array.from(licenseCache.keys()).map(k => k.substring(0, 8) + '...')
+    keys: Array.from(licenseCache.keys()).map((k) => k.slice(0, 8) + '...')
   };
 }
 
 module.exports = {
-  validateLicense,
+  validateLicense: licenseValidator,
   clearLicenseCache,
   getCacheStats
 };

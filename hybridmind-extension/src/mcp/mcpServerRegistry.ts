@@ -85,6 +85,15 @@ function buildServerDefinitions(backendPort: number): any[] {
         'x-hybridmind-capability': 'graphiti-memory'
       },
       version: '1.8.0'
+    },
+    {
+      label: 'HybridMind M365 Agents Toolkit MCP',
+      uri: `${serverBase}/mcp/m365agentstoolkit`,
+      headers: {
+        'x-hybridmind-source': 'vscode-extension',
+        'x-hybridmind-capability': 'm365agentstoolkit'
+      },
+      version: '1.8.0'
     }
   ];
 

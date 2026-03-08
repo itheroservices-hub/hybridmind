@@ -1,65 +1,85 @@
-const responseFormatter = require('../utils/responseFormatter');
+// NOTE: Requires `zod` package (`npm install zod`)
+const { z } = require('zod');
+
+const MODEL_ALLOWLIST = [
+  'anthropic/claude-sonnet-4-5',
+  'anthropic/claude-opus-4',
+  'anthropic/claude-haiku-4',
+  'openai/gpt-4o',
+  'openai/gpt-4o-mini',
+  'openai/o1',
+  'openai/o3-mini',
+  'google/gemini-2.0-flash',
+  'google/gemini-pro',
+  'meta-llama/llama-3.3-70b-instruct',
+  'deepseek/deepseek-r1',
+  'x-ai/grok-2',
+  'mistralai/mistral-large',
+  'cohere/command-r-plus'
+];
+
+const runSchema = z.object({
+  models: z.array(z.enum(MODEL_ALLOWLIST)).min(1).max(5).optional(),
+  prompt: z.string().min(1).max(50000),
+  code: z.string().max(50000).optional(),
+  systemPrompt: z.string().max(10000).optional()
+});
+
+const agentSchema = z
+  .object({
+    goal: z.string().min(1).max(10000).optional(),
+    prompt: z.string().min(1).max(10000).optional(),
+    tier: z.string().optional(),
+    model: z.enum(MODEL_ALLOWLIST).optional()
+  })
+  .refine((d) => d.goal || d.prompt, {
+    message: 'Either goal or prompt is required'
+  });
+
+const workflowSchema = z.object({
+  workflowId: z.string().min(1).max(100),
+  code: z.string().min(1).max(50000)
+});
+
+const comparisonSchema = z.object({
+  models: z.array(z.enum(MODEL_ALLOWLIST)).min(1).max(10),
+  prompt: z.string().min(1).max(50000)
+});
+
+const schemaMap = {
+  run: runSchema,
+  agent: agentSchema,
+  workflow: workflowSchema,
+  comparison: comparisonSchema
+};
 
 /**
- * Request validation middleware
- * Simplified version - just passes through requests for now
- * Full validation can be added later using Joi or similar
- */
-
-/**
- * Validation middleware factory
- * @param {string} schemaName - Name of the validation schema to apply
- * @returns {Function} Express middleware function
+ * Validates request body against a named schema.
+ * Unknown schema names are ignored intentionally to preserve existing behavior.
+ *
+ * @param {string} schemaName - Name of schema to validate against.
+ * @returns {(req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => void}
  */
 function validateRequest(schemaName) {
   return (req, res, next) => {
-    const body = req.body;
+    const schema = schemaMap[schemaName];
 
-    // Basic validation based on schema type
-    if (schemaName === 'agent') {
-      if (!body.goal && !body.prompt) {
-        return res.status(400).json(
-          responseFormatter.error('Either goal or prompt is required', 400)
-        );
-      }
+    if (!schema) {
+      return next();
     }
 
-    if (schemaName === 'run') {
-      if (!body.prompt) {
-        return res.status(400).json(
-          responseFormatter.error('Prompt is required', 400)
-        );
-      }
+    const parsed = schema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: parsed.error.errors
+      });
     }
 
-    if (schemaName === 'workflow') {
-      if (!body.workflowId) {
-        return res.status(400).json(
-          responseFormatter.error('Workflow ID is required', 400)
-        );
-      }
-      if (!body.code) {
-        return res.status(400).json(
-          responseFormatter.error('Code is required', 400)
-        );
-      }
-    }
-
-    if (schemaName === 'comparison') {
-      if (!body.models || !Array.isArray(body.models) || body.models.length === 0) {
-        return res.status(400).json(
-          responseFormatter.error('Models array is required', 400)
-        );
-      }
-      if (!body.prompt) {
-        return res.status(400).json(
-          responseFormatter.error('Prompt is required', 400)
-        );
-      }
-    }
-
-    // If validation passes, continue to next middleware
-    next();
+    req.body = parsed.data;
+    return next();
   };
 }
 

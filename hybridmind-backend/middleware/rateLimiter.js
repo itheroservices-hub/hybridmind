@@ -1,357 +1,299 @@
-/**
- * HybridMind v1.5 - Rate Limiter Middleware
- * CRITICAL: Prevents abuse and manages API quotas to protect against excessive costs
- * STUDENT BUDGET MODE: Very conservative limits to protect API costs
- */
+﻿// Redis connection: set REDIS_URL env var (e.g., redis://localhost:6379). Falls back to in-memory if unavailable.
 
-const logger = require('../utils/logger');
+const crypto = require('crypto');
+let Redis;
+try {
+  Redis = require('ioredis');
+} catch (e) {
+  // eslint-disable-next-line no-console
+  console.warn('Rate limiter: ioredis not installed, Redis-backed rate limiting disabled.');
+  Redis = null;
+}
 
-class RateLimiter {
+// --- In-memory fallback store ---
+class InMemoryStore {
   constructor() {
     this.requests = new Map();
     this.costs = new Map();
-    this.tokens = new Map(); // Track token usage
-    this.CLEANUP_INTERVAL = 60000; // 1 minute
-    
-    // Start cleanup timer
+    this.tokens = new Map();
+    this.CLEANUP_INTERVAL = 60000;
     setInterval(() => this.cleanup(), this.CLEANUP_INTERVAL);
   }
 
-  /**
-   * Create rate limit middleware
-   * @param {Object} options - Rate limit options
-   * @param {number} options.windowMs - Time window in milliseconds
-   * @param {number} options.maxRequests - Max requests per window
-   * @param {string} options.message - Error message
-   */
-  createLimiter({ windowMs = 3600000, maxRequests = 100, message = 'Too many requests' }) {
-    return (req, res, next) => {
-      const key = this.getKey(req);
-      const now = Date.now();
-      const windowStart = now - windowMs;
-
-      // Get requests for this key
-      let timestamps = this.requests.get(key) || [];
-      
-      // Filter requests within current window
-      timestamps = timestamps.filter(time => time > windowStart);
-
-      // Check if limit exceeded
-      if (timestamps.length >= maxRequests) {
-        const oldestTimestamp = timestamps[0];
-        const resetIn = Math.ceil((windowMs - (now - oldestTimestamp)) / 1000);
-
-        logger.warn(`Rate limit exceeded for ${key}: ${timestamps.length}/${maxRequests} requests`);
-
-        return res.status(429).json({
-          error: 'Rate limit exceeded',
-          message,
-          limit: maxRequests,
-          current: timestamps.length,
-          resetIn,
-          retryAfter: resetIn
-        });
-      }
-
-      // Add current request
-      timestamps.push(now);
-      this.requests.set(key, timestamps);
-
-      // Calculate usage percentage
-      const usagePercent = Math.round((timestamps.length / maxRequests) * 100);
-      const tier = 'free'; // TODO: Get from req.user?.tier
-
-      // Set rate limit headers with usage info
-      res.set({
-        'X-RateLimit-Limit': maxRequests,
-        'X-RateLimit-Remaining': maxRequests - timestamps.length,
-        'X-RateLimit-Reset': Math.ceil((now + windowMs) / 1000),
-        'X-Usage-Percent': usagePercent,
-        'X-Usage-Tier': tier,
-        'X-Usage-Warning': usagePercent >= 80 ? 'true' : 'false'
-      });
-
-      next();
-    };
+  _getWindowId(windowMs) {
+    return Math.floor(Date.now() / windowMs);
   }
 
-  /**
-   * Token-based rate limiting (for monthly quotas)
-   * @param {Object} options - Token limit options
-   */
-  createTokenLimiter({ maxTokensPerMonth = 8000, message = 'Monthly token limit exceeded' }) {
-    return (req, res, next) => {
-      const key = this.getKey(req);
-      const now = Date.now();
-      const monthStart = now - (30 * 86400000); // 30 days
-
-      // Get token usage for this key
-      let tokenEntries = this.tokens.get(key) || [];
-      
-      // Filter tokens within last 30 days
-      tokenEntries = tokenEntries.filter(entry => entry.timestamp > monthStart);
-
-      // Calculate total tokens used
-      const totalTokens = tokenEntries.reduce((sum, entry) => sum + entry.tokens, 0);
-
-      // Check if limit exceeded
-      if (totalTokens >= maxTokensPerMonth) {
-        const usagePercent = Math.round((totalTokens / maxTokensPerMonth) * 100);
-        
-        return res.status(429).json({
-          error: 'Token limit exceeded',
-          message,
-          monthlyLimit: maxTokensPerMonth,
-          tokensUsed: totalTokens,
-          usagePercent,
-          resetDate: new Date(monthStart + (30 * 86400000)).toISOString()
-        });
-      }
-
-      // Store for response tracking (will be updated after request)
-      req.tokenLimiter = {
-        key,
-        maxTokensPerMonth,
-        totalTokens,
-        entries: tokenEntries
-      };
-
-      // Set usage headers
-      const usagePercent = Math.round((totalTokens / maxTokensPerMonth) * 100);
-      res.set({
-        'X-Token-Limit': maxTokensPerMonth,
-        'X-Tokens-Used': totalTokens,
-        'X-Tokens-Remaining': maxTokensPerMonth - totalTokens,
-        'X-Usage-Percent': usagePercent,
-        'X-Usage-Warning': usagePercent >= 80 ? 'true' : 'false'
-      });
-
-      next();
-    };
-  }
-
-  /**
-   * Cost-based rate limiting (for API costs)
-   * @param {Object} options - Cost limit options
-   */
-  createCostLimiter({ maxCostPerDay = 10.0, message = 'Daily cost limit exceeded' }) {
-    return (req, res, next) => {
-      const key = this.getKey(req);
-      const now = Date.now();
-      const dayStart = now - 86400000; // 24 hours
-
-      // Get costs for this key
-      let costEntries = this.costs.get(key) || [];
-      
-      // Filter costs within last 24 hours
-      costEntries = costEntries.filter(entry => entry.timestamp > dayStart);
-
-      // Calculate total cost
-      const totalCost = costEntries.reduce((sum, entry) => sum + entry.cost, 0);
-      
-      // Estimate cost of this request
-      const estimatedCost = this.estimateRequestCost(req);
-
-      // Check if adding this request would exceed limit
-      if (totalCost + estimatedCost > maxCostPerDay) {
-        const usagePercent = Math.round((totalCost / maxCostPerDay) * 100);
-        
-        return res.status(429).json({
-          error: 'Cost limit exceeded',
-          message,
-          dailyLimit: maxCostPerDay,
-          currentCost: totalCost.toFixed(4),
-          estimatedCost: estimatedCost.toFixed(4),
-          resetIn: Math.ceil((86400000 - (now % 86400000)) / 1000),
-          usagePercent,
-          upgradeMessage: '💎 Upgrade to Pro for higher limits: $50/day instead of $2/day!'
-        });
-      }
-
-      // Store estimated cost (will be updated with actual cost later)
-      req.estimatedCost = estimatedCost;
-      req.recordCost = (actualCost) => {
-        costEntries.push({ timestamp: now, cost: actualCost });
-        this.costs.set(key, costEntries);
-      };
-
-      const usagePercent = Math.round(((totalCost + estimatedCost) / maxCostPerDay) * 100);
-
-      res.set({
-        'X-Cost-Limit': maxCostPerDay,
-        'X-Cost-Used': totalCost.toFixed(4),
-        'X-Cost-Remaining': (maxCostPerDay - totalCost).toFixed(4),
-        'X-Cost-Percent': usagePercent,
-        'X-Cost-Warning': usagePercent >= 80 ? 'true' : 'false'
-      });
-
-      next();
-    };
-  }
-
-  /**
-   * Estimate request cost based on parameters
-   * UPDATED: OpenRouter-only pricing (Jan 2026)
-   */
-  estimateRequestCost(req) {
-    const modelCosts = {
-      // OpenRouter models (cost per 1M tokens)
-      'meta-llama/llama-3.3-70b-instruct': 0.00, // FREE!
-      'google/gemini-2.5-flash': 0.10,
-      'google/gemini-2.5-pro': 1.25,
-      'anthropic/claude-3.5-sonnet': 3.00,
-      'anthropic/claude-opus-4.5': 15.00,
-      'openai/gpt-4o': 5.00,
-      'deepseek/deepseek-r1': 0.55,
-      'qwen/qwen3-coder-plus': 0.40,
-      'x-ai/grok-4': 10.00,
-      'mistralai/mistral-large': 2.00,
-      
-      // Fallback for unknown models
-      'default': 2.00
-    };
-
-    const model = req.body.model || 'meta-llama/llama-3.3-70b-instruct';
-    const code = req.body.code || '';
-    const prompt = req.body.prompt || req.body.goal || '';
-    
-    // Estimate tokens (rough: 1 token ≈ 4 characters)
-    const inputTokens = Math.ceil((code.length + prompt.length) / 4);
-    const outputTokens = req.body.maxTokens || 4000; // Conservative estimate
-    
-    const costPerMillionTokens = modelCosts[model] || modelCosts.default;
-    
-    // Total cost = (input + output) / 1M * cost per 1M
-    const estimatedCost = ((inputTokens + outputTokens) / 1000000) * costPerMillionTokens;
-    
-    logger.debug(`Cost estimate for ${model}: $${estimatedCost.toFixed(6)} (${inputTokens + outputTokens} tokens)`);
-    
-    return estimatedCost;
-  }
-
-  /**
-   * Get unique key for rate limiting (user ID or IP)
-   */
   getKey(req) {
-    return req.user?.id || req.user?.licenseKey || req.ip || 'anonymous';
+    if (req.user?.licenseKey) {
+      return crypto.createHash('sha256').update(req.user.licenseKey).digest('hex').slice(0, 16);
+    }
+    if (req.user?.id) return req.user.id;
+    return req.ip || 'unknown';
   }
 
-  /**
-   * Cleanup old entries
-   */
+  createLimiter({ windowMs, maxRequests, message }) {
+    return (req, res, next) => {
+      const key = `req:${this.getKey(req)}:${this._getWindowId(windowMs)}`;
+      const now = Date.now();
+      let info = this.requests.get(key);
+      if (!info) {
+        info = { count: 1, ts: now };
+        this.requests.set(key, info);
+      } else {
+        info.count += 1;
+      }
+      if (info.count > maxRequests) {
+        return res.status(429).json({ error: message });
+      }
+      return next();
+    };
+  }
+
+  createTokenLimiter({ maxTokensPerMonth, message, tier }) {
+    return async (req, res, next) => {
+      if (tier === 'enterprise') return next();
+      const key = `tokens:${this.getKey(req)}:${new Date().getUTCFullYear()}-${new Date().getUTCMonth() + 1}`;
+      let info = this.tokens.get(key);
+      if (!info) {
+        info = { count: 0, month: new Date().getUTCMonth() };
+        this.tokens.set(key, info);
+      }
+      const tokens = typeof req.tokenCost === 'number' ? req.tokenCost : 1;
+      info.count += tokens;
+      if (info.count > maxTokensPerMonth) {
+        return res.status(429).json({ error: message });
+      }
+      return next();
+    };
+  }
+
+  createCostLimiter({ maxCostPerDay, message }) {
+    return (req, res, next) => {
+      const key = `cost:${this.getKey(req)}:${new Date().toISOString().slice(0, 10)}`;
+      let info = this.costs.get(key);
+      if (!info) {
+        info = { cost: 0 };
+        this.costs.set(key, info);
+      }
+      const cost = typeof req.cost === 'number' ? req.cost : 1;
+      info.cost += cost;
+      if (info.cost > maxCostPerDay) {
+        return res.status(429).json({ error: message });
+      }
+      return next();
+    };
+  }
+
+  getStats() {
+    return {
+      requests: this.requests.size,
+      tokens: this.tokens.size,
+      costs: this.costs.size,
+    };
+  }
+
   cleanup() {
     const now = Date.now();
-    const dayAgo = now - 86400000;
-
-    // Cleanup requests
-    for (const [key, timestamps] of this.requests.entries()) {
-      const filtered = timestamps.filter(time => time > dayAgo);
-      if (filtered.length === 0) {
-        this.requests.delete(key);
-      } else {
-        this.requests.set(key, filtered);
+    for (const [key, info] of this.requests.entries()) {
+      if (now - info.ts > 3600000) this.requests.delete(key);
+    }
+    for (const [key] of this.tokens.entries()) {
+      const parts = key.split(':');
+      if (parts.length >= 3) {
+        const ym = parts[2];
+        if (ym) {
+          const [year, month] = ym.split('-').map(Number);
+          const nowDate = new Date();
+          if (year !== nowDate.getUTCFullYear() || month !== (nowDate.getUTCMonth() + 1)) {
+            this.tokens.delete(key);
+          }
+        }
       }
     }
-
-    // Cleanup costs
-    for (const [key, entries] of this.costs.entries()) {
-      const filtered = entries.filter(entry => entry.timestamp > dayAgo);
-      if (filtered.length === 0) {
-        this.costs.delete(key);
-      } else {
-        this.costs.set(key, filtered);
+    for (const [key] of this.costs.entries()) {
+      const parts = key.split(':');
+      if (parts.length >= 3) {
+        const dateStr = parts[2];
+        if (dateStr) {
+          const time = new Date(dateStr).getTime();
+          if (!isNaN(time) && (now - time > 3 * 86400000)) this.costs.delete(key);
+        }
       }
     }
-
-    logger.info(`Rate limiter cleanup completed. Active keys: ${this.requests.size}`);
-  }
-
-  /**
-   * Get stats for a specific key
-   */
-  getStats(key) {
-    const now = Date.now();
-    const hourAgo = now - 3600000;
-    const dayAgo = now - 86400000;
-
-    const timestamps = this.requests.get(key) || [];
-    const costEntries = this.costs.get(key) || [];
-
-    return {
-      requestsLastHour: timestamps.filter(t => t > hourAgo).length,
-      requestsLastDay: timestamps.filter(t => t > dayAgo).length,
-      costLastDay: costEntries
-        .filter(e => e.timestamp > dayAgo)
-        .reduce((sum, e) => sum + e.cost, 0)
-    };
   }
 }
 
-// Create singleton instance
+// --- Redis-backed store ---
+class RedisBackedStore {
+  constructor() {
+    this.available = false;
+    if (!Redis) return;
+    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    this.redis = new Redis(redisUrl, { lazyConnect: true });
+    this.redis.connect().then(() => {
+      this.available = true;
+      // eslint-disable-next-line no-console
+      console.info('Rate limiter: Connected to Redis');
+    }).catch(() => {
+      this.available = false;
+      // eslint-disable-next-line no-console
+      console.warn('Rate limiter: Redis unavailable, falling back to in-memory');
+      if (this.redis) this.redis.disconnect();
+    });
+  }
+
+  _getWindowId(windowMs) {
+    return Math.floor(Date.now() / windowMs);
+  }
+
+  getKey(req) {
+    if (req.user?.licenseKey) {
+      return crypto.createHash('sha256').update(req.user.licenseKey).digest('hex').slice(0, 16);
+    }
+    if (req.user?.id) return req.user.id;
+    return req.ip || 'unknown';
+  }
+
+  createLimiter({ windowMs, maxRequests, message }) {
+    return async (req, res, next) => {
+      if (!this.available) {
+        return this.__fallback.createLimiter({ windowMs, maxRequests, message })(req, res, next);
+      }
+      const key = `hm:rl:req:${this.getKey(req)}:${this._getWindowId(windowMs)}`;
+      try {
+        const cnt = await this.redis.incr(key);
+        if (cnt === 1) await this.redis.expire(key, Math.ceil(windowMs / 1000));
+        if (cnt > maxRequests) return res.status(429).json({ error: message });
+        return next();
+      } catch {
+        return this.__fallback.createLimiter({ windowMs, maxRequests, message })(req, res, next);
+      }
+    };
+  }
+
+  createTokenLimiter({ maxTokensPerMonth, message, tier }) {
+    return async (req, res, next) => {
+      if (tier === 'enterprise') return next();
+      if (!this.available) {
+        return this.__fallback.createTokenLimiter({ maxTokensPerMonth, message, tier })(req, res, next);
+      }
+      const now = new Date();
+      const year = now.getUTCFullYear();
+      const month = now.getUTCMonth() + 1;
+      const key = `hm:rl:tokens:${this.getKey(req)}:${year}-${month}`;
+      const minScore = new Date(year, month - 1, 1).getTime();
+      const maxScore = new Date(year, month, 1).getTime() - 1;
+      const tokens = typeof req.tokenCost === 'number' ? req.tokenCost : 1;
+      try {
+        const ts = Date.now();
+        await this.redis.zadd(key, ts, `${ts}:${tokens}`);
+        await this.redis.zremrangebyscore(key, 0, minScore - 1);
+        const usages = await this.redis.zrangebyscore(key, minScore, maxScore);
+        let total = 0;
+        for (const entry of usages) {
+          const [, val] = entry.split(':');
+          total += Number(val) || 0;
+        }
+        if (total > maxTokensPerMonth) return res.status(429).json({ error: message });
+        await this.redis.expire(key, 86400 * 90);
+        return next();
+      } catch {
+        return this.__fallback.createTokenLimiter({ maxTokensPerMonth, message, tier })(req, res, next);
+      }
+    };
+  }
+
+  createCostLimiter({ maxCostPerDay, message }) {
+    return async (req, res, next) => {
+      if (!this.available) {
+        return this.__fallback.createCostLimiter({ maxCostPerDay, message })(req, res, next);
+      }
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const key = `hm:rl:cost:${this.getKey(req)}:${dateStr}`;
+      const cost = typeof req.cost === 'number' ? req.cost : 1;
+      try {
+        const cnt = await this.redis.incrby(key, cost);
+        if (cnt === cost) await this.redis.expire(key, 86400 * 3);
+        if (cnt > maxCostPerDay) return res.status(429).json({ error: message });
+        return next();
+      } catch {
+        return this.__fallback.createCostLimiter({ maxCostPerDay, message })(req, res, next);
+      }
+    };
+  }
+
+  getStats() {
+    return { requests: 0, tokens: 0, costs: 0 };
+  }
+
+  cleanup() {
+    // Redis handles expiry natively
+  }
+}
+
+// --- Unified RateLimiter ---
+class RateLimiter {
+  constructor() {
+    this.inMemory = new InMemoryStore();
+    if (Redis) {
+      this.redisStore = new RedisBackedStore();
+      this.redisStore.__fallback = this.inMemory;
+    }
+    this.active = this.redisStore && this.redisStore.available ? this.redisStore : this.inMemory;
+    if (this.redisStore) {
+      setInterval(() => {
+        this.active = this.redisStore.available ? this.redisStore : this.inMemory;
+      }, 3000);
+    }
+  }
+
+  getKey(req) { return this.active.getKey(req); }
+  createLimiter(opts) { return this.active.createLimiter(opts); }
+  createTokenLimiter(opts) { return this.active.createTokenLimiter(opts); }
+  createCostLimiter(opts) { return this.active.createCostLimiter(opts); }
+  getStats() { return this.active.getStats(); }
+  cleanup() { return this.active.cleanup(); }
+}
+
+// ---- TIER LIMITS ----
 const rateLimiter = new RateLimiter();
 
-// Export pre-configured limiters
+const burstLimiter = rateLimiter.createLimiter({
+  windowMs: 60000,
+  maxRequests: 30,
+  message: 'Too many requests. Please wait and try again.'
+});
+
+const freeTokenLimiter = rateLimiter.createTokenLimiter({
+  maxTokensPerMonth: 100000,
+  message: 'Free plan monthly token limit exceeded. Upgrade for more usage.',
+  tier: 'free'
+});
+
+const proTokenLimiter = rateLimiter.createTokenLimiter({
+  maxTokensPerMonth: 2000000,
+  message: 'Pro plan monthly token limit exceeded.',
+  tier: 'pro'
+});
+
+const proPlusTokenLimiter = rateLimiter.createTokenLimiter({
+  maxTokensPerMonth: 10000000,
+  message: 'Pro Plus plan monthly token limit exceeded.',
+  tier: 'pro-plus'
+});
+
+const enterpriseTokenLimiter = rateLimiter.createTokenLimiter({
+  maxTokensPerMonth: 9007199254740991,
+  message: '',
+  tier: 'enterprise'
+});
+
 module.exports = {
   rateLimiter,
-  
-  // Free tier: 8k tokens/month
-  freeTokenLimiter: rateLimiter.createTokenLimiter({
-    maxTokensPerMonth: 8000,
-    message: '⚠️ Free tier limit: 8,000 tokens/month. Upgrade to Pro for 128k tokens!'
-  }),
-
-  // Pro tier: 128k tokens/month ($19.99/month)
-  proTokenLimiter: rateLimiter.createTokenLimiter({
-    maxTokensPerMonth: 128000,
-    message: '⚠️ Pro tier limit: 128,000 tokens/month reached.'
-  }),
-
-  // Free tier: 50 requests/hour (burst protection)
-  freeTierLimiter: rateLimiter.createLimiter({
-    windowMs: 3600000,
-    maxRequests: 50,
-    message: '⚠️ Free tier limit: 50 requests/hour.'
-  }),
-
-  // Pro tier: 500 requests/hour (burst protection)
-  proTierLimiter: rateLimiter.createLimiter({
-    windowMs: 3600000,
-    maxRequests: 500,
-    message: 'Pro tier limit: 500 requests/hour reached.'
-  }),
-
-  // PROFIT MARGIN PROTECTION: 71% margin (industry-standard for AI SaaS)
-  
-  // Free tier cost limiter: $0.10/day (testing/trial only)
-  freeCostLimiter: rateLimiter.createCostLimiter({
-    maxCostPerDay: 0.10,
-    message: '⚠️ Free tier daily limit reached. Upgrade to Pro ($19.99/mo) for higher limits!'
-  }),
-
-  // Pro tier cost limiter: $0.19/day = $5.80/month (71% margin on $19.99)
-  // Revenue: $19.99/month
-  // Max Cost: $5.80/month ($0.19/day)
-  // Profit: $14.19/month
-  // Margin: 71% ✅
-  proCostLimiter: rateLimiter.createCostLimiter({
-    maxCostPerDay: 0.19,
-    message: '⚠️ Pro daily limit reached ($0.19/day). Upgrade to Pro Plus for 2.5x higher limits!'
-  }),
-
-  // Pro Plus tier cost limiter: $0.48/day = $14.50/month (71% margin on $49.99)
-  // Revenue: $49.99/month
-  // Max Cost: $14.50/month ($0.48/day)
-  // Profit: $35.49/month
-  // Margin: 71% ✅
-  proPlusCostLimiter: rateLimiter.createCostLimiter({
-    maxCostPerDay: 0.48,
-    message: '⚠️ Pro Plus daily limit reached ($0.48/day). Contact sales for Enterprise tier!'
-  }),
-
-  // Burst protection: 10 requests per minute (prevents accidental runaway costs)
-  burstLimiter: rateLimiter.createLimiter({
-    windowMs: 60000,
-    maxRequests: 10,
-    message: '⚠️ Slow down! Max 10 requests/minute to protect your API costs.'
-  })
+  burstLimiter,
+  freeTokenLimiter,
+  proTokenLimiter,
+  proPlusTokenLimiter,
+  enterpriseTokenLimiter
 };
