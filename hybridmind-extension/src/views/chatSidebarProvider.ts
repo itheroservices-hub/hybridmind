@@ -127,7 +127,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           break;
         case 'openUpgrade':
           // Open upgrade page in browser
-          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ai/pricing'));
+          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ca/pricing'));
           break;
         case 'executeNextStep':
           // Execute a suggested next step
@@ -147,6 +147,12 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           break;
         case 'killRalphLoop':
           await this._killRalphLoop();
+          break;
+        case 'openByok':
+          vscode.commands.executeCommand('hybridmind.setApiKey');
+          break;
+        case 'openAgentPicker':
+          vscode.commands.executeCommand('hybridmind.openAgentSidebar');
           break;
       }
     });
@@ -1880,9 +1886,119 @@ If CLEAR, respond with: CLEAR`,
     .suggestion:hover {
       border-left-color: #0b6a76;
     }
+
+    /* === FULL-HEIGHT LAYOUT === */
+    html, body { height: 100%; overflow: hidden; }
+    body { display: flex; flex-direction: column; }
+    .messages-container { flex: 1 1 0 !important; min-height: 0 !important; }
+
+    /* === RATE TRACKER BAR === */
+    .rate-tracker {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 10px; font-size: 10px;
+      background: rgba(11, 106, 118, 0.07);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      flex-shrink: 0;
+    }
+    .tracker-item { display: flex; align-items: center; gap: 5px; opacity: 0.85; }
+    .rate-bar { width: 44px; height: 3px; background: var(--vscode-panel-border); border-radius: 2px; overflow: hidden; }
+    .rate-bar-fill { height: 100%; background: #0b6a76; border-radius: 2px; transition: width 0.4s; }
+    .rate-bar-fill.warn { background: #f59e0b; }
+    .rate-bar-fill.crit { background: #ef4444; }
+    .tracker-credits { font-weight: 600; color: #0b6a76; }
+
+    /* === AGENTS INLINE SECTION === */
+    .agent-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 9px; font-size: 10px;
+      background: rgba(11, 106, 118, 0.08);
+      border: 1px solid rgba(11, 106, 118, 0.25);
+      border-radius: 12px; cursor: pointer; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .agent-chip:hover { background: rgba(11, 106, 118, 0.18); border-color: #0b6a76; }
+    .agent-chip.active-agent { background: rgba(11, 106, 118, 0.28); border-color: #0b6a76; color: #0b6a76; font-weight: 600; }
+    .agent-chips-wrap { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 12px 8px; }
+    .agents-actions { display: flex; gap: 6px; padding: 0 12px 8px; }
+    .agents-actions button { font-size: 10px; padding: 3px 8px; border-radius: 5px;
+      background: rgba(11, 106, 118, 0.1); border: 1px solid rgba(11, 106, 118, 0.3);
+      color: var(--vscode-foreground); cursor: pointer;
+    }
+    .agents-actions button:hover { background: rgba(11, 106, 118, 0.2); }
+
+    /* === CODEGPT-STYLE CHAT INPUT === */
+    .chat-input-area {
+      padding: 8px 10px 10px;
+      background: var(--vscode-sideBar-background);
+      border-top: 1px solid var(--vscode-panel-border);
+      flex-shrink: 0;
+    }
+    .chat-input-box {
+      display: flex; flex-direction: column;
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 12px; overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .chat-input-box:focus-within {
+      border-color: #0b6a76;
+      box-shadow: 0 0 0 1px rgba(11, 106, 118, 0.25);
+    }
+    .chat-input-box textarea#messageInput {
+      width: 100%; padding: 10px 12px 6px;
+      background: transparent; color: var(--vscode-input-foreground);
+      border: none; outline: none; resize: none;
+      font-family: var(--vscode-font-family); font-size: 13px; line-height: 1.5;
+      min-height: 42px; max-height: 130px; box-sizing: border-box;
+    }
+    .chat-input-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 8px; border-top: 1px solid rgba(11, 106, 118, 0.15);
+    }
+    .chat-input-left { display: flex; align-items: center; gap: 5px; }
+    .active-model-pill {
+      display: flex; align-items: center; gap: 3px;
+      font-size: 10px; padding: 2px 7px;
+      background: rgba(11, 106, 118, 0.1);
+      border: 1px solid rgba(11, 106, 118, 0.22);
+      border-radius: 10px; max-width: 110px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .icon-btn {
+      background: none; border: none; padding: 4px 5px; cursor: pointer;
+      border-radius: 5px; opacity: 0.55; font-size: 13px; line-height: 1;
+    }
+    .icon-btn:hover { opacity: 1; background: rgba(11, 106, 118, 0.1); }
+    .icon-btn.ib-active { opacity: 1; color: #0b6a76; }
+    .send-btn {
+      width: 32px; height: 32px; border-radius: 9px;
+      background: #0b6a76; border: none; color: white;
+      cursor: pointer; font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s; flex-shrink: 0;
+    }
+    .send-btn:hover { background: #0a5a65; }
+    .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
   </style>
 </head>
 <body>
+  <!-- Rate / Usage Tracker -->
+  <div class="rate-tracker" id="rateTracker">
+    <div class="tracker-item">
+      <span>🔑</span>
+      <span id="trackerCredits" class="tracker-credits">··· cr</span>
+      <span style="opacity:0.5;">credits</span>
+    </div>
+    <div class="tracker-item">
+      <span>📊</span>
+      <span id="trackerReqs">0 / ${isPro ? '500' : '50'}</span>
+      <div class="rate-bar"><div class="rate-bar-fill" id="reqBar" style="width:0%"></div></div>
+    </div>
+    <div class="tracker-item">
+      <span id="trackerTier" style="font-size:9px; padding:1px 6px; border-radius:8px; background:${isPro ? 'rgba(59,130,246,0.2)' : 'rgba(16,185,129,0.2)'}; border:1px solid ${isPro ? 'rgba(59,130,246,0.4)' : 'rgba(16,185,129,0.4)'};">${isPro ? '💎 PRO' : '🆓 FREE'}</span>
+    </div>
+  </div>
+
   <!-- Collapsible Model Selection -->
   <div class="config-section">
     <div class="config-header" id="modelsHeader">
@@ -1915,16 +2031,21 @@ If CLEAR, respond with: CLEAR`,
             <option value="llama-4-maverick">Llama 4 Maverick (1M ctx)</option>
             <option value="llama-4-scout">Llama 4 Scout</option>
             <option value="gemini-2.0-flash">Gemini 2.0 Flash Pro</option>
+            <option value="claude-3.5-sonnet">Claude 3.5 Sonnet ✱</option>
           </optgroup>
           <optgroup label="🧠 Reasoning">
             <option value="o3-mini">OpenAI o3-mini</option>
             <option value="o1">OpenAI o1 (ULTRA)</option>
           </optgroup>
+          <optgroup label="💻 Coding Specialist">
+            <option value="gpt-codex">GPT Codex Mini ✱</option>
+            <option value="claude-sonnet-4.5">Claude Sonnet 4.5 ✱</option>
+          </optgroup>
           <optgroup label="👑 Flagship">
             <option value="gpt-4.1">GPT-4.1</option>
-            <option value="gpt-4.1">GPT-4.1 (1M ctx)</option>
             <option value="claude-sonnet-4">Claude Sonnet 4</option>
-            <option value="claude-opus-4">Claude Opus 4 (ULTRA)</option>
+            <option value="claude-opus-4">Claude Opus 4</option>
+            <option value="claude-opus-4.5">Claude Opus 4.5 ✱ (ULTRA)</option>
             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
             <option value="grok-3">Grok 3 Beta</option>
           </optgroup>
@@ -1945,8 +2066,33 @@ If CLEAR, respond with: CLEAR`,
       <option value="agentic">🤖 Agentic (Autonomous)</option>
     </select>
   </div>
-  
-  <!-- Collapsible Autonomy Panel -->
+
+  <!-- Agents — Inline Section -->
+  <div class="config-section">
+    <div class="config-header" id="agentsHeader">
+      <span>🤖 Agents <span class="tier-badge" style="background:rgba(11,106,118,0.15);color:#0b6a76;padding:1px 6px;border-radius:6px;font-size:9px;">AgentSync</span></span>
+      <span class="collapse-icon">▼</span>
+    </div>
+    <div class="config-content" id="agentsContent">
+      <div class="agent-chips-wrap" id="agentChipsWrap">
+        <span class="agent-chip" data-id="bug-hunter">🐛 Bug Hunter</span>
+        <span class="agent-chip" data-id="code-generator">💻 Code Gen</span>
+        <span class="agent-chip" data-id="refactoring">🔧 Refactor</span>
+        <span class="agent-chip" data-id="strategic-planner">🗺 Planner</span>
+        <span class="agent-chip" data-id="research-synthesizer">🔬 Research</span>
+        <span class="agent-chip" data-id="critical-evaluator">⚖️ Evaluator</span>
+        <span class="agent-chip" data-id="memory-curator">🧠 Memory</span>
+        <span class="agent-chip" data-id="logic-verifier">✅ Verifier</span>
+        <span class="agent-chip" data-id="scenario-simulation">🎭 Scenario</span>
+        <span class="agent-chip" data-id="constraint-solver">🔒 Constraints</span>
+      </div>
+      <div class="agents-actions">
+        <button id="agentByokBtn">🔑 Set API Key (BYOK)</button>
+        <button id="agentAddBtn">+ Add agent</button>
+      </div>
+    </div>
+  </div>
+
   <div class="config-section" id="autonomySection" style="display: none;">
     <div class="config-header" id="autonomyHeader">
       <span>⚙️ Autonomy Settings</span>
@@ -2041,14 +2187,23 @@ If CLEAR, respond with: CLEAR`,
     </div>
   </div>
   
-  <div class="input-container">
-    <div class="input-wrapper">
-      <textarea 
-        id="messageInput" 
-        placeholder="Ask HybridMind anything... (Shift+Enter for new line)"
+  <div class="chat-input-area">
+    <div class="chat-input-box">
+      <textarea
+        id="messageInput"
+        placeholder="Ask HybridMind anything…"
         rows="1"
       ></textarea>
-      <button id="sendButton" class="button">Send</button>
+      <div class="chat-input-footer">
+        <div class="chat-input-left">
+          <div class="active-model-pill" id="activemodelPill">
+            <span>⚡</span><span id="activemodelLabel">Llama 3.3 70B</span>
+          </div>
+          <button class="icon-btn" id="contextButton" title="Attach selected code">📎</button>
+          <button class="icon-btn" id="clearButton" title="Clear chat">🗑</button>
+        </div>
+        <button class="send-btn" id="sendButton" title="Send (Enter)">↑</button>
+      </div>
     </div>
   </div>
 
@@ -2115,8 +2270,70 @@ If CLEAR, respond with: CLEAR`,
     
     setupCollapse('modelsHeader', 'modelsContent');
     setupCollapse('autonomyHeader', 'autonomyContent');
-    
-    // Model selection from dropdowns
+    setupCollapse('agentsHeader', 'agentsContent');
+
+    // ── Rate Tracker ──────────────────────────────────────────────────────────
+    async function updateRateTracker() {
+      try {
+        const res = await fetch('http://localhost:3000/cost-stats', {
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        const s = data.data || {};
+        const credits = (s.dailyRemaining !== undefined) ? '$' + Number(s.dailyRemaining).toFixed(2) : '—';
+        const reqsUsed = s.requestsToday || 0;
+        const reqsMax = ${isPro ? 500 : 50};
+        const pct = Math.min(100, (reqsUsed / reqsMax) * 100);
+        const credEl = document.getElementById('trackerCredits');
+        const barEl = document.getElementById('reqBar');
+        const reqEl = document.getElementById('trackerReqs');
+        if (credEl) credEl.textContent = credits;
+        if (reqEl) reqEl.textContent = reqsUsed + ' / ' + reqsMax;
+        if (barEl) {
+          barEl.style.width = pct + '%';
+          barEl.className = 'rate-bar-fill' + (pct > 90 ? ' crit' : pct > 70 ? ' warn' : '');
+        }
+      } catch (_) {}
+    }
+    updateRateTracker();
+    setInterval(updateRateTracker, 30000);
+
+    // ── Agents Inline Section ─────────────────────────────────────────────────
+    const agentChips = document.querySelectorAll('.agent-chip');
+    agentChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        chip.classList.toggle('active-agent');
+      });
+    });
+    document.getElementById('agentByokBtn')?.addEventListener('click', () => {
+      vscode.postMessage({ type: 'openByok' });
+    });
+    document.getElementById('agentAddBtn')?.addEventListener('click', () => {
+      vscode.postMessage({ type: 'openAgentPicker' });
+    });
+
+    // ── Active model pill update ──────────────────────────────────────────────
+    function updateModelPill() {
+      const labelEl = document.getElementById('activemodelLabel');
+      if (!labelEl) return;
+      const modelNames = {
+        'llama-3.3-70b': 'Llama 3.3 70B', 'llama-3.1-8b': 'Llama 3.1 8B',
+        'gemini-flash': 'Gemini Flash', 'deepseek-v3': 'DeepSeek V3',
+        'deepseek-r1': 'DeepSeek R1', 'qwen3-coder': 'Qwen3 Coder',
+        'devstral': 'Devstral 2', 'mimo-flash': 'MiMo Flash',
+        'glm-4.5-air': 'GLM 4.5 Air', 'llama-4-maverick': 'Llama 4 Maverick',
+        'llama-4-scout': 'Llama 4 Scout', 'gemini-2.0-flash': 'Gemini 2.0 Flash',
+        'gpt-4.1': 'GPT-4.1', 'gpt-codex': 'Codex Mini',
+        'claude-3.5-sonnet': 'Claude 3.5 Sonnet', 'claude-sonnet-4': 'Claude Sonnet 4',
+        'claude-sonnet-4.5': 'Claude Sonnet 4.5', 'claude-opus-4': 'Claude Opus 4',
+        'claude-opus-4.5': 'Claude Opus 4.5', 'gemini-2.5-pro': 'Gemini 2.5 Pro',
+        'grok-3': 'Grok 3', 'o3-mini': 'o3-mini', 'o1': 'o1'
+      };
+      const first = selectedModels[0] || 'llama-3.3-70b';
+      labelEl.textContent = (modelNames[first] || first).substring(0, 18);
+      if (selectedModels.length > 1) labelEl.textContent += ' +' + (selectedModels.length - 1);
+    }
+
     const selectedModelsContainer = document.getElementById('selectedModelsContainer');
     const freeModelSelect = document.getElementById('freeModelSelect');
     const proModelSelect = document.getElementById('proModelSelect');
@@ -2141,8 +2358,12 @@ If CLEAR, respond with: CLEAR`,
           // Premium
           'gpt-4o': '👑 GPT-4.1 (legacy alias)',
           'gpt-4.1': '👑 GPT-4.1',
+          'gpt-codex': '💻 GPT Codex Mini',
+          'claude-3.5-sonnet': '👑 Claude 3.5 Sonnet',
           'claude-sonnet-4': '👑 Claude Sonnet 4',
+          'claude-sonnet-4.5': '👑 Claude Sonnet 4.5',
           'claude-opus-4': '👑 Claude Opus 4',
+          'claude-opus-4.5': '👑 Claude Opus 4.5',
           'gemini-2.5-pro': '👑 Gemini 2.5 Pro',
           'grok-3': '👑 Grok 3',
           'o3-mini': '🧠 o3-mini',
@@ -2161,6 +2382,7 @@ If CLEAR, respond with: CLEAR`,
     window.removeModel = function(model) {
       selectedModels = selectedModels.filter(m => m !== model);
       renderSelectedModels();
+      updateModelPill();
       vscode.postMessage({ type: 'changeModels', models: selectedModels });
     };
     
@@ -2174,6 +2396,7 @@ If CLEAR, respond with: CLEAR`,
         }
         selectedModels.push(model);
         renderSelectedModels();
+        updateModelPill();
         vscode.postMessage({ type: 'changeModels', models: selectedModels });
       }
       e.target.value = '';
@@ -2189,6 +2412,7 @@ If CLEAR, respond with: CLEAR`,
         }
         selectedModels.push(model);
         renderSelectedModels();
+        updateModelPill();
         vscode.postMessage({ type: 'changeModels', models: selectedModels });
       }
       e.target.value = '';
@@ -2196,6 +2420,7 @@ If CLEAR, respond with: CLEAR`,
     
     // Initial render
     renderSelectedModels();
+    updateModelPill();
     renderMessages();
 
     // Autonomy panel visibility

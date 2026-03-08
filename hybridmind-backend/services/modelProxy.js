@@ -266,6 +266,42 @@ class ModelProxy {
         contextWindow: 200000,
         costPerMillion: { input: 150.00, output: 600.00 },
         description: 'OpenAI\'s most advanced reasoning'
+      },
+
+      // ============================================
+      // NEW FLAGSHIP MODELS
+      // ============================================
+      'gpt-codex': {
+        tier: 'premium',
+        openRouterId: 'openai/codex-mini-latest',
+        name: 'GPT Codex Mini',
+        contextWindow: 200000,
+        costPerMillion: { input: 1.50, output: 6.00 },
+        description: 'OpenAI Codex — optimized for software engineering'
+      },
+      'claude-3.5-sonnet': {
+        tier: 'premium',
+        openRouterId: 'anthropic/claude-3.5-sonnet',
+        name: 'Claude 3.5 Sonnet',
+        contextWindow: 200000,
+        costPerMillion: { input: 3.00, output: 15.00 },
+        description: 'Best Claude for everyday coding — fast & smart'
+      },
+      'claude-opus-4.5': {
+        tier: 'premium',
+        openRouterId: 'anthropic/claude-opus-4-5',
+        name: 'Claude Opus 4.5',
+        contextWindow: 200000,
+        costPerMillion: { input: 15.00, output: 75.00 },
+        description: 'Anthropic\'s most intelligent model — v4.5'
+      },
+      'claude-sonnet-4.5': {
+        tier: 'premium',
+        openRouterId: 'anthropic/claude-sonnet-4-5',
+        name: 'Claude Sonnet 4.5',
+        contextWindow: 200000,
+        costPerMillion: { input: 3.00, output: 15.00 },
+        description: 'Anthropic\'s latest Sonnet — best balance'
       }
     };
 
@@ -355,8 +391,20 @@ class ModelProxy {
       };
 
     } catch (error) {
-      // Handle rate limiting with helpful message
+      // Handle rate limiting - auto-retry free models with paid version using OpenRouter credits
       if (error.response?.status === 429) {
+        if (model.endsWith(':free')) {
+          const paidModel = model.replace(':free', '');
+          logger.info(`[OpenRouter] Free model rate-limited, retrying with paid tier: ${paidModel}`);
+          try {
+            return await this.callOpenRouter(paidModel, prompt, temperature, maxTokens);
+          } catch (retryError) {
+            if (retryError.response?.status === 429) {
+              throw new Error(`Rate limited. Try again in a moment or switch to a premium model.`);
+            }
+            throw retryError;
+          }
+        }
         logger.warn(`[OpenRouter] Rate limited on ${model} - may need to wait or use different model`);
         throw new Error(`Rate limited. Try again in a moment or use a different model.`);
       }
@@ -419,6 +467,26 @@ class ModelProxy {
       let buffer = '';
 
       const req = https.request(options, (res) => {
+        if (res.statusCode === 429) {
+          let errorBody = '';
+          res.on('data', chunk => errorBody += chunk);
+          res.on('end', async () => {
+            // Auto-retry with paid version for free models
+            if (model.endsWith(':free')) {
+              const paidModel = model.replace(':free', '');
+              logger.info(`[OpenRouter] Free model rate-limited (stream), retrying with paid tier: ${paidModel}`);
+              try {
+                const result = await this.callOpenRouterStream(paidModel, prompt, temperature, maxTokens, callbacks);
+                resolve(result);
+              } catch (retryErr) {
+                reject(new Error(`Rate limited. Try again in a moment or switch to a premium model.`));
+              }
+              return;
+            }
+            reject(new Error(`Rate limited. Try again in a moment or use a different model.`));
+          });
+          return;
+        }
         if (res.statusCode !== 200) {
           let errorBody = '';
           res.on('data', chunk => errorBody += chunk);

@@ -213,28 +213,70 @@ function registerCommands(context: vscode.ExtensionContext) {
           await licenseManager.deactivateLicense();
           break;
         case 'upgrade':
-          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.dev/pricing'));
+          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ca/pricing'));
           break;
       }
     })
   );
 
-  // Bring‑Your‑Own‑Key (BYOK) command
+  // Bring‑Your‑Own‑Key (BYOK) command — 20+ providers
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.setApiKey', async () => {
-      const provider = await vscode.window.showInputBox({
-        prompt: 'Enter the name of your AI provider (e.g. OpenAI, Anthropic)',
-        placeHolder: 'OpenAI'
+      type ProviderItem = vscode.QuickPickItem & { value: string };
+      const providers: ProviderItem[] = [
+        { label: '$(key) OpenAI',          description: 'GPT-4.1, GPT-4o, o1, o3, Codex',          value: 'OpenAI' },
+        { label: '$(key) Anthropic',       description: 'Claude Sonnet 4.5, Opus 4.5, Haiku',       value: 'Anthropic' },
+        { label: '$(key) OpenRouter',      description: '200+ models via single key (recommended)',  value: 'OpenRouter' },
+        { label: '$(key) Google (Gemini)', description: 'Gemini 2.5 Pro, Flash, Nano',              value: 'Google' },
+        { label: '$(key) Groq',            description: 'Ultra-fast Llama, Mixtral, DeepSeek',       value: 'Groq' },
+        { label: '$(key) DeepSeek',        description: 'DeepSeek V3, R1, R1-Distill',              value: 'DeepSeek' },
+        { label: '$(key) xAI (Grok)',      description: 'Grok 3, Grok 2, Grok Vision',              value: 'xAI' },
+        { label: '$(key) Mistral AI',      description: 'Mistral Large, Codestral, Devstral',        value: 'Mistral' },
+        { label: '$(key) Cohere',          description: 'Command R+, Command A, Embed v4',           value: 'Cohere' },
+        { label: '$(key) Together AI',     description: 'Llama, Mixtral, Qwen via Together',         value: 'TogetherAI' },
+        { label: '$(key) Fireworks AI',    description: 'Fast open-source inference',                value: 'FireworksAI' },
+        { label: '$(key) Perplexity',      description: 'Sonar Pro (online LLMs with search)',       value: 'Perplexity' },
+        { label: '$(key) HuggingFace',     description: 'Open-source model hub (Inference API)',     value: 'HuggingFace' },
+        { label: '$(key) Replicate',       description: 'Open-source model hosting & fine-tunes',    value: 'Replicate' },
+        { label: '$(key) Azure OpenAI',    description: 'Microsoft-hosted OpenAI models',            value: 'AzureOpenAI' },
+        { label: '$(key) AWS Bedrock',     description: 'Claude, Titan, Llama via AWS',              value: 'AWSBedrock' },
+        { label: '$(key) Vertex AI',       description: 'Gemini and more via Google Cloud',          value: 'VertexAI' },
+        { label: '$(key) AI21 Labs',       description: 'Jamba 1.5 Large, Jamba Mini',               value: 'AI21' },
+        { label: '$(key) Qwen (Alibaba)',  description: 'Qwen 2.5, Qwen3, QwQ Coder',               value: 'Qwen' },
+        { label: '$(key) Novita AI',       description: 'Fast Llama, Flux image, open models',       value: 'NovitaAI' },
+        { label: '$(key) Cloudflare AI',   description: 'Edge inference via Cloudflare Workers AI',  value: 'CloudflareAI' },
+        { label: '$(key) Ollama (Local)',  description: 'Self-hosted local models (http://localhost:11434)', value: 'Ollama' },
+        { label: '$(key) LM Studio',       description: 'Local GGUF model server (OpenAI-compatible)', value: 'LMStudio' },
+        { label: '$(key) Other / Custom',  description: 'Enter any provider name manually',          value: '__custom__' }
+      ];
+
+      const selected = await vscode.window.showQuickPick(providers, {
+        placeHolder: 'Select AI provider to configure',
+        title: 'HybridMind BYOK — Bring Your Own Key (24 providers)'
       });
-      if (!provider) return;
+      if (!selected) return;
+
+      let providerName = selected.value;
+      if (providerName === '__custom__') {
+        const custom = await vscode.window.showInputBox({
+          prompt: 'Enter the provider name',
+          placeHolder: 'MyProvider'
+        });
+        if (!custom) return;
+        providerName = custom;
+      }
+
+      const displayName = selected.label.replace('$(key) ', '');
       const key = await vscode.window.showInputBox({
-        prompt: `Enter the API key for ${provider}`,
-        password: true
+        prompt: `Enter your ${displayName} API key`,
+        password: true,
+        placeHolder: providerName === 'OpenAI' ? 'sk-...' : providerName === 'Anthropic' ? 'sk-ant-...' : 'Enter API key'
       });
       if (!key) return;
+
       const lm = LicenseManager.getInstance();
-      await lm.setUserApiKey(provider, key);
-      vscode.window.showInformationMessage('API key saved. HybridMind will use this key for AI calls.');
+      await lm.setUserApiKey(providerName, key);
+      vscode.window.showInformationMessage(`✓ ${displayName} API key saved. HybridMind will route requests through your key.`);
     })
   );
 
@@ -285,7 +327,7 @@ ${tier === 'Free' && parseFloat(stats.percentUsed) > 50 ? '\n💡 **Upgrade to P
           : await vscode.window.showInformationMessage(message, 'OK');
 
         if (action === '💎 Upgrade to Pro') {
-          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.dev/pricing'));
+          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ca/pricing'));
         }
       } catch (error: any) {
         vscode.window.showErrorMessage(`Failed to get usage stats: ${error.message}`);
@@ -524,7 +566,7 @@ async function showLicenseStatus() {
   );
 
   if (action === 'Upgrade to Pro') {
-    vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.dev/pricing'));
+    vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ca/pricing'));
   } else if (action === 'Manage License') {
     vscode.commands.executeCommand('hybridmind.manageLicense');
   }

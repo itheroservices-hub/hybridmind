@@ -165,15 +165,25 @@ async function licenseValidator(req, res, next) {
     String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim() ||
     null;
 
-  // Allow test bypass in NODE_ENV=test only
-  if (
-    process.env.NODE_ENV === 'test' &&
-    process.env.TEST_LICENSE_KEY &&
-    licenseKey === process.env.TEST_LICENSE_KEY
-  ) {
-    req.user = { tier: 'pro', licenseKey };
-    req.tier = 'pro';
-    return next();
+  // ── Dev/test bypass ──────────────────────────────────────────────────────
+  // Only active when NODE_ENV=development or NODE_ENV=test.
+  // Set these keys in .env — they never reach production (NODE_ENV=production
+  // skips this block entirely).
+  if (process.env.NODE_ENV !== 'production') {
+    const testKeys = {
+      [process.env.TEST_KEY_FREE]:       'free',
+      [process.env.TEST_KEY_PRO]:        'pro',
+      [process.env.TEST_KEY_PRO_PLUS]:   'pro-plus',
+      [process.env.TEST_KEY_ENTERPRISE]: 'enterprise',
+      // Legacy single-key support
+      [process.env.TEST_LICENSE_KEY]:    'pro',
+    };
+    const matchedTier = licenseKey ? testKeys[licenseKey] : undefined;
+    if (matchedTier) {
+      req.user = { tier: matchedTier, licenseKey };
+      req.tier = matchedTier;
+      return next();
+    }
   }
 
   if (!licenseKey) {
