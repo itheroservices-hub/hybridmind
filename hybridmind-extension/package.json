@@ -1,11 +1,15 @@
 {
   "name": "hybridmind",
-  "displayName": "HybridMind AI Assistant",
-  "description": "Autonomous AI coding agent with 40+ premium models via OpenRouter. 4-tier pricing (Free, Pro $19, Pro Plus $49, Enterprise). Transparent costs ($0.09-$75/M tokens). Includes o1, Claude 4.5, Gemini 2.5, DeepSeek R1.",
+  "displayName": "HybridMind — Autonomous AI Agent",
+  "description": "v2.0: Fully autonomous multi-agent coding system. HybridMind breaks down complex tasks, writes code, tests it, and iterates — automatically. 200+ AI models (Claude 4.5, GPT-4o, Gemini 2.5, DeepSeek R1), AgentSync with 65 specialist agents, BYOK support, MCP tool integration, and a code sandbox. Free tier available. Pro from $19/mo.",
   "publisher": "hybridmind",
   "version": "2.0.0",
   "license": "MIT",
   "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#0d0d0d",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/itheroservices-hub/hybridmind.git"
@@ -14,18 +18,28 @@
     "vscode": "^1.108.0"
   },
   "categories": [
+    "AI",
     "Machine Learning",
     "Programming Languages",
     "Snippets"
   ],
   "keywords": [
     "ai",
+    "autonomous agent",
+    "multi-agent",
     "artificial intelligence",
     "llm",
     "gpt",
     "claude",
     "gemini",
+    "deepseek",
+    "openrouter",
     "code assistant",
+    "code generation",
+    "agentsync",
+    "byok",
+    "mcp",
+    "copilot",
     "productivity"
   ],
   "main": "./out/extension.js",

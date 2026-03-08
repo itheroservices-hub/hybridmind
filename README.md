@@ -1,243 +1,239 @@
-# HybridMind
+﻿# HybridMind â€” Autonomous AI Agent for VS Code
 
-**v2.0.0 is live!** 🚀 **Autonomous Agent System** - AI agents now break down complex tasks automatically, collaborate on solutions, test their own code, and track progress in real-time. The future of coding is autonomous.
+> **v2.0 is live.** HybridMind now works autonomously â€” it breaks down your task, writes the code, tests it, and iterates until it's done. No prompting required.
 
-A fast, multi‑provider AI coding assistant with a clean workflow and a rock‑solid foundation. HybridMind brings flexible model switching, smart orchestration, and a streamlined developer experience.
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/itheroservices-hub/hybridmind/releases/tag/v2.0.0)
+[![VS Code](https://img.shields.io/badge/VS%20Code-1.108%2B-007ACC)](https://marketplace.visualstudio.com/items?itemName=hybridmind.hybridmind)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![CI](https://github.com/itheroservices-hub/hybridmind/actions/workflows/ci.yml/badge.svg)](https://github.com/itheroservices-hub/hybridmind/actions/workflows/ci.yml)
 
-## 🏗️ Architecture
+---
 
-HybridMind consists of two parts:
-1. **Backend Server** (Node.js API) - Handles AI model orchestration
-2. **VS Code Extension** - User interface in your editor
+## What's New in v2.0
 
-Both must be running for the extension to work.
+| Feature | Description |
+|---|---|
+| **Autonomous Multi-Agent System** | Agents plan, execute, test, and iterate without you stepping in |
+| **Task Decomposition Engine** | Complex goals broken into executable steps automatically |
+| **AgentSync â€” 65 Specialist Agents** | One click to route your task to the right expert agent |
+| **Code Execution Sandbox** | Generated code tested in isolation; errors fix themselves |
+| **200+ AI Models** | Claude 4.5, GPT-4o, Gemini 2.5, DeepSeek R1, Llama 3.3, and more |
+| **BYOK Support** | Bring Your Own Key â€” connect your OpenRouter or direct API keys |
+| **MCP Security Hardening** | Command allowlist, approval tickets, per-key rate limiting, JWT auth |
+| **CI/CD Pipelines** | Auto-build VSIX and GitHub Release on every `v*.*.*` tag push |
 
-## 🚀 Quick Start
+---
 
-### 1. Install VS Code Extension
-Install from [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=hybridmind.hybridmind)
+## Quick Start
 
-### 2. Set Up Backend
+### 1. Install the Extension
+[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=hybridmind.hybridmind)
+
+Or search **HybridMind** in the Extensions panel (`Ctrl+Shift+X`).
+
+### 2. Start the Backend
 ```bash
-# Clone this repository
 git clone https://github.com/itheroservices-hub/hybridmind.git
 cd hybridmind
-
-# Install dependencies
 npm install
-
-# Configure API keys
 cp .env.example .env
-# Edit .env with your API keys
-
-# Start backend server
+# Add your OPENROUTER_API_KEY to .env
 npm start
 ```
 
-**Or use the quick-start scripts:**
-- Windows: `start-backend.bat`
-- Mac/Linux: `./start-backend.sh`
+**Windows shortcut:** `start-hybrid.bat`  
+**Mac/Linux:** `./start-hybrid.sh`
 
-### 3. Use the Extension
-1. Select code in VS Code
-2. Press `Ctrl+Shift+P`
-3. Type "HybridMind" and choose a command
+### 3. Activate Your Plan
+Open Command Palette (`Ctrl+Shift+P`) â†’ **HybridMind: Set API Key (BYOK)**
 
-## � Microsoft 365 Agents Integration
+Free tier works out of the box â€” no license key required.
 
-HybridMind now integrates with **Microsoft 365 Agents Toolkit** via Model Context Protocol (MCP)!
+---
 
-### What You Can Do:
-- 📚 **Query M365 Documentation** - Ask about Teams bots, Office add-ins, declarative agents
-- 📋 **Get Manifest Schemas** - Retrieve and validate app manifest schemas
-- 💻 **Generate M365 Code** - Auto-generate SDK code patterns
-- 🔧 **Troubleshoot Issues** - Debug M365 development problems
+## Architecture
 
-### Quick Start:
+```
+VS Code Extension  â”€â”€â”€â”€â”€â–º  hybridmind-backend (Node.js, port 3000)
+                                    â”‚
+                    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+                    â”‚                               â”‚
+            AgentSync (65 agents)      Python Service (port 8000)
+            specialist routing         AutoGen Â· code sandbox
+                                       task decomposition
+```
+
+| Component | Required | Purpose |
+|---|---|---|
+| `hybridmind-backend/` | âœ… Yes | Core AI orchestration, license validation, MCP |
+| `hybridmind-extension/` | âœ… Yes | VS Code sidebar, inline chat, agent sidebar |
+| `hybridmind-python-service/` | Optional | Code sandbox, AutoGen multi-agent, analytics |
+
+---
+
+## Features
+
+### Autonomous Agent Mode
+HybridMind's planner breaks your goal into steps, picks the best model for each, executes them in sequence, and delivers the result â€” from a single prompt.
+
+```
+You: "Add input validation and unit tests to this API endpoint"
+
+HybridMind:
+  Step 1 [analyze]   â†’ reads your code, identifies missing cases
+  Step 2 [implement] â†’ adds Zod validation to the route
+  Step 3 [test]      â†’ writes Jest tests, runs them in the sandbox
+  Step 4 [review]    â†’ checks edge cases, self-corrects
+  Done âœ“ (42s)
+```
+
+### AgentSync â€” 65 Specialist Agents
+The Agents sidebar routes any task to the right expert automatically:
+
+- `debugging-agent` â€” trace errors to root cause
+- `code-review-agent` â€” full PR-style review
+- `test-generation-agent` â€” write tests for any function
+- `security-qa-agent` â€” OWASP Top 10 scan
+- `documentation-agent` â€” generate docs from code
+- â€¦ and 60 more specialist agents
+
+### 200+ Models via OpenRouter
+
+| Tier | Example Models | Cost |
+|---|---|---|
+| Free | Llama 3.3 70B, Gemini Flash | $0 |
+| Budget | DeepSeek R1, Mistral | ~$0.09â€“$0.50/M tokens |
+| Standard | Claude 3.5 Sonnet, GPT-4o Mini | ~$1â€“$3/M tokens |
+| Premium | Claude 4.5, GPT-4o, Gemini 2.5 Pro | ~$5â€“$75/M tokens |
+
+### Code Execution Sandbox
+Code is run in an isolated Python sandbox. If tests fail, the agent reads the output and fixes its own code â€” up to 3 automatic iterations.
+
+### MCP Tool Integration
+Agents can use Model Context Protocol tools natively:
+- Read/write files in your workspace
+- Run allowlisted terminal commands
+- Web search and memory store
+- Microsoft 365 documentation queries
+
+---
+
+## Pricing
+
+| Plan | Price | Models | Agents |
+|---|---|---|---|
+| **Free** | $0 | Llama 3.3, Gemini Flash | Basic |
+| **Pro** | $19/mo | All 200+ models | Full AgentSync |
+| **Pro Plus** | $49/mo | All models + priority | All features + analytics |
+| **Enterprise** | Custom | Dedicated infra | White-label + SSO |
+
+[Get a license key â†’](https://hybridmind.dev/pricing)
+
+---
+
+## Commands
+
+| Command | Shortcut | Description |
+|---|---|---|
+| Open Chat | `Ctrl+Shift+H` | Main AI chat panel |
+| Inline Chat | `Ctrl+K` | Chat at your cursor |
+| Open Agent Mode | Palette | Autonomous task runner |
+| Run Agent Team | Palette | Multi-agent collaboration |
+| Set API Key (BYOK) | Palette | Connect your OpenRouter key |
+| Explain Code | Right-click | Explain selected code |
+| Review Code | Right-click | Code review |
+| Optimize Code | Right-click | Performance suggestions |
+
+---
+
+## Python Service Setup (Optional)
+
+Required for code sandbox, task decomposition, and tool analytics.
+
 ```bash
-# Test M365 integration
-node test-m365-mcp.js
+cd hybridmind-python-service
+pip install -r requirements.txt
+cp .env.example .env
+# Set OPENROUTER_API_KEY in .env
+python main.py
+```
 
-# Try the demo
+API docs at `http://localhost:8000/docs`
+
+---
+
+## Microsoft 365 Integration
+
+Agents can query M365 documentation via MCP:
+
+```bash
 node demo-m365-agent-creation.js
 ```
 
-### Example Questions:
-- "How do I create a declarative agent for Microsoft 365 Copilot?"
-- "Show me the app manifest schema"
-- "Generate code for a Teams bot using @microsoft/teams-ai"
-- "Why is my Teams manifest validation failing?"
+Ask things like:
+- *"How do I create a declarative agent for Microsoft 365 Copilot?"*
+- *"Generate a Teams bot using @microsoft/teams-ai"*
 
-**📖 Full Documentation:** [M365 Integration Guide](./M365_AGENTS_MCP_INTEGRATION.md) | [Quick Reference](./M365_QUICK_REFERENCE.md)
-## 🎯🐍 Hybrid Architecture - Node.js + Python
+Full guide: [M365 Integration Guide](./M365_AGENTS_MCP_INTEGRATION.md)
 
-**NEW!** HybridMind now features a true hybrid architecture - combining JavaScript speed with Python AI power!
+---
 
-### Why Hybrid?
-- ⚡ **Fast** - Simple tasks handled by Node.js agents (4000+ lines)
-- 🧠 **Powerful** - Complex AI tasks routed to Python AutoGen
-- 🎯 **Intelligent** - Automatic routing based on task complexity
-- 🔄 **Resilient** - Falls back to Node.js if Python unavailable
+## Development
 
-### Quick Start:
 ```bash
-# Install Python service
-cd hybridmind-python-service
-pip install -r requirements.txt
+# Run tests
+npm test
 
-# Configure (use same OpenRouter key as Node.js)
-cp .env.example .env
-# Edit .env: OPENROUTER_API_KEY=your-key-here
+# Build extension VSIX
+cd hybridmind-extension && npm run package
 
-# Enable in backend
-# Edit hybridmind-backend/.env: ENABLE_PYTHON_SERVICE=true
-
-# Start both services
-start-hybrid.bat  # Windows
-# or
-./start-hybrid.sh  # Linux/Mac
-
-# Test integration
-node test-hybrid-architecture.js
+# Watch mode
+npm run dev
 ```
 
-### What Gets Routed to Python?
-- Complex code generation (>500 lines)
-- Architecture design
-- Multi-step reasoning
-- Code review with deep analysis
-- Tasks marked with `context.preferPython = true`
+CI triggers on push to `main`, `fix/*`, `feature/*` branches.  
+Release workflow triggers on `v*.*.*` tags â†’ builds VSIX + creates GitHub Release automatically.
 
-### Python Service Features:
-- 🤖 **4 Specialized Agents**: Code Generator, Code Reviewer, Architect, Reasoner
-- 👥 **Team Collaboration**: Multi-agent workflows
-- 🌐 **Multi-Provider**: OpenRouter, OpenAI, or Ollama (free!)
-- � **MCP Tools**: Agents can use filesystem, terminal, web search, memory, M365 docs
-- 📡 **REST API**: http://localhost:8000/docs
+---
 
-### 🔧 NEW: MCP Tools Integration
-Python agents can now use all MCP tools:
-```python
-# Agents can automatically:
-- Read/write files in workspace
-- Execute terminal commands
-- Search the web
-- Store/retrieve knowledge
-- Query M365 documentation
+## Repository Structure
+
+```
+hybridmind/
+â”œâ”€â”€ hybridmind-backend/        # Node.js API server
+â”‚   â”œâ”€â”€ middleware/            # licenseValidator, rateLimiter, MCP auth
+â”‚   â”œâ”€â”€ routes/                # agent, mcp, agentSync routes
+â”‚   â””â”€â”€ services/agents/       # planner, executor, AgentSync client
+â”œâ”€â”€ hybridmind-extension/      # VS Code extension (TypeScript)
+â”‚   â””â”€â”€ src/
+â”‚       â”œâ”€â”€ views/             # agentSidebarProvider, chat webview
+â”‚       â”œâ”€â”€ auth/              # licenseManager, BYOK
+â”‚       â””â”€â”€ mcp/               # MCP server registry
+â”œâ”€â”€ hybridmind-python-service/ # Python AutoGen service
+â”‚   â”œâ”€â”€ task_decomposition.py
+â”‚   â”œâ”€â”€ code_execution.py
+â”‚   â”œâ”€â”€ multi_agent_coordination.py
+â”‚   â””â”€â”€ tool_analytics.py
+â”œâ”€â”€ Hybrid-Mind-landingpage/   # React + Stripe landing page
+â”œâ”€â”€ .github/workflows/         # ci.yml + release.yml
+â””â”€â”€ AgentSync/                 # 65-agent orchestration system
 ```
 
-Test tools integration:
-```bash
-python test-mcp-tools-integration.py
-```
+---
 
-**📖 Full Documentation:** [Hybrid Architecture Guide](./HYBRID_ARCHITECTURE.md) | [Quick Start](./HYBRID_QUICK_START.md) | [MCP Tools Integration](./MCP_TOOLS_INTEGRATION.md)
-### 🚀 NEW: Advanced Python Agent Features
+## Links
 
-HybridMind's Python agents now have 4 powerful advanced features:
+- [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=hybridmind.hybridmind)
+- [Changelog v2.0.0](./CHANGELOG_v2.0.0.md)
+- [Advanced Features Guide](./ADVANCED_FEATURES.md)
+- [MCP Tools Integration](./MCP_TOOLS_INTEGRATION.md)
+- [M365 Integration Guide](./M365_AGENTS_MCP_INTEGRATION.md)
+- [OpenRouter Setup](./OPENROUTER_SETUP.md)
+- [AutoGen Guide](./AUTOGEN_GUIDE.md)
 
-#### 1. 🔒 Code Execution Sandbox
-Agents test their generated code automatically and iterate until it works!
-```bash
-# Agent generates code, tests it, fixes bugs automatically
-POST /agent/execute-with-sandbox
-{
-  "task": "Create fibonacci function",
-  "max_iterations": 3,
-  "use_team_review": true  // Multiple agents review code
-}
-```
+---
 
-#### 2. 🤝 Multi-Agent Coordination
-Multiple agents collaborate on complex tasks:
-- **Sequential Pipeline**: Research → Architecture → Code → Review
-- **Parallel Exploration**: Try multiple approaches, pick the best
-- **Collaborative Debugging**: Team debugs code together
-```bash
-# Agents collaborate to solve complex problems
-POST /agent/coordinated-pipeline
-POST /agent/parallel-explore
-POST /agent/collaborative-debug
-```
+## License
 
-#### 3. 📊 Tool Usage Analytics
-Track which tools agents use most, success rates, and performance:
-```bash
-# Get insights on agent tool usage
-GET /analytics/comprehensive-report
-GET /analytics/tool-usage
-```
+MIT © [IThero Services](https://github.com/itheroservices-hub)
 
-#### 4. 🛠️ Custom Tools
-Easily add domain-specific tools for your use case:
-```bash
-# Register custom tools
-POST /tools/register-custom
-{
-  "name": "validate_credit_card",
-  "description": "Validate credit cards",
-  "code": "def validate_credit_card(num): ...",
-  "category": "validation"
-}
-
-# Use with agents
-POST /agent/execute-with-custom-tools
-```
-
-**Test Advanced Features:**
-```bash
-python test-advanced-features.py
-```
-
-**📖 Full Documentation:** [Advanced Features Guide](./ADVANCED_FEATURES.md) | [Quick Reference](./ADVANCED_FEATURES_QUICK_REFERENCE.md)
-### 🎯 NEW: Task Decomposition System
-
-AI agents automatically break down complex tasks into trackable subtasks!
-
-**What it does:**
-- 🔍 **Analyzes** your complex task
-- 📋 **Breaks down** into manageable subtasks
-- 📊 **Tracks** progress automatically
-- 🤖 **Executes** subtasks with appropriate agents
-- 🔗 **Manages** dependencies between subtasks
-
-**Quick Start:**
-```bash
-# 1. Decompose complex task
-curl -X POST http://localhost:8000/task/decompose \
-  -d '{"task": "Build a REST API for a blog platform"}'
-
-# 2. Execute subtasks automatically
-curl -X POST http://localhost:8000/task/TASK_ID/execute-all
-
-# Done! AI completes your entire task ✨
-```
-
-**Example Workflow:**
-```
-Your Task: "Build user authentication system"
-           ↓
-AI Creates: 1. Design database schema
-            2. Implement user registration
-            3. Add login/logout  
-            4. Create JWT tokens
-            5. Add password reset
-           ↓
-  AI Executes Each Subtask Automatically!
-```
-
-**Perfect For:**
-- 📦 Complex feature implementations
-- 🏗️ Multi-step projects
-- 📚 Learning workflows
-- 🔧 Refactoring tasks
-- 🐛 Systematic debugging
-
-**Test Task Decomposition:**
-```bash
-python test-task-decomposition.py
-```
-
-**📖 Full Documentation:** [Task Decomposition Guide](./TASK_DECOMPOSITION.md) | [Quick Reference](./TASK_DECOMPOSITION_QUICK_REFERENCE.md)
-## �📚 Documentation
-See [Extension README](hybridmind-extension/README.md) for full documentation.
