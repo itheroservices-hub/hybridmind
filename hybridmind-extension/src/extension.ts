@@ -20,7 +20,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize license manager
   licenseManager = LicenseManager.getInstance();
-
   // Initialize usage tracker
   usageTracker = new UsageTracker();
   context.subscriptions.push(usageTracker.getStatusBarItem());
@@ -84,6 +83,11 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, sidebarProvider)
   );
+
+  // Verify license and refresh UI once resolved
+  licenseManager.verifyLicense().then(() => {
+    sidebarProvider.refreshTier();
+  }).catch(() => {/* silent */});
 
   // Register agent manager sidebar view
   const agentProvider = new AgentSidebarProvider(context.extensionUri);
@@ -388,32 +392,6 @@ ${tier === 'Free' && parseFloat(stats.percentUsed) > 50 ? '\n💡 **Upgrade to P
 
   // Agentic command ids like fixBugs are registered via registerAgenticCommands.
 
-  // Quick Chat - keeping for compatibility
-  context.subscriptions.push(
-    vscode.commands.registerCommand('hybridmind.quickChat', async () => {
-      const prompt = await vscode.window.showInputBox({
-        prompt: 'Ask anything...',
-        placeHolder: 'What would you like to know?'
-      });
-
-      if (!prompt) return;
-
-      const models = await getAvailableModels();
-      if (models.length === 0) {
-        vscode.window.showErrorMessage('No models available. Please configure API keys.');
-        return;
-      }
-
-      const modelChoice = await vscode.window.showQuickPick(
-        models.map(m => ({ label: m.name, model: m.id })),
-        { placeHolder: 'Select a model' }
-      );
-
-      if (!modelChoice) return;
-
-      await runPrompt(modelChoice.model, prompt);
-    })
-  );
 }
 
 async function getAvailableModels(): Promise<any[]> {

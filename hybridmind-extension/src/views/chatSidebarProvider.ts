@@ -1300,6 +1300,13 @@ If CLEAR, respond with: CLEAR`,
     }
   }
 
+  /** Called after license verification resolves to re-render the UI with the correct tier. */
+  public refreshTier() {
+    if (this._view) {
+      this._view.webview.html = this._getHtmlForWebview(this._view.webview);
+    }
+  }
+
   private _insertCodeAtCursor(code: string) {
     const editor = vscode.window.activeTextEditor;
     if (editor) {
