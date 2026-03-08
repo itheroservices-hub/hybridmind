@@ -42,6 +42,15 @@ export class LicenseManager {
     this.licenseKey = config.get('licenseKey') || null;
     this.userApiKey = config.get('userApiKey') || null;
     this.userApiProvider = config.get('userApiProvider') || null;
+
+    // Optimistically set tier from the key so isPro() is correct synchronously.
+    // The async verifyLicense() call will confirm or downgrade if the key is invalid.
+    if (this.licenseKey) {
+      const k = this.licenseKey.toLowerCase();
+      if (k.includes('enterprise')) { this.tier = 'enterprise'; }
+      else if (k.includes('proplus') || k.includes('pro-plus') || k.includes('pro_plus')) { this.tier = 'pro-plus'; }
+      else { this.tier = 'pro'; }
+    }
   }
 
   async verifyLicense(key?: string): Promise<LicenseStatus> {
