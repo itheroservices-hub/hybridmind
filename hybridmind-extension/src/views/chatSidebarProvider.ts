@@ -298,18 +298,18 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           }
         };
       } else {
-        // Single model mode — include conversation history for context
+        // Single model mode — send full conversation history as messages array
         endpoint = '/run/single';
-        const historyForContext = this._messages
-          .slice(-10)
+        const historyMessages = this._messages
           .filter(m => m.role === 'user' || m.role === 'assistant')
-          .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.substring(0, 500)}`)
-          .join('\n');
+          .slice(-20)
+          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+        // Append current user message
+        historyMessages.push({ role: 'user', content: userMessage });
         requestBody = {
           model: selectedModels[0],
-          prompt: historyForContext
-            ? `Previous conversation:\n${historyForContext}\n\nUser: ${userMessage}`
-            : userMessage
+          prompt: userMessage,  // kept for backward compat with other call sites
+          messages: historyMessages
         };
       }
 

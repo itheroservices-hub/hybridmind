@@ -41,12 +41,13 @@ class RunController {
    */
   async executeSingle(req, res, next) {
     try {
-      const { model, prompt, code, temperature, maxTokens, userId } = req.body;
+      const { model, prompt, messages, code, temperature, maxTokens, userId } = req.body;
 
       logger.info(`Executing single model: ${model}`);
 
       // Route through model proxy (uses YOUR API keys)
-      const result = await modelProxy.call(model || 'llama-3.3-70b', prompt, {
+      const result = await modelProxy.call(model || 'llama-3.3-70b', prompt || '', {
+        messages,
         code,
         temperature,
         maxTokens,

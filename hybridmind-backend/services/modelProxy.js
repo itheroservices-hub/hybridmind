@@ -314,7 +314,7 @@ class ModelProxy {
    * Supports both streaming and non-streaming modes
    */
   async call(modelId, prompt, options = {}) {
-    const { temperature = 0.7, maxTokens = 4096, code = '', userId, stream = false, onToken, onThinking } = options;
+    const { temperature = 0.7, maxTokens = 4096, code = '', userId, stream = false, onToken, onThinking, messages = null } = options;
     const modelConfig = this.getModelConfig(modelId);
     const userTierRaw = await this.getUserTier(userId);
     const userTier = userTierRaw === 'pro-plus' ? 'proplus' : userTierRaw;
@@ -330,7 +330,22 @@ class ModelProxy {
     // Build full prompt with code context
     const fullPrompt = code ? `${prompt}\n\nCode:\n${code}` : prompt;
 
-    logger.info(`[OpenRouter] Calling ${modelId} -> ${modelConfig.openRouterId}${stream ? ' (streaming)' : ''}`);
+    // Build messages array: use provided history or fall back to single-turn
+    let messagesArray = null;
+    if (messages && messages.length > 0) {
+      // If code context exists, append it to the last user message
+      if (code) {
+        const last = messages[messages.length - 1];
+        messagesArray = [
+          ...messages.slice(0, -1),
+          { role: last.role, content: `${last.content}\n\nCode:\n${code}` }
+        ];
+      } else {
+        messagesArray = messages;
+      }
+    }
+
+    logger.info(`[OpenRouter] Calling ${modelId} -> ${modelConfig.openRouterId}${stream ? ' (streaming)' : ''}${messagesArray ? ` (${messagesArray.length} messages)` : ''}`);
 
     if (stream) {
       return await this.callOpenRouterStream(
@@ -338,17 +353,17 @@ class ModelProxy {
         fullPrompt, 
         temperature, 
         maxTokens,
-        { onToken, onThinking, modelId }
+        { onToken, onThinking, modelId, messages: messagesArray }
       );
     }
 
-    return await this.callOpenRouter(modelConfig.openRouterId, fullPrompt, temperature, maxTokens);
+    return await this.callOpenRouter(modelConfig.openRouterId, fullPrompt, temperature, maxTokens, messagesArray);
   }
 
   /**
    * Call OpenRouter API - single unified method for ALL models
    */
-  async callOpenRouter(model, prompt, temperature, maxTokens) {
+  async callOpenRouter(model, prompt, temperature, maxTokens, messages = null) {
     if (!this.apiKey) {
       throw new Error('OPENROUTER_API_KEY not configured');
     }
@@ -358,7 +373,7 @@ class ModelProxy {
         `${OPENROUTER_BASE_URL}/chat/completions`,
         {
           model,
-          messages: [{ role: 'user', content: prompt }],
+          messages: messages || [{ role: 'user', content: prompt }],
           temperature,
           max_tokens: maxTokens
         },
@@ -397,7 +412,7 @@ class ModelProxy {
           const paidModel = model.replace(':free', '');
           logger.info(`[OpenRouter] Free model rate-limited, retrying with paid tier: ${paidModel}`);
           try {
-            return await this.callOpenRouter(paidModel, prompt, temperature, maxTokens);
+            return await this.callOpenRouter(paidModel, prompt, temperature, maxTokens, messages);
           } catch (retryError) {
             if (retryError.response?.status === 429) {
               throw new Error(`Rate limited. Try again in a moment or switch to a premium model.`);
@@ -433,7 +448,7 @@ class ModelProxy {
    * Emits tokens and thinking/reasoning as they arrive
    */
   async callOpenRouterStream(model, prompt, temperature, maxTokens, callbacks = {}) {
-    const { onToken, onThinking, modelId } = callbacks;
+    const { onToken, onThinking, modelId, messages = null } = callbacks;
     
     if (!this.apiKey) {
       throw new Error('OPENROUTER_API_KEY not configured');
@@ -442,7 +457,7 @@ class ModelProxy {
     return new Promise((resolve, reject) => {
       const postData = JSON.stringify({
         model,
-        messages: [{ role: 'user', content: prompt }],
+        messages: messages || [{ role: 'user', content: prompt }],
         temperature,
         max_tokens: maxTokens,
         stream: true
