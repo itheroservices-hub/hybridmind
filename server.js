@@ -67,6 +67,7 @@ const corsOptions = {
     'Content-Type',
     'Authorization',
     'x-license-key',
+    'X-License-Key',
     'x-agent-id',
     'x-project-id',
     'x-mcp-approval',
@@ -94,6 +95,32 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     environment: environment.nodeEnv
   });
+});
+
+// License verification — used by the VS Code extension to validate keys
+// (including dev test keys from .env when NODE_ENV=development)
+app.post('/license/verify', (req, res) => {
+  const licenseKey = (req.body?.licenseKey || '').trim();
+  if (!licenseKey) {
+    return res.json({ valid: false, tier: 'free' });
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    const testKeys = {
+      [process.env.TEST_KEY_FREE]:       'free',
+      [process.env.TEST_KEY_PRO]:        'pro',
+      [process.env.TEST_KEY_PRO_PLUS]:   'pro-plus',
+      [process.env.TEST_KEY_ENTERPRISE]: 'enterprise',
+      [process.env.TEST_LICENSE_KEY]:    'pro',
+    };
+    const tier = testKeys[licenseKey];
+    if (tier) {
+      return res.json({ valid: true, tier });
+    }
+  }
+
+  // Production: forward to real license API (not yet live, return free)
+  return res.json({ valid: false, tier: 'free' });
 });
 
 // 💰 COST MONITORING ENDPOINT (Pro/Pro-Plus/Enterprise only, requires ADMIN_SECRET)

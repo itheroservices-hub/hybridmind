@@ -305,6 +305,16 @@
           "type": "boolean",
           "default": true,
           "description": "Show tier badges on model selectors"
+        },
+        "hybridmind.userApiProvider": {
+          "type": "string",
+          "default": "",
+          "description": "BYOK: The AI provider name for your own API key (e.g. OpenAI, Anthropic, OpenRouter)"
+        },
+        "hybridmind.userApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "BYOK: Your personal API key for the selected provider. Stored in VS Code user settings."
         }
       }
     }

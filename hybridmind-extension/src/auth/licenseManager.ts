@@ -57,7 +57,7 @@ export class LicenseManager {
     }
 
     try {
-      const response = await fetch('https://api.hybridmind.dev/v1/license/verify', {
+      const response = await fetch('http://localhost:3000/license/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ licenseKey: licenseToVerify })
