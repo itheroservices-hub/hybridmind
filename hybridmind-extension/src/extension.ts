@@ -3,7 +3,6 @@ import { startEmbeddedServer, stopEmbeddedServer } from './embeddedServer';
 import { ChatPanel } from './views/chatPanel';
 import { ChatSidebarProvider } from './views/chatSidebarProvider';
 import { InlineChatProvider } from './views/inlineChatProvider';
-import { AgentSidebarProvider } from './views/agentSidebarProvider';
 import { LicenseManager } from './auth/licenseManager';
 import { AgentConfig } from './agents/agentConfig';
 import { registerAgenticCommands } from './commands/agenticCommands';
@@ -88,12 +87,6 @@ export async function activate(context: vscode.ExtensionContext) {
   licenseManager.verifyLicense().then(() => {
     sidebarProvider.refreshTier();
   }).catch(() => {/* silent */});
-
-  // Register agent manager sidebar view
-  const agentProvider = new AgentSidebarProvider(context.extensionUri);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(AgentSidebarProvider.viewType, agentProvider)
-  );
 
   // Register inline chat provider
   inlineChatProvider = new InlineChatProvider(serverPort);

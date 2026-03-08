@@ -126,36 +126,108 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           await this._handleSendMessage(data.task, data.models, 'agentic', true);
           break;
         case 'openUpgrade':
-          // Open upgrade page in browser
-          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ca/pricing'));
+          vscode.env.openExternal(vscode.Uri.parse('https://hybridmind.ca'));
           break;
         case 'executeNextStep':
-          // Execute a suggested next step
           await this._handleNextStep(data.stepId, data.models);
           break;
         case 'viewDiff':
-          // View diff for a specific file change
           await this._viewFileDiff(data.filePath);
           break;
         case 'acceptChanges':
-          // Accept all file changes
           this._acceptAllChanges();
           break;
         case 'rejectChanges':
-          // Reject all file changes
           await this._rejectAllChanges();
           break;
         case 'killRalphLoop':
           await this._killRalphLoop();
           break;
         case 'openByok':
-          vscode.commands.executeCommand('hybridmind.setApiKey');
+          // Toggle inline BYOK panel in the webview
+          this._view?.webview.postMessage({ type: 'toggleByokPanel' });
+          break;
+        case 'saveApiKey':
+          await this._handleSaveApiKey(data.provider, data.key);
+          break;
+        case 'verifyApiKey':
+          await this._handleVerifyApiKey(data.provider, data.key);
           break;
         case 'openAgentPicker':
-          vscode.commands.executeCommand('hybridmind.openAgentSidebar');
+          await this._handleAddAgent();
+          break;
+        case 'removeAgent':
+          // Agent chip removal is handled entirely in the webview
           break;
       }
     });
+  }
+
+  /** Show a QuickPick of the agent catalog and post the selection back into the webview. */
+  private async _handleAddAgent() {
+    const catalog = [
+      { label: '🐛 Bug Hunter',       id: 'bug-hunter',            description: 'Finds & explains bugs in your code' },
+      { label: '💻 Code Generator',   id: 'code-generator',        description: 'Writes complete, production-ready code' },
+      { label: '🔧 Refactoring',      id: 'refactoring',           description: 'Cleans up and restructures existing code' },
+      { label: '🗺 Strategic Planner', id: 'strategic-planner',     description: 'Breaks complex tasks into step-by-step plans' },
+      { label: '🔬 Research Agent',   id: 'research-synthesizer',  description: 'Researches and synthesises technical answers' },
+      { label: '⚖️ Evaluator',        id: 'critical-evaluator',    description: 'Critically reviews plans and code for flaws' },
+      { label: '🧠 Memory Curator',   id: 'memory-curator',        description: 'Tracks context across long conversations' },
+      { label: '✅ Logic Verifier',   id: 'logic-verifier',        description: 'Verifies correctness of logic and algorithms' },
+      { label: '🎭 Scenario Sim',     id: 'scenario-simulation',   description: 'Simulates edge cases and what-if scenarios' },
+      { label: '🔒 Constraints',      id: 'constraint-solver',     description: 'Identifies and resolves constraints in a design' },
+      { label: '📋 Documenter',       id: 'documenter',            description: 'Writes clear docs, README files, and comments' },
+      { label: '🔐 Security Auditor', id: 'security-auditor',      description: 'Checks code for security vulnerabilities' },
+      { label: '⚡ Performance Guru', id: 'perf-optimizer',        description: 'Finds and fixes performance bottlenecks' },
+      { label: '🧪 Test Writer',      id: 'test-writer',           description: 'Generates comprehensive unit and integration tests' },
+    ];
+
+    const picked = await vscode.window.showQuickPick(catalog, {
+      placeHolder: 'Select an agent to add to your session',
+      title: 'HybridMind — Add Agent'
+    });
+
+    if (picked) {
+      this._view?.webview.postMessage({
+        type: 'agentAdded',
+        id: picked.id,
+        label: picked.label
+      });
+    }
+  }
+
+  /** Save a BYOK API key from the inline panel. */
+  private async _handleSaveApiKey(provider: string, key: string) {
+    if (!provider || !key) {
+      this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: 'Provider and key are required.' });
+      return;
+    }
+    await this._licenseManager.setUserApiKey(provider, key);
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'saved', message: `✅ ${provider} API key saved. Requests will route through your key.` });
+  }
+
+  /** Verify a BYOK API key by making a test call. */
+  private async _handleVerifyApiKey(provider: string, key: string) {
+    if (!provider || !key) {
+      this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: 'Enter provider and key first.' });
+      return;
+    }
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: '⏳ Verifying key…' });
+    try {
+      const response = await fetch('http://localhost:3000/run/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Api-Provider': provider, 'X-User-Api-Key': key },
+        body: JSON.stringify({ model: 'llama-3.3-70b', prompt: 'Reply with only the word OK', maxTokens: 5 })
+      });
+      if (response.ok) {
+        this._view?.webview.postMessage({ type: 'byokStatus', status: 'verified', message: `✅ Key verified! ${provider} is working correctly.` });
+      } else {
+        const err = await response.text();
+        this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `❌ Verification failed (${response.status}): ${err.substring(0, 120)}` });
+      }
+    } catch (e: any) {
+      this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `❌ Could not reach backend: ${e.message}` });
+    }
   }
 
   private async _handleSendMessage(userMessage: string, models?: string[], workflow?: string, includeContext?: boolean, isDirectExecution?: boolean) {
@@ -1892,7 +1964,13 @@ Respond with ONLY one word: simple, moderate, or complex`,
     }
     .agent-chip:hover { background: rgba(11, 106, 118, 0.18); border-color: #0b6a76; }
     .agent-chip.active-agent { background: rgba(11, 106, 118, 0.28); border-color: #0b6a76; color: #0b6a76; font-weight: 600; }
-    .agent-chips-wrap { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 12px 8px; }
+    .chip-remove {
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; line-height: 1; margin-left: 2px; padding: 0 1px;
+      opacity: 0.5; transition: opacity 0.1s;
+    }
+    .chip-remove:hover { opacity: 1; color: var(--vscode-errorForeground); }
+    .agent-chips-wrap { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 12px 4px; }
     .agents-actions { display: flex; gap: 6px; padding: 0 12px 8px; }
     .agents-actions button { font-size: 10px; padding: 3px 8px; border-radius: 5px;
       background: rgba(11, 106, 118, 0.1); border: 1px solid rgba(11, 106, 118, 0.3);
@@ -2041,7 +2119,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     </select>
   </div>
 
-  <!-- Agents — Inline Section -->
+  <!-- Agents — Embedded AgentSync Section -->
   <div class="config-section">
     <div class="config-header" id="agentsHeader">
       <span>🤖 Agents <span class="tier-badge" style="background:rgba(11,106,118,0.15);color:#0b6a76;padding:1px 6px;border-radius:6px;font-size:9px;">AgentSync</span></span>
@@ -2049,27 +2127,63 @@ Respond with ONLY one word: simple, moderate, or complex`,
     </div>
     <div class="config-content" id="agentsContent">
       <div class="agent-chips-wrap" id="agentChipsWrap">
-        <span class="agent-chip" data-id="bug-hunter">🐛 Bug Hunter</span>
-        <span class="agent-chip" data-id="code-generator">💻 Code Gen</span>
-        <span class="agent-chip" data-id="refactoring">🔧 Refactor</span>
-        <span class="agent-chip" data-id="strategic-planner">🗺 Planner</span>
-        <span class="agent-chip" data-id="research-synthesizer">🔬 Research</span>
-        <span class="agent-chip" data-id="critical-evaluator">⚖️ Evaluator</span>
-        <span class="agent-chip" data-id="memory-curator">🧠 Memory</span>
-        <span class="agent-chip" data-id="logic-verifier">✅ Verifier</span>
-        <span class="agent-chip" data-id="scenario-simulation">🎭 Scenario</span>
-        <span class="agent-chip" data-id="constraint-solver">🔒 Constraints</span>
+        <span class="agent-chip removable" data-id="bug-hunter">🐛 Bug Hunter <span class="chip-remove" data-id="bug-hunter">×</span></span>
+        <span class="agent-chip removable" data-id="code-generator">💻 Code Gen <span class="chip-remove" data-id="code-generator">×</span></span>
+        <span class="agent-chip removable" data-id="refactoring">🔧 Refactor <span class="chip-remove" data-id="refactoring">×</span></span>
+        <span class="agent-chip removable" data-id="strategic-planner">🗺 Planner <span class="chip-remove" data-id="strategic-planner">×</span></span>
+        <span class="agent-chip removable" data-id="research-synthesizer">🔬 Research <span class="chip-remove" data-id="research-synthesizer">×</span></span>
+        <span class="agent-chip removable" data-id="critical-evaluator">⚖️ Evaluator <span class="chip-remove" data-id="critical-evaluator">×</span></span>
+        <span class="agent-chip removable" data-id="memory-curator">🧠 Memory <span class="chip-remove" data-id="memory-curator">×</span></span>
+        <span class="agent-chip removable" data-id="logic-verifier">✅ Verifier <span class="chip-remove" data-id="logic-verifier">×</span></span>
+        <span class="agent-chip removable" data-id="scenario-simulation">🎭 Scenario <span class="chip-remove" data-id="scenario-simulation">×</span></span>
+        <span class="agent-chip removable" data-id="constraint-solver">🔒 Constraints <span class="chip-remove" data-id="constraint-solver">×</span></span>
       </div>
+      <div style="font-size:9px;color:var(--vscode-descriptionForeground);padding:0 4px 4px;">Click a chip to activate its persona. ✕ to remove.</div>
       <div class="agents-actions">
-        <button id="agentByokBtn">🔑 Set API Key (BYOK)</button>
-        <button id="agentAddBtn">+ Add agent</button>
+        <button id="agentByokBtn" title="Configure your own API key">🔑 API Key (BYOK)</button>
+        <button id="agentAddBtn" title="Add agent from catalog">＋ Add Agent</button>
+      </div>
+
+      <!-- Inline BYOK Panel -->
+      <div id="byokPanel" style="display:none; padding:8px; border:1px solid var(--vscode-panel-border); border-radius:6px; margin-top:8px; background:var(--vscode-input-background);">
+        <div style="font-size:11px; font-weight:600; margin-bottom:6px;">🔑 Bring Your Own Key</div>
+        <select id="byokProvider" style="width:100%; margin-bottom:6px; padding:4px 6px; font-size:11px; background:var(--vscode-input-background); color:var(--vscode-input-foreground); border:1px solid var(--vscode-input-border); border-radius:4px;">
+          <option value="">Select provider…</option>
+          <option value="OpenAI">OpenAI (GPT-4.1, o1, Codex)</option>
+          <option value="Anthropic">Anthropic (Claude Sonnet/Opus)</option>
+          <option value="OpenRouter">OpenRouter (200+ models)</option>
+          <option value="Google">Google (Gemini 2.5 Pro)</option>
+          <option value="Groq">Groq (Ultra-fast Llama)</option>
+          <option value="DeepSeek">DeepSeek (V3, R1)</option>
+          <option value="xAI">xAI (Grok 3)</option>
+          <option value="Mistral">Mistral AI (Devstral)</option>
+          <option value="Cohere">Cohere (Command R+)</option>
+          <option value="TogetherAI">Together AI</option>
+          <option value="FireworksAI">Fireworks AI</option>
+          <option value="Perplexity">Perplexity (Sonar)</option>
+          <option value="HuggingFace">HuggingFace (Inference API)</option>
+          <option value="Replicate">Replicate</option>
+          <option value="AzureOpenAI">Azure OpenAI</option>
+          <option value="AWSBedrock">AWS Bedrock</option>
+          <option value="VertexAI">Vertex AI (Google Cloud)</option>
+          <option value="Ollama">Ollama (Local)</option>
+          <option value="LMStudio">LM Studio (Local)</option>
+          <option value="Custom">Other / Custom</option>
+        </select>
+        <input id="byokKey" type="password" placeholder="Enter API key…" style="width:100%; margin-bottom:6px; padding:4px 6px; font-size:11px; background:var(--vscode-input-background); color:var(--vscode-input-foreground); border:1px solid var(--vscode-input-border); border-radius:4px; box-sizing:border-box;" />
+        <div style="display:flex; gap:6px; margin-bottom:6px;">
+          <button id="byokSaveBtn" style="flex:1; padding:4px; font-size:11px; background:var(--vscode-button-background); color:var(--vscode-button-foreground); border:none; border-radius:4px; cursor:pointer;">💾 Save</button>
+          <button id="byokVerifyBtn" style="flex:1; padding:4px; font-size:11px; background:rgba(11,106,118,0.2); color:var(--vscode-foreground); border:1px solid rgba(11,106,118,0.4); border-radius:4px; cursor:pointer;">✓ Verify</button>
+        </div>
+        <div id="byokStatus" style="font-size:10px; min-height:14px; color:var(--vscode-descriptionForeground);"></div>
       </div>
     </div>
   </div>
 
-  <div class="config-section" id="autonomySection" style="display: none;">
+  <!-- Autonomy & Permissions Section (always visible, collapsed by default) -->
+  <div class="config-section" id="autonomySection">
     <div class="config-header" id="autonomyHeader">
-      <span>⚙️ Autonomy Settings</span>
+      <span>⚙️ Autonomy &amp; Permissions</span>
       <span class="collapse-icon">▼</span>
     </div>
     <div class="config-content" id="autonomyContent">
@@ -2125,7 +2239,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
       </div>
     </div>
   </div>
-  
+
   <div class="toolbar">
     <button class="toolbar-button" id="clearButton">🗑️ Clear Chat</button>
     <button class="toolbar-button" id="contextButton">📎 Include Selection</button>
@@ -2272,18 +2386,56 @@ Respond with ONLY one word: simple, moderate, or complex`,
     updateRateTracker();
     setInterval(updateRateTracker, 30000);
 
-    // ── Agents Inline Section ─────────────────────────────────────────────────
-    const agentChips = document.querySelectorAll('.agent-chip');
-    agentChips.forEach(chip => {
-      chip.addEventListener('click', () => {
-        chip.classList.toggle('active-agent');
+    // ── Agents Inline Section (Embedded AgentSync) ───────────────────────────
+    let activeAgents = new Set(); // active agent IDs whose persona will be prepended
+
+    function bindAgentChips() {
+      document.querySelectorAll('.agent-chip').forEach(chip => {
+        chip.addEventListener('click', (e) => {
+          // Ignore clicks on the × remove button
+          if ((e.target as Element).classList.contains('chip-remove')) return;
+          const id = (chip as HTMLElement).dataset.id || '';
+          if (activeAgents.has(id)) {
+            activeAgents.delete(id);
+            chip.classList.remove('active-agent');
+          } else {
+            activeAgents.add(id);
+            chip.classList.add('active-agent');
+          }
+        });
       });
-    });
+      document.querySelectorAll('.chip-remove').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = (btn as HTMLElement).dataset.id || '';
+          const chip = document.querySelector('.agent-chip[data-id="' + id + '"]');
+          if (chip) chip.remove();
+          activeAgents.delete(id);
+        });
+      });
+    }
+    bindAgentChips();
+
+    // BYOK panel toggle
     document.getElementById('agentByokBtn')?.addEventListener('click', () => {
       vscode.postMessage({ type: 'openByok' });
     });
+
+    // Add Agent — opens VS Code QuickPick via extension host
     document.getElementById('agentAddBtn')?.addEventListener('click', () => {
       vscode.postMessage({ type: 'openAgentPicker' });
+    });
+
+    // BYOK panel save & verify
+    document.getElementById('byokSaveBtn')?.addEventListener('click', () => {
+      const provider = (document.getElementById('byokProvider') as HTMLSelectElement)?.value || '';
+      const key = (document.getElementById('byokKey') as HTMLInputElement)?.value || '';
+      vscode.postMessage({ type: 'saveApiKey', provider, key });
+    });
+    document.getElementById('byokVerifyBtn')?.addEventListener('click', () => {
+      const provider = (document.getElementById('byokProvider') as HTMLSelectElement)?.value || '';
+      const key = (document.getElementById('byokKey') as HTMLInputElement)?.value || '';
+      vscode.postMessage({ type: 'verifyApiKey', provider, key });
     });
 
     // ── Active model pill update ──────────────────────────────────────────────
@@ -2466,7 +2618,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     });
 
     function sendMessage() {
-      const message = messageInput.value.trim();
+      let message = messageInput.value.trim();
       if (!message) return;
       
       if (selectedModels.length === 0) {
@@ -2474,12 +2626,34 @@ Respond with ONLY one word: simple, moderate, or complex`,
         return;
       }
 
+      // Prepend active agent persona hints to the message
+      if (activeAgents.size > 0) {
+        const agentLabels: Record<string, string> = {
+          'bug-hunter': 'Bug Hunter (find issues)',
+          'code-generator': 'Code Generator (write production code)',
+          'refactoring': 'Refactoring Expert (clean code)',
+          'strategic-planner': 'Strategic Planner (step-by-step plans)',
+          'research-synthesizer': 'Research Synthesizer (thorough research)',
+          'critical-evaluator': 'Critical Evaluator (find flaws)',
+          'memory-curator': 'Memory Curator (track context)',
+          'logic-verifier': 'Logic Verifier (check correctness)',
+          'scenario-simulation': 'Scenario Simulator (edge cases)',
+          'constraint-solver': 'Constraint Solver (resolve blockers)',
+          'documenter': 'Documenter (write clear docs)',
+          'security-auditor': 'Security Auditor (find vulnerabilities)',
+          'perf-optimizer': 'Performance Optimizer (speed)',
+          'test-writer': 'Test Writer (write tests)',
+        };
+        const activeLabels = Array.from(activeAgents).map(id => agentLabels[id as string] || id).join(', ');
+        message = '[Active agents: ' + activeLabels + ']\n\n' + message;
+      }
+
       vscode.postMessage({
         type: 'sendMessage',
         message: message,
         models: selectedModels,
         workflow: workflowSelector.value,
-        includeContext: includeContext  // Send context flag to extension
+        includeContext: includeContext
       });
 
       messageInput.value = '';
@@ -2532,6 +2706,28 @@ Respond with ONLY one word: simple, moderate, or complex`,
         messages = message.messages;
         renderMessages();
         sendButton.disabled = false;
+      } else if (message.type === 'toggleByokPanel') {
+        const panel = document.getElementById('byokPanel');
+        if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      } else if (message.type === 'byokStatus') {
+        const statusEl = document.getElementById('byokStatus');
+        if (statusEl) {
+          statusEl.textContent = message.message || '';
+          statusEl.style.color = message.status === 'error' ? 'var(--vscode-errorForeground)' :
+                                  message.status === 'verified' || message.status === 'saved' ? '#10b981' :
+                                  'var(--vscode-descriptionForeground)';
+        }
+      } else if (message.type === 'agentAdded') {
+        // Dynamically add a new agent chip
+        const wrap = document.getElementById('agentChipsWrap');
+        if (wrap && message.id && !wrap.querySelector('.agent-chip[data-id="' + message.id + '"]')) {
+          const chip = document.createElement('span');
+          chip.className = 'agent-chip removable';
+          chip.dataset.id = message.id;
+          chip.innerHTML = message.label + ' <span class="chip-remove" data-id="' + message.id + '">×</span>';
+          wrap.appendChild(chip);
+          bindAgentChips(); // re-bind events for new chip
+        }
       } else if (message.type === 'telemetryClear') {
         telemetryItems = [];
         if (telemetryRows) {

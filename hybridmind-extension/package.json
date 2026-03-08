@@ -70,13 +70,6 @@
           "name": "Chat",
           "icon": "$(comment-discussion)",
           "contextualTitle": "HybridMind Chat"
-        },
-        {
-          "type": "webview",
-          "id": "hybridmind.agentSidebar",
-          "name": "Agents",
-          "icon": "$(workspace-trust-enabled)",
-          "contextualTitle": "Agent Sync"
         }
       ]
     },
