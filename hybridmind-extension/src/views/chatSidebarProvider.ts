@@ -2427,16 +2427,22 @@ Respond with ONLY one word: simple, moderate, or complex`,
     });
 
     // BYOK panel save & verify
-    document.getElementById('byokSaveBtn').addEventListener('click', function() {
-      const provider = document.getElementById('byokProvider').value || '';
-      const key = document.getElementById('byokKey').value || '';
-      vscode.postMessage({ type: 'saveApiKey', provider: provider, key: key });
-    });
-    document.getElementById('byokVerifyBtn').addEventListener('click', function() {
-      const provider = document.getElementById('byokProvider').value || '';
-      const key = document.getElementById('byokKey').value || '';
-      vscode.postMessage({ type: 'verifyApiKey', provider: provider, key: key });
-    });
+    var byokSaveBtn = document.getElementById('byokSaveBtn');
+    if (byokSaveBtn) {
+      byokSaveBtn.addEventListener('click', function() {
+        var provider = (document.getElementById('byokProvider') || {}).value || '';
+        var key = (document.getElementById('byokKey') || {}).value || '';
+        vscode.postMessage({ type: 'saveApiKey', provider: provider, key: key });
+      });
+    }
+    var byokVerifyBtn = document.getElementById('byokVerifyBtn');
+    if (byokVerifyBtn) {
+      byokVerifyBtn.addEventListener('click', function() {
+        var provider = (document.getElementById('byokProvider') || {}).value || '';
+        var key = (document.getElementById('byokKey') || {}).value || '';
+        vscode.postMessage({ type: 'verifyApiKey', provider: provider, key: key });
+      });
+    }
 
     // ── Active model pill update ──────────────────────────────────────────────
     function updateModelPill() {
@@ -2544,10 +2550,10 @@ Respond with ONLY one word: simple, moderate, or complex`,
       e.target.value = '';
     });
     
-    // Initial render
-    renderSelectedModels();
-    updateModelPill();
-    renderMessages();
+    // Initial render (wrapped in try-catch so any rendering error doesn't kill event listener registration)
+    try { renderSelectedModels(); } catch(e) { console.error('renderSelectedModels error:', e); }
+    try { updateModelPill(); } catch(e) { console.error('updateModelPill error:', e); }
+    try { renderMessages(); } catch(e) { console.error('renderMessages error:', e); }
 
     // Autonomy panel visibility
     const autonomySection = document.getElementById('autonomySection');
