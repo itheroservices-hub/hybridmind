@@ -46,14 +46,16 @@ export async function activate(context: vscode.ExtensionContext) {
   const tier = licenseManager.isPro() ? 'Pro' : 'Free';
   vscode.window.showInformationMessage(`HybridMind ${tier} is ready! (Using backend on port ${serverPort})`);
 
-  // Check if backend has models available (backend reads from .env)
-  try {
-    const response = await fetch(`http://localhost:${serverPort}/models`, {
-      headers: licenseManager.getApiHeaders()
-    });
+  // Check if backend has models available (non-blocking, 4s timeout)
+  const _ctl = new AbortController();
+  const _timer = setTimeout(() => _ctl.abort(), 4000);
+  fetch(`http://localhost:${serverPort}/models`, {
+    signal: _ctl.signal,
+    headers: licenseManager.getApiHeaders()
+  }).then(async (response) => {
+    clearTimeout(_timer);
     const result = await response.json() as any;
     const models = result.data?.models || [];
-    
     if (!models || models.length === 0) {
       const action = await vscode.window.showWarningMessage(
         'No AI models available. Please check your .env file in the backend.',
@@ -64,10 +66,10 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showTextDocument(envPath);
       }
     }
-  } catch (error) {
-    // Server might not be fully ready yet, skip check
-    console.log('Could not check models availability:', error);
-  }
+  }).catch(() => {
+    clearTimeout(_timer);
+    // Server not running or unreachable — silently skip check
+  });
 
   // Create status bar item
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -100,6 +102,8 @@ export async function activate(context: vscode.ExtensionContext) {
   
   // Register multi-model commands
   registerMultiModelCommands(context, serverPort);
+
+  console.log('HybridMind extension activated successfully.');
 }
 
 export function deactivate() {
