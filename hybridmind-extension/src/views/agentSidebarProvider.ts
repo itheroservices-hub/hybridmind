@@ -89,6 +89,7 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'media', 'agentSidebar.css')
     );
+    const nonce = getNonce();
 
     // static catalog of agents (could be fetched from backend later)
     const AGENT_CATALOG = [
@@ -110,6 +111,7 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https:;">
 <link href="${styleUri}" rel="stylesheet" />
 <title>Agent Sync</title>
 </head>
@@ -125,7 +127,7 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
     <div id="teamList" class="team-list"></div>
   </div>
 
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     document.getElementById('addSlot')?.addEventListener('click', () => {
       vscode.postMessage({ command: 'openAgentSlotPicker' });
@@ -215,4 +217,16 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
     await AgentConfig.save(cfg);
     this._view.webview.postMessage({ command: 'config', data: cfg });
   }
+}
+
+/**
+ * Generate a random nonce for CSP
+ */
+function getNonce() {
+  let text = '';
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 32; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
 }

@@ -664,8 +664,17 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
       console.log(`[AgentPlanner] Generating code with model: ${this._currentModel} for task: ${step.description}`);
       const response = await axios.post('http://localhost:3000/run/single', {
         model: this._currentModel,
-        prompt: directPrompt
+        prompt: directPrompt,
+        maxTokens: 1024  // Keep code gen responses tight so free-tier doesn't time out
+      }, {
+        validateStatus: () => true  // Don't throw on 4xx/5xx — handle below
       });
+
+      if (response.status >= 400) {
+        const serverMsg = response.data?.error?.message || response.data?.message || `HTTP ${response.status}`;
+        console.error(`[AgentPlanner] Backend error for code gen: ${serverMsg}`);
+        return null;
+      }
 
       const rawResponse = response.data?.data || response.data;
       const output = rawResponse.output || rawResponse.content || JSON.stringify(rawResponse);
@@ -711,11 +720,13 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
   ): Promise<{ success: boolean; details?: string; error?: string } | null> {
     const targetFile = step.file?.toLowerCase() || '';
     const description = (step.description || '').toLowerCase();
+    const userRequest = ((step as any).userRequest || description).toLowerCase();
 
     const isHtmlFile = targetFile.endsWith('.html') || targetFile.endsWith('.htm');
-    const wantsHelloWorld = /hello\s*world/.test(description);
 
-    if (isHtmlFile && wantsHelloWorld && (step.type === 'create' || step.type === 'edit')) {
+    // ── HTML CREATE: hello world ────────────────────────────────────────────
+    const wantsHelloWorld = /hello\s*world/.test(description) || /hello\s*world/.test(userRequest);
+    if (isHtmlFile && wantsHelloWorld && step.type === 'create') {
       const html = [
         '<!DOCTYPE html>',
         '<html lang="en">',
@@ -729,17 +740,64 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
         '</body>',
         '</html>'
       ].join('\n');
+      try {
+        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(html, 'utf8'));
+        return { success: true, details: `Created Hello World HTML at ${step.file}` };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    // ── HTML EDIT: add an unordered (bullet) list ───────────────────────────
+    if (isHtmlFile && step.type === 'edit' && existingContent &&
+        /add.*list|bullet|<ul|<li/i.test(description)) {
+
+      // Extract count of items requested (default 4)
+      const countMatch = description.match(/(\d+)\s*(bullet|item|point)/);
+      const itemCount = countMatch ? parseInt(countMatch[1], 10) : 4;
+
+      // Extract what text should go in each item (default "test")
+      const textMatch = description.match(/["']([^"']+)["']/) ||
+                        description.match(/(?:with|saying|saying)\s+["']?(\w+)["']?/);
+      const itemText = textMatch ? textMatch[1] : 'test';
+
+      const listItems = Array.from({ length: itemCount }, () => `  <li>${itemText}</li>`).join('\n');
+      const listHtml = `<ul>\n${listItems}\n</ul>`;
+
+      // Insert before </body> if present, otherwise append
+      let newContent: string;
+      if (existingContent.includes('</body>')) {
+        newContent = existingContent.replace('</body>', `  ${listHtml}\n</body>`);
+      } else {
+        newContent = existingContent + '\n' + listHtml;
+      }
 
       try {
-        const shouldWrite = step.type === 'create' || !existingContent || !existingContent.trim() || /hello\s*world/.test(description);
-        if (!shouldWrite) {
-          return null;
-        }
+        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(newContent, 'utf8'));
+        return { success: true, details: `Added ${itemCount}-item list to ${step.file}` };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
 
-        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(html, 'utf8'));
-        return { success: true, details: `Wrote Hello World HTML to ${step.file}` };
-      } catch (error: any) {
-        return { success: false, error: `Failed deterministic HTML fallback: ${error.message}` };
+    // ── HTML EDIT: add a heading ────────────────────────────────────────────
+    if (isHtmlFile && step.type === 'edit' && existingContent &&
+        /add.*h[1-6]|add.*heading|add.*title/i.test(description)) {
+      const levelMatch = description.match(/h([1-6])/i);
+      const level = levelMatch ? levelMatch[1] : '2';
+      const textMatch = description.match(/["']([^"']+)["']/) || description.match(/text\s+["']?(.+?)["']?$/);
+      const headingText = textMatch ? textMatch[1] : 'New Heading';
+
+      const tag = `<h${level}>${headingText}</h${level}>`;
+      const newContent = existingContent.includes('</body>')
+        ? existingContent.replace('</body>', `  ${tag}\n</body>`)
+        : existingContent + '\n' + tag;
+
+      try {
+        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(newContent, 'utf8'));
+        return { success: true, details: `Added heading to ${step.file}` };
+      } catch (e: any) {
+        return { success: false, error: e.message };
       }
     }
 

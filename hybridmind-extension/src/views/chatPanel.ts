@@ -386,11 +386,14 @@ export class ChatPanel {
   }
 
   private _getHtmlForWebview(webview: vscode.Webview) {
+    const nonce = getNonce();
+    
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src http://localhost:3000 http://127.0.0.1:3000; img-src ${webview.cspSource} https:;">
   <title>HybridMind Chat</title>
   <style>
     * {
@@ -687,7 +690,7 @@ export class ChatPanel {
     <button class="send-button" id="sendButton">Send</button>
   </div>
 
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const messagesContainer = document.getElementById('messages');
     const messageInput = document.getElementById('messageInput');
@@ -964,4 +967,16 @@ export class ChatPanel {
       }
     }
   }
+}
+
+/**
+ * Generate a random nonce for CSP
+ */
+function getNonce() {
+  let text = '';
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 32; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
 }

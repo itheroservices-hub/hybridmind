@@ -29,22 +29,23 @@ export async function activate(context: vscode.ExtensionContext) {
   // Reset warning flag every hour
   setInterval(() => usageTracker.resetWarning(), 3600000);
 
-  // DISABLED: Use standalone backend on port 3000 instead
-  // Start the embedded server automatically
-  // try {
-  //   serverPort = await startEmbeddedServer(context);
-  //   
-  //   // Show tier status
-  //   const tier = licenseManager.isPro() ? 'Pro' : 'Free';
-  //   vscode.window.showInformationMessage(`HybridMind ${tier} is ready! (Server on port ${serverPort})`);
-  // } catch (error: any) {
-  //   vscode.window.showErrorMessage(`Failed to start HybridMind server: ${error.message}`);
-  //   return;
-  // }
-  
-  serverPort = 3000; // Use standalone backend
-  const tier = licenseManager.isPro() ? 'Pro' : 'Free';
-  vscode.window.showInformationMessage(`HybridMind ${tier} is ready! (Using backend on port ${serverPort})`);
+  // Register sidebar IMMEDIATELY so the webview renders without waiting for server
+  serverPort = 3000; // default; updated once server starts
+  const sidebarProvider = new ChatSidebarProvider(context.extensionUri, serverPort);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, sidebarProvider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    })
+  );
+
+  // Start the embedded server asynchronously (non-blocking)
+  startEmbeddedServer(context).then(port => {
+    serverPort = port;
+    sidebarProvider.updateServerPort(port);
+    // Don't show notification — focus steals from sidebar webview
+  }).catch((error: any) => {
+    vscode.window.showErrorMessage(`Failed to start HybridMind server: ${error.message}`);
+  });
 
   // Check if backend has models available (non-blocking, 4s timeout)
   const _ctl = new AbortController();
@@ -78,12 +79,6 @@ export async function activate(context: vscode.ExtensionContext) {
   statusBarItem.command = 'hybridmind.manageLicense';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
-
-  // Register sidebar chat view
-  const sidebarProvider = new ChatSidebarProvider(context.extensionUri, serverPort);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, sidebarProvider)
-  );
 
   // Verify license and refresh UI once resolved
   licenseManager.verifyLicense().then(() => {

@@ -152,9 +152,9 @@ export class LicenseManager {
   maxAgentSlots(): number {
     switch (this.tier) {
       case 'enterprise': return 10;
-      case 'pro-plus': return 6;
+      case 'pro-plus': return 8;
       case 'pro': return 4;
-      default: return 2; // free tier gets two basic slots
+      default: return 0; // free tier has no agent slots
     }
   }
 

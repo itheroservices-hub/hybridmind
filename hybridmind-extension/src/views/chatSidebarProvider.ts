@@ -9,8 +9,6 @@ import { LicenseManager } from '../auth/licenseManager';
 import { WorkspaceAnalyzer } from '../agents/workspaceAnalyzer';
 import { AutonomyManager, AutonomyLevel, ToolPermissions } from '../agents/autonomyManager';
 import { AgentPlanner, ExecutionResult, NextStep } from '../agents/agentPlanner';
-import { getDesignSystemCSS } from '../design/designSystem';
-import { UIComponents } from '../design/uiComponents';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -24,6 +22,7 @@ export interface ChatMessage {
 export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hybridmind.chatView';
   private _view?: vscode.WebviewView;
+  private _htmlInitialized: boolean = false;  // only set html once
   private _messages: ChatMessage[] = [];
   private _serverPort: number;
   private _selectedModels: string[] = [];
@@ -68,6 +67,10 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     this._agentPlanner = new AgentPlanner(this._autonomyManager);
   }
 
+  public updateServerPort(port: number) {
+    this._serverPort = port;
+  }
+
   /**
    * Get provider for a given model
    */
@@ -93,7 +96,16 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this._extensionUri]
     };
 
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    // Only set HTML once — re-setting it destroys the JS context and kills click events
+    if (!this._htmlInitialized) {
+      this._htmlInitialized = true;
+      webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    }
+
+    // Always push current tier info after the view attaches (handles the race where
+    // verifyLicense() resolved before the sidebar was first opened, so the earlier
+    // refreshTier() call was a no-op because this._view was null at that point).
+    setTimeout(() => this.refreshTier(), 300);
 
     // Handle messages from the webview
     webviewView.webview.onDidReceiveMessage(async (data) => {
@@ -166,25 +178,25 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   /** Show a QuickPick of the agent catalog and post the selection back into the webview. */
   private async _handleAddAgent() {
     const catalog = [
-      { label: '🐛 Bug Hunter',       id: 'bug-hunter',            description: 'Finds & explains bugs in your code' },
-      { label: '💻 Code Generator',   id: 'code-generator',        description: 'Writes complete, production-ready code' },
-      { label: '🔧 Refactoring',      id: 'refactoring',           description: 'Cleans up and restructures existing code' },
-      { label: '🗺 Strategic Planner', id: 'strategic-planner',     description: 'Breaks complex tasks into step-by-step plans' },
-      { label: '🔬 Research Agent',   id: 'research-synthesizer',  description: 'Researches and synthesises technical answers' },
-      { label: '⚖️ Evaluator',        id: 'critical-evaluator',    description: 'Critically reviews plans and code for flaws' },
-      { label: '🧠 Memory Curator',   id: 'memory-curator',        description: 'Tracks context across long conversations' },
-      { label: '✅ Logic Verifier',   id: 'logic-verifier',        description: 'Verifies correctness of logic and algorithms' },
-      { label: '🎭 Scenario Sim',     id: 'scenario-simulation',   description: 'Simulates edge cases and what-if scenarios' },
-      { label: '🔒 Constraints',      id: 'constraint-solver',     description: 'Identifies and resolves constraints in a design' },
-      { label: '📋 Documenter',       id: 'documenter',            description: 'Writes clear docs, README files, and comments' },
-      { label: '🔐 Security Auditor', id: 'security-auditor',      description: 'Checks code for security vulnerabilities' },
-      { label: '⚡ Performance Guru', id: 'perf-optimizer',        description: 'Finds and fixes performance bottlenecks' },
-      { label: '🧪 Test Writer',      id: 'test-writer',           description: 'Generates comprehensive unit and integration tests' },
+      { label: 'Bug Hunter',       id: 'bug-hunter',            description: 'Finds & explains bugs in your code' },
+      { label: 'Code Generator',   id: 'code-generator',        description: 'Writes complete, production-ready code' },
+      { label: 'Refactoring',      id: 'refactoring',           description: 'Cleans up and restructures existing code' },
+      { label: 'Strategic Planner', id: 'strategic-planner',     description: 'Breaks complex tasks into step-by-step plans' },
+      { label: 'Research Agent',   id: 'research-synthesizer',  description: 'Researches and synthesises technical answers' },
+      { label: 'Evaluator',        id: 'critical-evaluator',    description: 'Critically reviews plans and code for flaws' },
+      { label: 'Memory Curator',   id: 'memory-curator',        description: 'Tracks context across long conversations' },
+      { label: 'Logic Verifier',   id: 'logic-verifier',        description: 'Verifies correctness of logic and algorithms' },
+      { label: 'Scenario Sim',     id: 'scenario-simulation',   description: 'Simulates edge cases and what-if scenarios' },
+      { label: 'Constraints',      id: 'constraint-solver',     description: 'Identifies and resolves constraints in a design' },
+      { label: 'Documenter',       id: 'documenter',            description: 'Writes clear docs, README files, and comments' },
+      { label: 'Security Auditor', id: 'security-auditor',      description: 'Checks code for security vulnerabilities' },
+      { label: 'Performance Guru', id: 'perf-optimizer',        description: 'Finds and fixes performance bottlenecks' },
+      { label: 'Test Writer',      id: 'test-writer',           description: 'Generates comprehensive unit and integration tests' },
     ];
 
     const picked = await vscode.window.showQuickPick(catalog, {
       placeHolder: 'Select an agent to add to your session',
-      title: 'HybridMind — Add Agent'
+      title: 'HybridMind - Add Agent'
     });
 
     if (picked) {
@@ -203,7 +215,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
     await this._licenseManager.setUserApiKey(provider, key);
-    this._view?.webview.postMessage({ type: 'byokStatus', status: 'saved', message: `✅ ${provider} API key saved. Requests will route through your key.` });
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'saved', message: `Success: ${provider} API key saved. Requests will route through your key.` });
   }
 
   /** Verify a BYOK API key by making a test call. */
@@ -212,7 +224,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: 'Enter provider and key first.' });
       return;
     }
-    this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: '⏳ Verifying key…' });
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: 'Verifying Verifying key...' });
     try {
       const response = await fetch('http://localhost:3000/run/single', {
         method: 'POST',
@@ -220,13 +232,13 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         body: JSON.stringify({ model: 'llama-3.3-70b', prompt: 'Reply with only the word OK', maxTokens: 5 })
       });
       if (response.ok) {
-        this._view?.webview.postMessage({ type: 'byokStatus', status: 'verified', message: `✅ Key verified! ${provider} is working correctly.` });
+        this._view?.webview.postMessage({ type: 'byokStatus', status: 'verified', message: `Success: Key verified! ${provider} is working correctly.` });
       } else {
         const err = await response.text();
-        this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `❌ Verification failed (${response.status}): ${err.substring(0, 120)}` });
+        this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `Error: Verification failed (${response.status}): ${err.substring(0, 120)}` });
       }
     } catch (e: any) {
-      this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `❌ Could not reach backend: ${e.message}` });
+      this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `Error: Could not reach backend: ${e.message}` });
     }
   }
 
@@ -290,14 +302,14 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       let wantsEdits = /\b(edit|change|modify|update|fix|refactor|optimize|improve|implement)\b/i.test(userMessage);
       if (wantsEdits && workflowMode !== 'agentic') {
         const switchToAgentic = await vscode.window.showInformationMessage(
-          '💡 To actually edit files, switch to Agentic mode in the workflow dropdown above. Otherwise I can only provide suggestions.',
+          'Tip: To actually edit files, switch to Agentic mode in the workflow dropdown above. Otherwise I can only provide suggestions.',
           'Switch to Agentic Mode',
           'Just Get Suggestions'
         );
         
         if (switchToAgentic === 'Switch to Agentic Mode') {
           // Inform user to manually switch - we'll handle it next time
-          vscode.window.showInformationMessage('Please select "Agentic" from the workflow dropdown at the top, then ask again! 🚀');
+          vscode.window.showInformationMessage('Please select "Agentic" from the workflow dropdown at the top, then ask again! ');
           return;
         }
       }
@@ -370,7 +382,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           }
         };
       } else {
-        // Single model mode — send full conversation history as messages array
+        // Single model mode - send full conversation history as messages array
         endpoint = '/run/single';
         const historyMessages = this._messages
           .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -444,7 +456,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           const telemetryLines = ralphTelemetry
             .map((entry: any, index: number) => {
               const status = entry?.status || 'yellow';
-              const dot = status === 'green' ? '🟢' : status === 'red' ? '🔴' : '🟡';
+              const dot = status === 'green' ? '[ok]' : status === 'red' ? '[error]' : '[warn]';
               const attempt = entry?.attempt || (index + 1);
               const message = entry?.message || 'No telemetry message';
               return `${dot} Attempt ${attempt}: ${message}`;
@@ -453,7 +465,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
           const telemetryMsg: ChatMessage = {
             role: 'assistant',
-            content: `**🧠 Ralph Live Thought Stream**\n\n${telemetryLines}`,
+            content: `**Ralph Ralph Live Thought Stream**\n\n${telemetryLines}`,
             model: 'Ralph',
             timestamp: new Date()
           };
@@ -479,7 +491,7 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
         };
         this._messages.push(assistantMsg);
       } else if (workflowMode === 'agentic') {
-        // Backend agentic workflow (Planner → Executor → Reviewer)
+        // Backend agentic workflow (Planner -> Executor -> Reviewer)
         const result = responseData;
         
         // Show execution steps if available
@@ -487,7 +499,7 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
           for (const step of result.execution.results) {
             const stepMsg: ChatMessage = {
               role: 'assistant',
-              content: `**📝 ${step.stepName}** (${step.action})\n${step.success ? '✅' : '❌'} ${step.confirmation?.message || 'Executed'}\n\nChanges: ${step.changes?.linesAdded || 0} added, ${step.changes?.linesRemoved || 0} removed`,
+              content: `**Step ${step.stepName}** (${step.action})\n${step.success ? 'Success:' : 'Error:'} ${step.confirmation?.message || 'Executed'}\n\nChanges: ${step.changes?.linesAdded || 0} added, ${step.changes?.linesRemoved || 0} removed`,
               model: step.model,
               timestamp: new Date()
             };
@@ -499,7 +511,7 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
         if (result.review) {
           const reviewMsg: ChatMessage = {
             role: 'assistant',
-            content: `**🔍 Review**\n\n${result.review.summary || 'Review complete'}\n\n**Quality Score:** ${result.review.qualityScore || 'N/A'}\n**Issues:** ${result.review.issues?.length || 0}`,
+            content: `**Review Review**\n\n${result.review.summary || 'Review complete'}\n\n**Quality Score:** ${result.review.qualityScore || 'N/A'}\n**Issues:** ${result.review.issues?.length || 0}`,
             model: 'Reviewer',
             timestamp: new Date()
           };
@@ -509,7 +521,7 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
         // Final result
         const assistantMsg: ChatMessage = {
           role: 'assistant',
-          content: `**🎯 Agentic Workflow Complete**\n\n${result.finalOutput || 'Task completed successfully'}`,
+          content: `**Complete Agentic Workflow Complete**\n\n${result.finalOutput || 'Task completed successfully'}`,
           model: 'Workflow Engine',
           timestamp: new Date(),
           tokens: result.totalUsage?.totalTokens,
@@ -542,7 +554,7 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
       // Add AI-analyzed error message to chat
       const errorMsg: ChatMessage = {
         role: 'assistant',
-        content: `❌ Error Analysis:\n\n**Problem:** ${error.message}\n\n**Suggestion:** ${suggestion}`,
+        content: `Error: Error Analysis:\n\n**Problem:** ${error.message}\n\n**Suggestion:** ${suggestion}`,
         timestamp: new Date()
       };
       this._messages.push(errorMsg);
@@ -601,7 +613,7 @@ Respond ONLY with strict JSON:
       const modelIntent = this._extractIntentFromModelOutput(output);
       
       // Debug log
-      console.log(`[Intent Detection] User: "${userMessage}" → Raw output: "${output}" → Intent: "${modelIntent}"`);
+      console.log(`[Intent Detection] User: "${userMessage}" -> Raw output: "${output}" -> Intent: "${modelIntent}"`);
 
       if (modelIntent) {
         return modelIntent;
@@ -849,7 +861,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
    * Detect if user request is ambiguous and needs clarification
    */
   private async _detectAmbiguity(message: string): Promise<{ isAmbiguous: boolean; clarification?: string }> {
-    // Only flag truly empty or single-word messages — let the agent handle everything else.
+    // Only flag truly empty or single-word messages - let the agent handle everything else.
     const words = message.trim().split(/\s+/);
     if (words.length <= 1 && message.trim().length < 3) {
       return { isAmbiguous: true, clarification: 'What would you like me to do?' };
@@ -860,6 +872,70 @@ Respond with ONLY one word: simple, moderate, or complex`,
   /**
    * Handle autonomous agent execution with file discovery and planning
    */
+  /**
+   * Returns true for conversational / Q&A messages that should be answered
+   * directly without going through the plan→confirm→execute loop.
+   */
+  private _isQandARequest(message: string): boolean {
+    const trimmed = message.trim();
+    const questionStart = /^(what|how|why|explain|describe|summarize|show me|tell me|who|where|when|can you|could you|is it|are there|does it|what is|what are|what does|what happened|what's|whats|hm+|hmm+|well\?|right\?|so\?|now what|and then|what next)/i.test(trimmed);
+    // Short conversational messages with no action keywords
+    const actionWords = /\b(fix|create|add|delete|remove|update|change|write|move|rename|refactor|install|run|build|deploy|edit|modify|implement|generate|make|do|execute|convert|migrate|rewrite)\b/i;
+    const isShortConversational = trimmed.length < 50 && !actionWords.test(trimmed);
+    return questionStart || isShortConversational;
+  }
+
+  /**
+   * Answer a Q&A request directly via the single-model endpoint, bypassing planning.
+   */
+  private async _answerDirectly(userMessage: string, models: string[], contextCode: string) {
+    this._view?.webview.postMessage({ type: 'thinking', value: true });
+    try {
+      const model = models[0] || this._selectedModels[0] || 'llama-3.3-70b-versatile';
+      const historyMessages = this._messages
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .slice(-20)
+        .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+      historyMessages.push({ role: 'user', content: userMessage });
+
+      const response = await fetch('http://localhost:3000/run/single', {
+        method: 'POST',
+        headers: this._licenseManager.getApiHeaders(),
+        body: JSON.stringify({
+          model,
+          prompt: userMessage,
+          messages: historyMessages,
+          ...(contextCode ? { code: contextCode } : {})
+        })
+      });
+
+      const data: any = await response.json();
+
+      if (!response.ok) {
+        const msg = data?.error?.message || data?.message || `Backend error ${response.status}`;
+        throw new Error(msg);
+      }
+
+      // Backend wraps in { success, data: { output } } via responseFormatter.modelResult
+      const output = data?.data?.output
+        || data?.data?.content
+        || data?.output
+        || data?.content
+        || '';
+      if (!output) { throw new Error('No response from model'); }
+
+      const assistantMsg: ChatMessage = { role: 'assistant', content: output, model, timestamp: new Date() };
+      this._messages.push(assistantMsg);
+      this._updateWebview();
+    } catch (e: any) {
+      const errMsg: ChatMessage = { role: 'assistant', content: `Error getting response: ${e.message}`, timestamp: new Date() };
+      this._messages.push(errMsg);
+      this._updateWebview();
+    } finally {
+      this._view?.webview.postMessage({ type: 'thinking', value: false });
+    }
+  }
+
   private async _handleAutonomousExecution(
     userMessage: string, 
     models: string[], 
@@ -880,7 +956,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
           this._lastPlan = null;
           const cancelMsg: ChatMessage = {
             role: 'system',
-            content: '❌ Plan cancelled. How can I help you?',
+            content: 'Error: Plan cancelled. How can I help you?',
             timestamp: new Date()
           };
           this._messages.push(cancelMsg);
@@ -891,7 +967,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
         if (intent === 'adjust') {
           const adjustMsg: ChatMessage = {
             role: 'assistant',
-            content: '📝 What would you like to adjust in the plan? Please describe the changes you want.',
+            content: 'Step What would you like to adjust in the plan? Please describe the changes you want.',
             timestamp: new Date()
           };
           this._messages.push(adjustMsg);
@@ -913,7 +989,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
             
             const constraintMsg: ChatMessage = {
               role: 'system',
-              content: `🔒 Executing with constraints: ${constraintParts.join(', ')}`,
+              content: `Locked: Executing with constraints: ${constraintParts.join(', ')}`,
               timestamp: new Date()
             };
             this._messages.push(constraintMsg);
@@ -927,7 +1003,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
           if (risk === 'high' || risk === 'critical') {
             const riskMsg: ChatMessage = {
               role: 'system',
-              content: `⚠️ ${risk.toUpperCase()} RISK OPERATION detected!\n\nThis operation could potentially cause significant changes. Type "confirm ${risk}" to proceed.`,
+              content: `Warning: ${risk.toUpperCase()} RISK OPERATION detected!\n\nThis operation could potentially cause significant changes. Type "confirm ${risk}" to proceed.`,
               timestamp: new Date()
             };
             this._messages.push(riskMsg);
@@ -943,7 +1019,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
           // Execute the stored plan with constraints
           const executingMsg: ChatMessage = {
             role: 'system',
-            content: constraints.readOnly ? '👁️ Reviewing previous plan (read-only)...' : `⚙️ Executing previous plan (${risk} risk)...`,
+            content: constraints.readOnly ? 'Read-only: Reviewing previous plan (read-only)...' : `Executing previous plan (${risk} risk)...`,
             timestamp: new Date()
           };
           this._messages.push(executingMsg);
@@ -952,7 +1028,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
           const result = await this._agentPlanner.executePlan(this._lastPlan, (step, status) => {
             const progressMsg: ChatMessage = {
               role: 'system',
-              content: `${status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🔄'} Step ${step.id}: ${step.description}`,
+              content: `${status === 'completed' ? 'Success:' : status === 'failed' ? 'Error:' : '[running]'} Step ${step.id}: ${step.description}`,
               timestamp: new Date()
             };
             this._messages.push(progressMsg);
@@ -976,12 +1052,19 @@ Respond with ONLY one word: simple, moderate, or complex`,
         // If intent is 'new_request', fall through to create new plan
       }
 
+      // Q&A SHORTCUT: Conversational/explanation requests don't need a plan or confirmation —
+      // just answer directly via the single-model endpoint.
+      if (this._isQandARequest(userMessage)) {
+        await this._answerDirectly(userMessage, models, contextCode);
+        return;
+      }
+
       // STEP 1: Check for ambiguity - ask for clarification if needed
       const ambiguityCheck = await this._detectAmbiguity(userMessage);
       if (ambiguityCheck.isAmbiguous) {
         const clarificationMsg: ChatMessage = {
           role: 'assistant',
-          content: `❓ ${ambiguityCheck.clarification || 'Could you be more specific about what you want to do?'}`,
+          content: `Question: ${ambiguityCheck.clarification || 'Could you be more specific about what you want to do?'}`,
           timestamp: new Date()
         };
         this._messages.push(clarificationMsg);
@@ -996,7 +1079,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
       // Show planning message
       const planningMsg: ChatMessage = {
         role: 'system',
-        content: `🧠 Analyzing request and creating execution plan... (${complexity} task)`,
+        content: `Ralph Analyzing request and creating execution plan... (${complexity} task)`,
         timestamp: new Date()
       };
       this._messages.push(planningMsg);
@@ -1052,7 +1135,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
       if (plan.goal === 'Error') {
         const errorMsg: ChatMessage = {
           role: 'assistant',
-          content: `## ❌ Error\n\n${plan.analysis}\n\n${plan.reasoning}`,
+          content: `## Error: Error\n\n${plan.analysis}\n\n${plan.reasoning}`,
           timestamp: new Date()
         };
         this._messages.push(errorMsg);
@@ -1064,7 +1147,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
       if (plan.steps.length === 0) {
         const reviewMsg: ChatMessage = {
           role: 'assistant',
-          content: `## 📋 ${plan.goal}\n\n${plan.analysis}\n\n${plan.reasoning ? `**Reasoning:** ${plan.reasoning}` : ''}`,
+          content: `## Plan: ${plan.goal}\n\n${plan.analysis}\n\n${plan.reasoning ? `**Reasoning:** ${plan.reasoning}` : ''}`,
           model: 'Agent Planner',
           timestamp: new Date()
         };
@@ -1081,31 +1164,59 @@ Respond with ONLY one word: simple, moderate, or complex`,
       plan.metadata = { complexity, riskLevel };
       
       // Show risk indicator in plan message
-      const riskEmoji = riskLevel === 'critical' ? '🔴' : riskLevel === 'high' ? '🟠' : riskLevel === 'medium' ? '🟡' : '🟢';
-      const confirmationText = (riskLevel === 'high' || riskLevel === 'critical') 
-        ? `\n\n⚠️ **${riskLevel.toUpperCase()} RISK OPERATION** - Type "confirm ${riskLevel}" to proceed.`
-        : `\n\n💬 *Reply "ok" to execute this plan, or provide feedback to adjust it.*`;
+      const riskEmoji = riskLevel === 'critical' ? '[error]' : riskLevel === 'high' ? '[high]' : riskLevel === 'medium' ? '[warn]' : '[ok]';
+      const needsConfirm = riskLevel === 'high' || riskLevel === 'critical' || autonomyLevel !== AutonomyLevel.FullAuto;
 
       // Show the plan with steps
+      const confirmationText = riskLevel === 'high' || riskLevel === 'critical'
+        ? `\n\nWarning: **${riskLevel.toUpperCase()} RISK OPERATION** - Type "confirm ${riskLevel}" to proceed.`
+        : needsConfirm
+          ? `\n\n *Reply "ok" to execute this plan, or provide feedback to adjust it.*`
+          : '';
+
       const planMsg: ChatMessage = {
         role: 'assistant',
-        content: `## 📋 Execution Plan\n\n**Goal:** ${plan.goal}\n\n**Analysis:** ${plan.analysis}\n\n**Steps:**\n${plan.steps.map((s: any) => `${s.id}. ${s.description} (${s.type})`).join('\n')}\n\n**Reasoning:** ${plan.reasoning}\n\n**Complexity:** ${complexity} | **Risk:** ${riskEmoji} ${riskLevel}\n**Autonomy Level:** ${this._autonomyManager.getLevelDescription()}${confirmationText}`,
+        content: `## Execution Plan\n\n**Goal:** ${plan.goal}\n\n**Analysis:** ${plan.analysis}\n\n**Steps:**\n${plan.steps.map((s: any) => `${s.id}. ${s.description} (${s.type})`).join('\n')}\n\n**Reasoning:** ${plan.reasoning}\n\n**Complexity:** ${complexity} | **Risk:** ${riskEmoji} ${riskLevel}\n**Autonomy Level:** ${this._autonomyManager.getLevelDescription()}${confirmationText}`,
         model: 'Agent Planner',
         timestamp: new Date()
       };
       this._messages.push(planMsg);
       this._updateWebview();
 
-      // Store the plan for confirmation
-      this._lastPlan = plan;
-      console.log(`[Autonomous] Plan stored! Goal: "${plan.goal}", Steps: ${plan.steps.length}`);
+      if (needsConfirm) {
+        // Store plan and wait for user to say "ok"
+        this._lastPlan = plan;
+        console.log(`[Autonomous] Plan stored, awaiting confirmation. Goal: "${plan.goal}"`);
+        return;
+      }
 
-      // Don't auto-execute - wait for user confirmation (especially for high/critical risk)
+      // Full autonomy + low/medium risk: execute immediately without asking
+      console.log(`[Autonomous] Full autonomy — executing immediately. Goal: "${plan.goal}"`);
+      const constraints = await this._detectConstraints(userMessage);
+      const result = await this._agentPlanner.executePlan(plan, (step, status) => {
+        const progressMsg: ChatMessage = {
+          role: 'system',
+          content: `${status === 'completed' ? 'Success:' : status === 'failed' ? 'Error:' : '[running]'} Step ${step.id}: ${step.description}`,
+          timestamp: new Date()
+        };
+        this._messages.push(progressMsg);
+        this._updateWebview();
+      }, constraints);
+
+      this._currentExecution = result;
+      const summaryMsg: ChatMessage = {
+        role: 'assistant',
+        content: result.summary,
+        model: 'Agent Summary',
+        timestamp: new Date()
+      };
+      this._messages.push(summaryMsg);
+      this._updateWebview();
       return;
     } catch (error: any) {
       const errorMsg: ChatMessage = {
         role: 'assistant',
-        content: `❌ Autonomous execution error: ${error.message}`,
+        content: `Error: Autonomous execution error: ${error.message}`,
         timestamp: new Date()
       };
       this._messages.push(errorMsg);
@@ -1148,7 +1259,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     
     const confirmMsg: ChatMessage = {
       role: 'system',
-      content: '✅ All file changes have been accepted.',
+      content: 'Success: All file changes have been accepted.',
       timestamp: new Date()
     };
     this._messages.push(confirmMsg);
@@ -1164,7 +1275,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     
     const confirmMsg: ChatMessage = {
       role: 'system',
-      content: '↩️ All file changes have been reverted.',
+      content: 'Reverted: All file changes have been reverted.',
       timestamp: new Date()
     };
     this._messages.push(confirmMsg);
@@ -1191,7 +1302,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     };
 
     this._view?.webview.postMessage({ type: 'telemetryClear' });
-    this._view?.webview.postMessage({ type: 'telemetryState', active: true, title: 'Ralph loop started…' });
+    this._view?.webview.postMessage({ type: 'telemetryState', active: true, title: 'Ralph loop started...' });
 
     const response = await fetch(`http://localhost:${backendPort}/run/chain/stream`, {
       method: 'POST',
@@ -1256,7 +1367,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
         const output = payload?.result?.output || 'Ralph loop completed.';
         const doneMsg: ChatMessage = {
           role: 'assistant',
-          content: `**🧠 Ralph Loop Complete**\n\n${output}`,
+          content: `**Ralph Ralph Loop Complete**\n\n${output}`,
           model: 'Ralph',
           timestamp: new Date()
         };
@@ -1271,7 +1382,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
       if (eventName === 'error') {
         const errorMsg: ChatMessage = {
           role: 'assistant',
-          content: `❌ Ralph stream error: ${payload.error || 'Unknown error'}`,
+          content: `Error: Ralph stream error: ${payload.error || 'Unknown error'}`,
           timestamp: new Date()
         };
         this._messages.push(errorMsg);
@@ -1316,7 +1427,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
 
       const killedMsg: ChatMessage = {
         role: 'system',
-        content: `🛑 Ralph kill switch activated. Cleaned ${data.cleanedApprovalTickets?.updated || 0} pending approval ticket(s).`,
+        content: `Stopped: Ralph kill switch activated. Cleaned ${data.cleanedApprovalTickets?.updated || 0} pending approval ticket(s).`,
         timestamp: new Date()
       };
       this._messages.push(killedMsg);
@@ -1341,9 +1452,14 @@ Respond with ONLY one word: simple, moderate, or complex`,
 
   /** Called after license verification resolves to re-render the UI with the correct tier. */
   public refreshTier() {
-    if (this._view) {
-      this._view.webview.html = this._getHtmlForWebview(this._view.webview);
-    }
+    if (!this._view) return;
+    const isPro = this._licenseManager.isPro();
+    const isProPlus = this._licenseManager.isProPlus();
+    const maxModels = isPro ? 4 : 2;
+    const maxAgents = isProPlus ? 8 : isPro ? 4 : 0;
+    // Post a message to update tier UI instead of replacing HTML
+    // (replacing HTML reloads the iframe and permanently loses focus/clicks)
+    this._view.webview.postMessage({ type: 'tierUpdate', isPro, isProPlus, maxModels, maxAgents });
   }
 
   private _insertCodeAtCursor(code: string) {
@@ -1357,1688 +1473,519 @@ Respond with ONLY one word: simple, moderate, or complex`,
 
   private _getHtmlForWebview(webview: vscode.Webview) {
     const isPro = this._licenseManager.isPro();
+    const isProPlus = this._licenseManager.isProPlus();
     const maxModels = isPro ? 4 : 2;
-    
-    // Render messages using UI components
-    const messagesHtml = this._messages.length === 0 
-      ? UIComponents.emptyState(isPro)
-      : this._messages.map(msg => UIComponents.message(msg)).join('');
-    
-    return `<!DOCTYPE html>
+    const maxAgents = isProPlus ? 8 : isPro ? 4 : 0;
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.js')
+    );
+    const logoUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'media', 'HybridMind.png')
+    );
+    const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HybridMind Chat</title>
-  <style>
-    ${getDesignSystemCSS()}
-      border-radius: 2px;
-      font-size: 9px;
-      font-weight: bold;
-      animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.8; }
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline' ${webview.cspSource}; connect-src http://localhost:3000 http://127.0.0.1:3000; img-src ${webview.cspSource} https: data:;">
+<title>HybridMind</title>
+<style>
+/* === RESET: same as working test page === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { margin: 0; padding: 0; }
+body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif); font-size: 12px; line-height: 1.5; color: var(--vscode-foreground, #ccc); background: var(--vscode-sideBar-background, #252526); }
 
-    .upgrade-banner {
-      background: linear-gradient(135deg, #0b6a76 0%, #084a54 100%);
-      border-radius: 6px;
-      padding: 12px;
-      margin: 12px 8px;
-      text-align: center;
-      color: white;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      border: none;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      box-shadow: 0 2px 8px rgba(11, 106, 118, 0.35);
-    }
+/* === LAYOUT: position:fixed fills webview, NO overflow:hidden on root === */
+#layout { position: fixed; inset: 0; display: flex; flex-direction: column;
+  --t: #0b6a76; --tb: #0d8a9a; --th: #0a5a65;
+  --ts: rgba(11,106,118,.10); --tm: rgba(11,106,118,.20); --tr: rgba(11,106,118,.30);
+  --ok: #10b981; --warn: #f59e0b; --err: #ef4444; --info: #38bdf8;
+  --r: 8px; --rs: 5px; --rp: 999px;
+  --sf: var(--vscode-editor-background, #1e1e1e);
+  --s2: var(--vscode-input-background, #3c3c3c);
+  --bd: var(--vscode-panel-border, rgba(255,255,255,.1));
+  --mu: var(--vscode-descriptionForeground, #888);
+}
 
-    .upgrade-banner:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(11, 106, 118, 0.45);
-    }
+/* === SCROLLBAR === */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--tr); border-radius: 4px; }
 
-    .upgrade-title {
-      font-size: 13px;
-      font-weight: bold;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
+/* === DIAG === */
+#diag { display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: #1a3a3a; font-size: 9px; font-family: monospace; flex-shrink: 0; border-bottom: 1px solid #0b6a76; }
 
-    .upgrade-desc {
-      font-size: 11px;
-      opacity: 0.9;
-    }
+/* === HEADER === */
+.hdr { display: flex; align-items: center; justify-content: space-between; padding: 7px 12px; background: linear-gradient(135deg,rgba(11,106,118,.18),rgba(11,106,118,.04)); border-bottom: 1px solid var(--tr); flex-shrink: 0; }
+.hdr-logo { display: flex; align-items: center; gap: 7px; }
+.hdr-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--t); display: flex; align-items: center; justify-content: center; }
+.hdr-mark svg { display: block; }
+.hdr-name { font-size: 12px; font-weight: 700; letter-spacing: .3px; }
+.hdr-r { display: flex; align-items: center; gap: 6px; }
+.tier-pill { font-size: 9px; font-weight: 700; letter-spacing: .5px; padding: 2px 7px; border-radius: var(--rp); border: 1px solid; }
+.tier-pill.free  { color: var(--ok); background: rgba(16,185,129,.12); border-color: rgba(16,185,129,.35); }
+.tier-pill.pro   { color: #60a5fa; background: rgba(96,165,250,.12); border-color: rgba(96,165,250,.35); }
+.tier-pill.pro-plus { color: var(--tb); background: var(--ts); border-color: var(--tr); }
+.ibtn { width: 26px; height: 26px; border-radius: var(--rs); border: 1px solid transparent; background: transparent; color: var(--mu); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 140ms,color 140ms,border-color 140ms; font-family: inherit; }
+.ibtn:hover { background: var(--ts); color: var(--tb); border-color: var(--tr); }
 
-    .upgrade-features {
-      font-size: 10px;
-      opacity: 0.85;
-      margin-top: 4px;
-    }
-    
-    .messages-container {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    
-    .message {
-      padding: 10px 12px;
-      border-radius: 4px;
-      max-width: 100%;
-      word-wrap: break-word;
-      animation: slideIn 0.2s ease-out;
-    }
-    
-    @keyframes slideIn {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-    
-    .message.user {
-      background-color: var(--vscode-input-background);
-      border-left: 3px solid var(--vscode-button-background);
-    }
-    
-    .message.assistant {
-      background-color: var(--vscode-editor-background);
-      border-left: 3px solid var(--vscode-textLink-foreground);
-    }
-    
-    .message-header {
-      font-size: 11px;
-      opacity: 0.7;
-      margin-bottom: 6px;
-      display: flex;
-      justify-content: space-between;
-    }
-    
-    .message-content {
-      line-height: 1.5;
-      white-space: pre-wrap;
-    }
-    
-    .message-content code {
-      background-color: var(--vscode-textCodeBlock-background);
-      padding: 2px 4px;
-      border-radius: 2px;
-      font-family: var(--vscode-editor-font-family);
-    }
-    
-    .message-content pre {
-      background-color: var(--vscode-textCodeBlock-background);
-      padding: 8px;
-      border-radius: 4px;
-      overflow-x: auto;
-      margin: 8px 0;
-      position: relative;
-    }
-    
-    .code-block {
-      position: relative;
-    }
-    
-    .copy-button {
-      position: absolute;
-      top: 4px;
-      right: 4px;
-      padding: 4px 8px;
-      background-color: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 2px;
-      font-size: 11px;
-      cursor: pointer;
-      opacity: 0.7;
-    }
-    
-    .copy-button:hover {
-      opacity: 1;
-    }
-    
-    .input-container {
-      padding: 12px 16px;
-      border-top: 1px solid var(--vscode-panel-border);
-      background-color: var(--vscode-sideBar-background);
-    }
-    
-    .input-wrapper {
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
-    }
-    
-    #messageInput {
-      flex: 1;
-      padding: 8px 10px;
-      background-color: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 3px;
-      resize: none;
-      max-height: 120px;
-      font-family: var(--vscode-font-family);
-      font-size: 13px;
-    }
-    
-    #messageInput:focus {
-      outline: 1px solid var(--vscode-focusBorder);
-    }
-    
-    .button {
-      padding: 8px 14px;
-      background-color: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 3px;
-      cursor: pointer;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    
-    .button:hover {
-      background-color: var(--vscode-button-hoverBackground);
-    }
-    
-    .button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    
-    .toolbar {
-      padding: 8px 16px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-      display: flex;
-      gap: 8px;
-    }
-    
-    .toolbar-button {
-      padding: 4px 8px;
-      font-size: 11px;
-      background-color: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-    
-    .empty-state {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      opacity: 0.6;
-      text-align: center;
-      padding: 20px;
-    }
-    
-    .empty-state-icon {
-      font-size: 48px;
-      margin-bottom: 16px;
-    }
-    
-    .suggestions {
-      margin-top: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    
-    .suggestion {
-      padding: 8px 12px;
-      background-color: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      transition: all 0.2s ease;
-    }
-    
-    .suggestion:hover {
-      background-color: var(--vscode-list-hoverBackground);
-      border-color: var(--vscode-focusBorder);
-      transform: translateX(4px);
-    }
-    
-    .suggestion-btn {
-      border-left-width: 3px !important;
-    }
-    
-    .suggestion:hover {
-      background-color: var(--vscode-list-hoverBackground);
-    }
-    
-    .autonomy-panel {
-      background-color: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
-      padding: 10px;
-      margin-top: 8px;
-      font-size: 11px;
-    }
-    
-    .autonomy-level {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-    
-    .level-option {
-      flex: 1;
-      padding: 6px;
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 3px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    
-    .level-option:hover {
-      background-color: var(--vscode-list-hoverBackground);
-    }
-    
-    .level-option.active {
-      border-color: var(--vscode-focusBorder);
-      background-color: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      font-weight: bold;
-    }
-    
-    .permissions-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 4px;
-      margin-top: 6px;
-    }
-    
-    .permission-item {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 10px;
-      padding: 2px;
-    }
-    
-    .permission-item input {
-      cursor: pointer;
-    }
-    
-    /* Next Steps Buttons */
-    .next-steps-container {
-      background-color: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 6px;
-      padding: 12px;
-      margin: 8px 0;
-    }
-    
-    .next-steps-title {
-      font-weight: bold;
-      margin-bottom: 10px;
-      color: var(--vscode-foreground);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    
-    .next-step-btn {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      padding: 10px 12px;
-      margin: 6px 0;
-      background-color: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-      border: 1px solid var(--vscode-button-border);
-      border-radius: 4px;
-      cursor: pointer;
-      text-align: left;
-      transition: all 0.2s;
-    }
-    
-    .next-step-btn:hover {
-      background-color: var(--vscode-button-hoverBackground);
-      color: var(--vscode-button-foreground);
-      transform: translateY(-1px);
-    }
-    
-    .next-step-title {
-      font-weight: 600;
-      font-size: 12px;
-    }
-    
-    .next-step-desc {
-      font-size: 11px;
-      opacity: 0.9;
-    }
-    
-    .next-step-priority {
-      font-size: 9px;
-      opacity: 0.7;
-      text-transform: uppercase;
-    }
-    
-    .next-step-priority.high { color: #f48771; }
-    
-    .file-changes-container {
-      background-color: var(--vscode-editor-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 6px;
-      padding: 12px;
-      margin: 10px 0;
-    }
-    
-    .file-changes-header {
-      display: flex;
-      align-items: center;
-      margin-bottom: 10px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-    }
-    
-    .file-changes-summary {
-      font-size: 11px;
-      opacity: 0.8;
-      white-space: pre-line;
-      margin-bottom: 12px;
-    }
-    
-    .file-changes-list {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 12px;
-    }
-    
-    .file-change-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 8px;
-      background-color: var(--vscode-input-background);
-      border-radius: 4px;
-    }
-    
-    .file-change-type {
-      font-size: 14px;
-    }
-    
-    .file-change-path {
-      flex: 1;
-      font-size: 11px;
-      font-family: var(--vscode-editor-font-family);
-      cursor: pointer;
-    }
-    
-    .file-change-path:hover {
-      text-decoration: underline;
-    }
-    
-    .view-diff-btn {
-      padding: 3px 8px;
-      font-size: 10px;
-      background-color: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-      border: 1px solid var(--vscode-button-border);
-      border-radius: 3px;
-      cursor: pointer;
-    }
-    
-    .view-diff-btn:hover {
-      background-color: var(--vscode-button-hoverBackground);
-    }
-    
-    .file-changes-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 12px;
-    }
-    
-    .accept-changes-btn, .reject-changes-btn {
-      flex: 1;
-      padding: 8px 12px;
-      font-size: 11px;
-      font-weight: 600;
-      border: 1px solid var(--vscode-button-border);
-      border-radius: 4px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    
-    .accept-changes-btn {
-      background-color: #4CAF50;
-      color: white;
-    }
-    
-    .accept-changes-btn:hover {
-      background-color: #45a049;
-    }
-    
-    .reject-changes-btn {
-      background-color: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-    
-    .reject-changes-btn:hover {
-      background-color: var(--vscode-errorForeground);
-      color: white;
-    }
-    .next-step-priority.medium { color: #dcdcaa; }
-    .next-step-priority.low { color: #9cdcfe; }
-    
-    /* Collapsible sections */
-    .config-section {
-      border-bottom: 1px solid var(--vscode-panel-border);
-    }
-    
-    .config-header {
-      padding: 8px 16px;
-      background: linear-gradient(90deg, rgba(11, 106, 118, 0.12) 0%, rgba(11, 106, 118, 0.04) 100%);
-      cursor: pointer;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 11px;
-      font-weight: 600;
-      user-select: none;
-      border-left: 2px solid #0b6a76;
-    }
-    
-    .config-header:hover {
-      background: linear-gradient(90deg, rgba(11, 106, 118, 0.2) 0%, rgba(11, 106, 118, 0.08) 100%);
-    }
-    
-    .config-content {
-      max-height: 0;
-      overflow: hidden;
-      transition: max-height 0.3s ease;
-    }
-    
-    .config-content.expanded {
-      max-height: 500px;
-      overflow-y: auto;
-    }
-    
-    .collapse-icon {
-      transition: transform 0.3s;
-    }
-    
-    .collapse-icon.expanded {
-      transform: rotate(180deg);
-    }
-    
-    .compact-select {
-      width: 100%;
-      padding: 6px 8px;
-      margin: 4px 0;
-      background-color: var(--vscode-dropdown-background);
-      color: var(--vscode-dropdown-foreground);
-      border: 1px solid rgba(11, 106, 118, 0.45);
-      border-radius: 6px;
-      font-size: 11px;
-    }
+/* === STATS === */
+.stats { display: flex; padding: 5px 12px; background: var(--sf); border-bottom: 1px solid var(--bd); flex-shrink: 0; }
+.stat { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; position: relative; }
+.stat + .stat::before { content: ''; position: absolute; left: 0; top: 20%; height: 60%; width: 1px; background: var(--bd); }
+.slbl { font-size: 9px; color: var(--mu); text-transform: uppercase; letter-spacing: .4px; }
+.sval { font-size: 11px; font-weight: 600; color: var(--tb); }
+.sbar { width: 50px; height: 3px; border-radius: var(--rp); background: rgba(128,128,128,.18); overflow: hidden; margin-top: 2px; }
+.sfill { height: 100%; width: 0; border-radius: var(--rp); background: var(--t); transition: width 300ms; }
+.sfill.w { background: var(--warn); } .sfill.c { background: var(--err); }
 
-    .compact-select:focus {
-      outline: none;
-      border-color: #0b6a76;
-      box-shadow: 0 0 0 1px rgba(11, 106, 118, 0.35);
-    }
+/* === TABS === */
+.tabs { display: flex; gap: 1px; background: var(--bd); border-bottom: 1px solid var(--bd); flex-shrink: 0; }
+.tab { flex: 1; padding: 7px 4px; text-align: center; font-size: 10px; font-weight: 500; cursor: pointer; background: var(--sf); color: var(--mu); border: none; font-family: inherit; transition: background 150ms,color 150ms; position: relative; }
+.tab:hover { color: var(--vscode-foreground,#fff); background: var(--ts); }
+.tab.on { color: var(--tb); background: var(--s2); font-weight: 700; }
+.tab.on::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: var(--t); }
+.panel { display: none; flex-direction: column; gap: 8px; padding: 9px 12px; background: var(--s2); flex-shrink: 0; max-height: 270px; overflow-y: auto; }
+.panel.on { display: flex; }
 
-    .toolbar-button {
-      padding: 6px 10px;
-      font-size: 11px;
-      background: rgba(11, 106, 118, 0.1);
-      color: var(--vscode-foreground);
-      border: 1px solid rgba(11, 106, 118, 0.35);
-      border-radius: 6px;
-      cursor: pointer;
-    }
+/* === FORM === */
+.flbl { font-size: 10px; color: var(--mu); font-weight: 500; letter-spacing: .3px; text-transform: uppercase; margin-bottom: 4px; }
+.sel, .inp { width: 100%; padding: 6px 9px; border-radius: var(--rs); border: 1px solid var(--tr); background: var(--vscode-input-background,#3c3c3c); color: var(--vscode-input-foreground,#ccc); font-size: 11px; font-family: inherit; outline: none; transition: border-color 150ms; }
+.sel:focus, .inp:focus { border-color: var(--t); box-shadow: 0 0 0 2px rgba(11,106,118,.18); }
+.sel:disabled { opacity: .45; cursor: not-allowed; }
 
-    .toolbar-button:hover {
-      background: rgba(11, 106, 118, 0.2);
-      border-color: #0b6a76;
-    }
+/* === MODEL TAGS === */
+.tagwrap { display: flex; flex-wrap: wrap; gap: 5px; min-height: 28px; align-items: center; }
+.tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--rp); border: 1px solid var(--tr); background: var(--ts); font-size: 10px; font-weight: 500; }
+.xbtn { width: 14px; height: 14px; border-radius: 50%; border: none; background: rgba(255,255,255,.10); color: var(--mu); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px; line-height: 1; padding: 0; transition: background 120ms; font-family: inherit; }
+.xbtn:hover { background: var(--err); color: #fff; }
 
-    .button {
-      background: #0b6a76;
-      border-radius: 8px;
-      font-weight: 600;
-    }
+/* === WORKFLOW === */
+.wfgrid { display: grid; grid-template-columns: repeat(5,1fr); gap: 4px; }
+.wfb { padding: 5px 2px; border-radius: var(--rs); border: 1px solid var(--bd); background: var(--sf); color: var(--mu); font-size: 10px; font-weight: 500; cursor: pointer; text-align: center; transition: all 150ms; font-family: inherit; }
+.wfb:hover { border-color: var(--tr); color: var(--vscode-foreground,#fff); }
+.wfb.on { border-color: var(--t); background: var(--tm); color: var(--tb); font-weight: 700; }
+.wfdesc { font-size: 10px; color: var(--mu); line-height: 1.4; padding: 5px 8px; border-radius: var(--rs); border-left: 2px solid var(--tr); background: var(--ts); }
 
-    .button:hover {
-      background: #0a5a65;
-    }
+/* === AUTONOMY === */
+.autogrid { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; }
+.autoopt { padding: 7px 4px; border-radius: var(--rs); border: 1px solid var(--bd); background: var(--sf); text-align: center; cursor: pointer; transition: all 150ms; }
+.autoopt:hover { border-color: var(--tr); }
+.autoopt.on { border-color: var(--t); background: var(--tm); }
+.anum { font-size: 14px; font-weight: 800; color: var(--tb); line-height: 1; margin-bottom: 2px; }
+.aname { font-size: 9px; color: var(--mu); letter-spacing: .3px; }
+.pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.prow { display: flex; align-items: center; gap: 6px; font-size: 10px; cursor: pointer; padding: 3px 5px; border-radius: 4px; transition: background 120ms; user-select: none; }
+.prow:hover { background: var(--ts); }
+.prow input[type=checkbox] { accent-color: var(--t); width: 12px; height: 12px; cursor: pointer; }
+.togrow { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: var(--rs); border: 1px solid var(--bd); background: var(--sf); cursor: pointer; }
+.togrow:hover { border-color: var(--tr); }
+.toglbl { font-size: 10px; font-weight: 500; }
+.togsw { width: 30px; height: 16px; border-radius: var(--rp); background: rgba(128,128,128,.3); position: relative; cursor: pointer; transition: background 200ms; flex-shrink: 0; border: none; display: block; }
+.togsw.on { background: var(--t); }
+.togthumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform 200ms; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.togsw.on .togthumb { transform: translateX(14px); }
 
-    .suggestion {
-      border-radius: 8px;
-      border-left: 2px solid rgba(11, 106, 118, 0.5);
-    }
+/* === AGENTS === */
+.agctr { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; }
+.agctrlbl { font-size: 10px; color: var(--mu); }
+.agctrval { font-size: 10px; font-weight: 700; color: var(--tb); }
+.agslots { display: flex; flex-direction: column; gap: 5px; max-height: 160px; overflow-y: auto; }
+.agslot { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: var(--rs); border: 1px solid var(--tr); background: var(--ts); }
+.aglbl { flex: 1; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agrm { width: 18px; height: 18px; border-radius: 50%; border: none; background: transparent; color: var(--mu); cursor: pointer; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0; flex-shrink: 0; transition: color 120ms,background 120ms; font-family: inherit; }
+.agrm:hover { color: var(--err); background: rgba(239,68,68,.10); }
+.freebanner { padding: 8px 10px; border-radius: var(--rs); border: 1px solid var(--tr); background: var(--ts); font-size: 10px; color: var(--tb); text-align: center; font-weight: 500; }
 
-    .suggestion:hover {
-      border-left-color: #0b6a76;
-    }
+/* === INLINE AGENT PICKER === */
+.ag-picker { display:none; flex-direction:column; border:1px solid var(--tr); border-radius:var(--rs); overflow:hidden; margin-top:4px; }
+.ag-picker.open { display:flex; }
+.ag-search { padding:6px 9px; border:none; border-bottom:1px solid var(--bd); background:var(--vscode-input-background,#3c3c3c); color:var(--vscode-input-foreground,#ccc); font-size:11px; font-family:inherit; outline:none; width:100%; }
+.ag-list { display:flex; flex-direction:column; max-height:150px; overflow-y:auto; }
+.ag-item { padding:5px 9px; cursor:pointer; transition:background 120ms; }
+.ag-item:hover { background:var(--tm); }
+.ag-lbl { font-size:10px; font-weight:600; }
+.ag-desc { font-size:9px; color:var(--mu); margin-top:1px; }
 
-    /* === FULL-HEIGHT LAYOUT === */
-    html, body { height: 100%; overflow: hidden; }
-    body { display: flex; flex-direction: column; }
-    .messages-container { flex: 1 1 0 !important; min-height: 0 !important; }
+/* === FLOWCHART BUILDER === */
+.fc-sep { height:1px; background:var(--bd); margin:6px 0; }
+.fc-hdr { display:flex; align-items:center; justify-content:space-between; padding:3px 0; cursor:pointer; }
+.fc-title { font-size:10px; font-weight:600; color:var(--mu); text-transform:uppercase; letter-spacing:.4px; transition:color 150ms; user-select:none; }
+.fc-hdr:hover .fc-title { color:var(--tb); }
+.fc-chev { font-size:9px; color:var(--mu); transition:transform 150ms; }
+.fc-chev.open { transform:rotate(180deg); }
+.fc-body { display:none; flex-direction:column; gap:5px; padding-top:4px; }
+.fc-body.open { display:flex; }
+.fc-tabs { display:flex; gap:3px; }
+.fc-tab { flex:1; padding:4px; border-radius:var(--rs); border:1px solid var(--bd); background:var(--sf); color:var(--mu); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; cursor:pointer; text-align:center; font-family:inherit; transition:all 150ms; }
+.fc-tab.on { border-color:var(--t); background:var(--tm); color:var(--tb); }
+.fc-badge { font-size:9px; padding:2px 6px; border-radius:var(--rp); background:rgba(16,185,129,.15); color:var(--ok); border:1px solid rgba(16,185,129,.3); font-weight:700; }
+/* node list */
+.fc-nodes { display:flex; flex-direction:column; gap:3px; }
+.fcn { display:flex; align-items:center; gap:3px; padding:3px 5px; border-radius:var(--rs); border:1px solid var(--bd); background:var(--sf); }
+.fcn-badge { width:16px; height:16px; border-radius:3px; display:flex; align-items:center; justify-content:center; font-size:9px; flex-shrink:0; color:#fff; font-weight:700; }
+.fcn-inp { flex:1; background:transparent; border:none; font-size:10px; color:var(--vscode-foreground,#ccc); font-family:inherit; outline:none; min-width:0; padding:0; }
+.fcn-inp:focus { background:var(--s2); border-radius:3px; padding:1px 3px; }
+.fcn-btn { width:16px; height:16px; border:none; background:transparent; color:var(--mu); cursor:pointer; font-size:11px; line-height:1; padding:0; flex-shrink:0; display:flex; align-items:center; justify-content:center; border-radius:3px; font-family:inherit; transition:background 120ms,color 120ms; }
+.fcn-btn:hover { background:var(--ts); color:var(--tb); }
+.fcn-del:hover { background:rgba(239,68,68,.15); color:var(--err); }
+.fcn-ph { width:16px; flex-shrink:0; }
+/* add buttons */
+.fc-add-row { display:flex; gap:3px; }
+.fc-addbtn { flex:1; font-size:9px; padding:3px 4px; border-radius:var(--rs); border:1px solid var(--bd); background:var(--sf); color:var(--mu); cursor:pointer; font-family:inherit; transition:all 150ms; font-weight:600; text-align:center; }
+.fc-addbtn:hover { border-color:var(--tr); color:var(--tb); background:var(--ts); }
+.fc-svg-wrap { border:1px solid var(--bd); border-radius:var(--rs); background:var(--sf); overflow:hidden; }
 
-    /* === RATE TRACKER BAR === */
-    .rate-tracker {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 4px 10px; font-size: 10px;
-      background: rgba(11, 106, 118, 0.07);
-      border-bottom: 1px solid var(--vscode-panel-border);
-      flex-shrink: 0;
-    }
-    .tracker-item { display: flex; align-items: center; gap: 5px; opacity: 0.85; }
-    .rate-bar { width: 44px; height: 3px; background: var(--vscode-panel-border); border-radius: 2px; overflow: hidden; }
-    .rate-bar-fill { height: 100%; background: #0b6a76; border-radius: 2px; transition: width 0.4s; }
-    .rate-bar-fill.warn { background: #f59e0b; }
-    .rate-bar-fill.crit { background: #ef4444; }
-    .tracker-credits { font-weight: 600; color: #0b6a76; }
+/* === BUTTONS === */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 10px; border-radius: var(--rs); border: 1px solid var(--bd); background: var(--vscode-button-secondaryBackground,#3a3a3a); color: var(--vscode-button-secondaryForeground,#ccc); font-size: 10px; font-weight: 500; font-family: inherit; cursor: pointer; transition: background 150ms,border-color 150ms; white-space: nowrap; }
+.btn:hover { background: var(--vscode-button-hoverBackground,#4a4a4a); border-color: var(--tr); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-t { background: var(--t); border-color: var(--th); color: #fff; }
+.btn-t:hover { background: var(--th); }
+.btn-sm { padding: 3px 7px; font-size: 10px; }
+.btn-full { width: 100%; }
+.upbtn { display: block; width: 100%; padding: 8px 12px; border: none; border-radius: var(--rs); background: linear-gradient(135deg,#0b6a76,#07454f); color: #fff; font-size: 11px; font-weight: 600; cursor: pointer; letter-spacing: .2px; transition: filter 150ms; text-align: center; font-family: inherit; }
+.upbtn:hover { filter: brightness(1.08); }
 
-    /* === AGENTS INLINE SECTION === */
-    .agent-chip {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 3px 9px; font-size: 10px;
-      background: rgba(11, 106, 118, 0.08);
-      border: 1px solid rgba(11, 106, 118, 0.25);
-      border-radius: 12px; cursor: pointer; transition: all 0.15s;
-      white-space: nowrap;
-    }
-    .agent-chip:hover { background: rgba(11, 106, 118, 0.18); border-color: #0b6a76; }
-    .agent-chip.active-agent { background: rgba(11, 106, 118, 0.28); border-color: #0b6a76; color: #0b6a76; font-weight: 600; }
-    .chip-remove {
-      display: inline-flex; align-items: center; justify-content: center;
-      font-size: 10px; line-height: 1; margin-left: 2px; padding: 0 1px;
-      opacity: 0.5; transition: opacity 0.1s;
-    }
-    .chip-remove:hover { opacity: 1; color: var(--vscode-errorForeground); }
-    .agent-chips-wrap { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 12px 4px; }
-    .agents-actions { display: flex; gap: 6px; padding: 0 12px 8px; }
-    .agents-actions button { font-size: 10px; padding: 3px 8px; border-radius: 5px;
-      background: rgba(11, 106, 118, 0.1); border: 1px solid rgba(11, 106, 118, 0.3);
-      color: var(--vscode-foreground); cursor: pointer;
-    }
-    .agents-actions button:hover { background: rgba(11, 106, 118, 0.2); }
+/* === BYOK === */
+.brow { display: flex; gap: 6px; }
+.bstat { font-size: 10px; padding: 4px 8px; border-radius: 4px; background: var(--s2); color: var(--mu); min-height: 22px; }
+.bstat.ok { color: var(--ok); } .bstat.er { color: var(--err); }
 
-    /* === CODEGPT-STYLE CHAT INPUT === */
-    .chat-input-area {
-      padding: 8px 10px 10px;
-      background: var(--vscode-sideBar-background);
-      border-top: 1px solid var(--vscode-panel-border);
-      flex-shrink: 0;
-    }
-    .chat-input-box {
-      display: flex; flex-direction: column;
-      background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 12px; overflow: hidden;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    .chat-input-box:focus-within {
-      border-color: #0b6a76;
-      box-shadow: 0 0 0 1px rgba(11, 106, 118, 0.25);
-    }
-    .chat-input-box textarea#messageInput {
-      width: 100%; padding: 10px 12px 6px;
-      background: transparent; color: var(--vscode-input-foreground);
-      border: none; outline: none; resize: none;
-      font-family: var(--vscode-font-family); font-size: 13px; line-height: 1.5;
-      min-height: 42px; max-height: 130px; box-sizing: border-box;
-    }
-    .chat-input-footer {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 5px 8px; border-top: 1px solid rgba(11, 106, 118, 0.15);
-    }
-    .chat-input-left { display: flex; align-items: center; gap: 5px; }
-    .active-model-pill {
-      display: flex; align-items: center; gap: 3px;
-      font-size: 10px; padding: 2px 7px;
-      background: rgba(11, 106, 118, 0.1);
-      border: 1px solid rgba(11, 106, 118, 0.22);
-      border-radius: 10px; max-width: 110px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .icon-btn {
-      background: none; border: none; padding: 4px 5px; cursor: pointer;
-      border-radius: 5px; opacity: 0.55; font-size: 13px; line-height: 1;
-    }
-    .icon-btn:hover { opacity: 1; background: rgba(11, 106, 118, 0.1); }
-    .icon-btn.ib-active { opacity: 1; color: #0b6a76; }
-    .send-btn {
-      width: 32px; height: 32px; border-radius: 9px;
-      background: #0b6a76; border: none; color: white;
-      cursor: pointer; font-size: 16px;
-      display: flex; align-items: center; justify-content: center;
-      transition: background 0.15s; flex-shrink: 0;
-    }
-    .send-btn:hover { background: #0a5a65; }
-    .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-  </style>
+/* === RALPH === */
+.ralph { display: none; border-bottom: 1px solid var(--bd); background: var(--sf); flex-shrink: 0; }
+.ralph-hdr { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid var(--bd); }
+.ralph-ttl { font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--tb); }
+.ralph-rows { display: flex; flex-direction: column; gap: 3px; padding: 6px 12px; max-height: 100px; overflow-y: auto; font-size: 10px; font-family: monospace; }
+.rrow { display: flex; gap: 6px; align-items: flex-start; }
+.rdot { width: 6px; height: 6px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+.rdot.ok { background: var(--ok); } .rdot.w { background: var(--warn); } .rdot.e { background: var(--err); }
+
+/* === MESSAGES === */
+.msgs { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.msg { border-radius: var(--r); border: 1px solid var(--bd); background: var(--sf); flex-shrink: 0; }
+.msg.user { border-color: var(--tr); background: var(--ts); }
+.msg.assistant { border-color: rgba(56,189,248,.25); }
+.msg.system { border-color: rgba(245,158,11,.25); background: rgba(245,158,11,.05); }
+/* Compact status line for step progress messages */
+.status-line { display: flex; align-items: center; gap: 6px; padding: 3px 4px; font-size: 10px; color: var(--mu); flex-shrink: 0; }
+.status-line .sdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.status-line.sl-run .sdot { background: var(--info); }
+.status-line.sl-ok .sdot { background: var(--ok); }
+.status-line.sl-err .sdot { background: var(--er); }
+.status-line.sl-sys .sdot { background: var(--warn); }
+.status-line .stxt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.mhdr { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid rgba(128,128,128,.10); }
+.mrole { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 600; letter-spacing: .3px; }
+.rdot2 { width: 7px; height: 7px; border-radius: 50%; }
+.msg.user .rdot2 { background: var(--t); }
+.msg.assistant .rdot2 { background: var(--info); }
+.msg.system .rdot2 { background: var(--warn); }
+.mtime { font-size: 9px; color: var(--mu); }
+.mbadge { font-size: 9px; padding: 1px 6px; border-radius: var(--rp); background: rgba(128,128,128,.12); border: 1px solid rgba(128,128,128,.2); color: var(--mu); }
+.mbody { padding: 8px 10px; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.macts { display: flex; gap: 5px; padding: 4px 10px 7px; }
+.mbody code { font-family: monospace; font-size: 11px; background: rgba(128,128,128,.12); padding: 1px 4px; border-radius: 3px; }
+/* === ANSWER BOX (collapsible response) === */
+.ans-box { border-radius: var(--r); border: 1px solid rgba(56,189,248,.22); background: var(--sf); flex-shrink: 0; overflow: hidden; }
+.ans-hdr { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; cursor: pointer; user-select: none; border-bottom: 1px solid transparent; transition: border-color .15s; }
+.ans-hdr:hover { background: rgba(56,189,248,.06); }
+.ans-box.open .ans-hdr { border-bottom-color: rgba(56,189,248,.15); }
+.ans-meta { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 600; letter-spacing: .3px; color: var(--fg); }
+.ans-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); }
+.ans-badge { font-size: 9px; padding: 1px 6px; border-radius: var(--rp); background: rgba(56,189,248,.12); border: 1px solid rgba(56,189,248,.25); color: rgba(56,189,248,.9); }
+.ans-right { display: flex; align-items: center; gap: 8px; }
+.ans-time { font-size: 9px; color: var(--mu); }
+.ans-chevron { font-size: 10px; color: var(--mu); transition: transform .2s; line-height: 1; }
+.ans-box.open .ans-chevron { transform: rotate(180deg); }
+.ans-body { display: none; padding: 10px 12px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; border-top: 0; }
+.ans-box.open .ans-body { display: block; }
+.ans-body code { font-family: monospace; font-size: 11px; background: rgba(128,128,128,.12); padding: 1px 4px; border-radius: 3px; }
+.ans-footer { display: none; gap: 5px; padding: 4px 10px 7px; }
+.ans-box.open .ans-footer { display: flex; }
+
+/* === EMPTY STATE === */
+.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 28px 16px; text-align: center; flex: 1; min-height: 180px; }
+.empty-mark { width: 44px; height: 44px; border-radius: 12px; background: var(--tm); border: 1px solid var(--tr); display: flex; align-items: center; justify-content: center; }
+.empty-title { font-size: 13px; font-weight: 700; }
+.empty-sub { font-size: 11px; color: var(--mu); line-height: 1.5; max-width: 220px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 260px; }
+.chip { padding: 5px 10px; border-radius: var(--rp); border: 1px solid var(--tr); background: var(--ts); font-size: 10px; font-weight: 500; cursor: pointer; font-family: inherit; transition: background 150ms,border-color 150ms; }
+.chip:hover { background: var(--tm); border-color: var(--t); color: var(--tb); }
+
+/* === ACTION GROUPS === */
+.agrp { border: 1px solid var(--bd); border-radius: var(--rs); overflow: hidden; background: var(--s2); }
+.agrphdr { padding: 5px 10px; font-size: 10px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--tb); border-bottom: 1px solid var(--bd); background: var(--ts); }
+.aitem { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 11px; cursor: pointer; border-bottom: 1px solid var(--bd); transition: background 120ms; }
+.aitem:last-child { border-bottom: none; }
+.aitem:hover { background: var(--ts); }
+.pri { font-size: 9px; font-weight: 700; padding: 2px 5px; border-radius: 3px; }
+.pri.high { background: rgba(239,68,68,.15); color: #f87171; }
+.pri.medium { background: rgba(245,158,11,.15); color: #fbbf24; }
+.pri.low { background: rgba(16,185,129,.15); color: #34d399; }
+.drow { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 11px; border-bottom: 1px solid var(--bd); }
+.dtype { font-size: 9px; font-weight: 700; padding: 2px 5px; border-radius: 3px; }
+.dtype.edit { background: rgba(56,189,248,.15); color: #38bdf8; }
+.dtype.create { background: rgba(16,185,129,.15); color: #34d399; }
+.dtype.delete { background: rgba(239,68,68,.15); color: #f87171; }
+.dpath { flex: 1; font-family: monospace; font-size: 10px; }
+.cacts { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--bd); }
+
+/* === INPUT === */
+.iarea { padding: 8px 10px 10px; border-top: 1px solid var(--bd); background: var(--sf); flex-shrink: 0; }
+.ibox { border: 1px solid var(--tr); border-radius: var(--r); background: var(--vscode-input-background,#3c3c3c); overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.12); transition: border-color 150ms,box-shadow 150ms; }
+.ibox:focus-within { border-color: var(--t); box-shadow: 0 0 0 2px rgba(11,106,118,.15); }
+.ita { display: block; width: 100%; padding: 9px 12px; background: transparent; color: var(--vscode-input-foreground,#ccc); border: none; resize: none; font-family: inherit; font-size: 12px; outline: none; max-height: 120px; min-height: 40px; line-height: 1.5; }
+.ifooter { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-top: 1px solid rgba(11,106,118,.12); gap: 6px; }
+.ileft { display: flex; align-items: center; gap: 5px; flex: 1; overflow: hidden; }
+.mpill { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: var(--rp); border: 1px solid var(--tr); background: var(--ts); font-size: 10px; font-weight: 500; max-width: 130px; overflow: hidden; }
+.mpill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mdot { width: 6px; height: 6px; border-radius: 50%; background: var(--t); flex-shrink: 0; }
+.ctxbtn { padding: 3px 7px; border-radius: var(--rp); border: 1px solid var(--bd); background: transparent; color: var(--mu); font-size: 10px; font-family: inherit; cursor: pointer; transition: all 150ms; white-space: nowrap; }
+.ctxbtn:hover { border-color: var(--tr); color: var(--vscode-foreground,#fff); }
+.ctxbtn.on { border-color: var(--t); background: var(--ts); color: var(--tb); font-weight: 600; }
+.wfmini { padding: 2px 5px; border-radius: var(--rp); border: 1px solid var(--bd); background: var(--vscode-input-background,#3c3c3c); color: var(--mu); font-size: 10px; font-family: inherit; outline: none; cursor: pointer; max-width: 90px; transition: border-color 150ms; }
+.wfmini:focus { border-color: var(--t); }
+.charcnt { font-size: 9px; color: var(--mu); margin-left: auto; flex-shrink: 0; }
+.charcnt.w { color: var(--warn); }
+.sendbtn { background: var(--t); border: 1px solid var(--th); color: #fff; font-size: 11px; font-weight: 600; padding: 7px 16px; border-radius: 8px; cursor: pointer; transition: background 150ms,opacity 150ms; font-family: inherit; }
+.sendbtn:hover { background: var(--th); }
+.sendbtn:disabled { opacity: .38; cursor: not-allowed; }
+</style>
 </head>
 <body>
-  <!-- Rate / Usage Tracker -->
-  <div class="rate-tracker" id="rateTracker">
-    <div class="tracker-item">
-      <span>🔑</span>
-      <span id="trackerCredits" class="tracker-credits">··· cr</span>
-      <span style="opacity:0.5;">credits</span>
-    </div>
-    <div class="tracker-item">
-      <span>📊</span>
-      <span id="trackerReqs">0 / ${isPro ? '500' : '50'}</span>
-      <div class="rate-bar"><div class="rate-bar-fill" id="reqBar" style="width:0%"></div></div>
-    </div>
-    <div class="tracker-item">
-      <span id="trackerTier" style="font-size:9px; padding:1px 6px; border-radius:8px; background:${isPro ? 'rgba(59,130,246,0.2)' : 'rgba(16,185,129,0.2)'}; border:1px solid ${isPro ? 'rgba(59,130,246,0.4)' : 'rgba(16,185,129,0.4)'};">${isPro ? '💎 PRO' : '🆓 FREE'}</span>
-    </div>
-  </div>
+<div id="layout">
 
-  <!-- Collapsible Model Selection -->
-  <div class="config-section">
-    <div class="config-header" id="modelsHeader">
-      <span>🤖 Models <span class="tier-badge">${isPro ? 'PRO: 4 max' : 'FREE: 2 max'}</span></span>
-      <span class="collapse-icon">▼</span>
-    </div>
-    <div class="config-content" id="modelsContent">
-      <div style="padding: 8px 16px;">
-        <!-- Quick select dropdowns -->
-        <select class="compact-select" id="freeModelSelect">
-          <option value="">➕ Add Free Model</option>
-          <optgroup label="🔥 Top Free">
-            <option value="llama-3.3-70b">⚡ Llama 3.3 70B</option>
-            <option value="deepseek-r1">🧠 DeepSeek R1 (Reasoning)</option>
-            <option value="qwen3-coder">💻 Qwen3 Coder 480B</option>
-            <option value="devstral">🚀 Devstral 2 (Agentic)</option>
-          </optgroup>
-          <optgroup label="⚡ Fast Free">
-            <option value="gemini-flash">⚡ Gemini 2.0 Flash</option>
-            <option value="deepseek-v3">⚡ DeepSeek V3</option>
-            <option value="mimo-flash">⚡ MiMo V2 Flash</option>
-            <option value="glm-4.5-air">⚡ GLM 4.5 Air</option>
-            <option value="llama-3.1-8b">⚡ Llama 3.1 8B</option>
-          </optgroup>
-        </select>
-        
-        <select class="compact-select" id="proModelSelect" ${isPro ? '' : 'disabled'}>
-          <option value="">➕ Add Premium Model ${isPro ? '' : '(PRO only)'}</option>
-          <optgroup label="💰 Low Cost">
-            <option value="llama-4-maverick">Llama 4 Maverick (1M ctx)</option>
-            <option value="llama-4-scout">Llama 4 Scout</option>
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash Pro</option>
-            <option value="claude-3.5-sonnet">Claude 3.5 Sonnet ✱</option>
-          </optgroup>
-          <optgroup label="🧠 Reasoning">
-            <option value="o3-mini">OpenAI o3-mini</option>
-            <option value="o1">OpenAI o1 (ULTRA)</option>
-          </optgroup>
-          <optgroup label="💻 Coding Specialist">
-            <option value="gpt-codex">GPT Codex Mini ✱</option>
-            <option value="claude-sonnet-4.5">Claude Sonnet 4.5 ✱</option>
-          </optgroup>
-          <optgroup label="👑 Flagship">
-            <option value="gpt-4.1">GPT-4.1</option>
-            <option value="claude-sonnet-4">Claude Sonnet 4</option>
-            <option value="claude-opus-4">Claude Opus 4</option>
-            <option value="claude-opus-4.5">Claude Opus 4.5 ✱ (ULTRA)</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="grok-3">Grok 3 Beta</option>
-          </optgroup>
-        </select>
-        
-        <!-- Selected models -->
-        <div id="selectedModelsContainer" style="margin-top: 8px;"></div>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Workflow Selection (always visible) -->
-  <div style="padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border);">
-    <select id="workflowSelector" class="compact-select">
-      <option value="single">🎯 Single Model</option>
-      <option value="parallel">⚡ Parallel (All respond)</option>
-      <option value="chain">🔗 Chain (Sequential)</option>
-      <option value="agentic">🤖 Agentic (Autonomous)</option>
-    </select>
-  </div>
+<!-- ERROR BANNER -->
+<div id="eb" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#c0392b;color:#fff;font-size:10px;padding:4px 8px;font-family:monospace;"></div>
 
-  <!-- Agents — Embedded AgentSync Section -->
-  <div class="config-section">
-    <div class="config-header" id="agentsHeader">
-      <span>🤖 Agents <span class="tier-badge" style="background:rgba(11,106,118,0.15);color:#0b6a76;padding:1px 6px;border-radius:6px;font-size:9px;">AgentSync</span></span>
-      <span class="collapse-icon">▼</span>
-    </div>
-    <div class="config-content" id="agentsContent">
-      <div class="agent-chips-wrap" id="agentChipsWrap">
-        <span class="agent-chip removable" data-id="bug-hunter">🐛 Bug Hunter <span class="chip-remove" data-id="bug-hunter">×</span></span>
-        <span class="agent-chip removable" data-id="code-generator">💻 Code Gen <span class="chip-remove" data-id="code-generator">×</span></span>
-        <span class="agent-chip removable" data-id="refactoring">🔧 Refactor <span class="chip-remove" data-id="refactoring">×</span></span>
-        <span class="agent-chip removable" data-id="strategic-planner">🗺 Planner <span class="chip-remove" data-id="strategic-planner">×</span></span>
-        <span class="agent-chip removable" data-id="research-synthesizer">🔬 Research <span class="chip-remove" data-id="research-synthesizer">×</span></span>
-        <span class="agent-chip removable" data-id="critical-evaluator">⚖️ Evaluator <span class="chip-remove" data-id="critical-evaluator">×</span></span>
-        <span class="agent-chip removable" data-id="memory-curator">🧠 Memory <span class="chip-remove" data-id="memory-curator">×</span></span>
-        <span class="agent-chip removable" data-id="logic-verifier">✅ Verifier <span class="chip-remove" data-id="logic-verifier">×</span></span>
-        <span class="agent-chip removable" data-id="scenario-simulation">🎭 Scenario <span class="chip-remove" data-id="scenario-simulation">×</span></span>
-        <span class="agent-chip removable" data-id="constraint-solver">🔒 Constraints <span class="chip-remove" data-id="constraint-solver">×</span></span>
-      </div>
-      <div style="font-size:9px;color:var(--vscode-descriptionForeground);padding:0 4px 4px;">Click a chip to activate its persona. ✕ to remove.</div>
-      <div class="agents-actions">
-        <button id="agentByokBtn" title="Configure your own API key">🔑 API Key (BYOK)</button>
-        <button id="agentAddBtn" title="Add agent from catalog">＋ Add Agent</button>
-      </div>
+<!-- DIAG STRIP (hidden in production) -->
+<div id="diag" style="display:none">
+  <span style="color:#0d8a9a;font-weight:bold;">DIAG</span>
+  <span style="color:#aaa;">clicks: <span id="dc">0</span></span>
+  <span style="color:#aaa;">md: <span id="dm">0</span></span>
+  <span style="color:#aaa;">last: <span id="dl">none</span></span>
+  <button onclick="document.getElementById('dc').textContent=+document.getElementById('dc').textContent+1;document.getElementById('dl').textContent='INLINE-OK'" style="margin-left:auto;background:#0b6a76;color:#fff;border:none;padding:2px 6px;border-radius:3px;font-size:9px;cursor:pointer;font-family:monospace;">TEST CLICK</button>
+</div>
 
-      <!-- Inline BYOK Panel -->
-      <div id="byokPanel" style="display:none; padding:8px; border:1px solid var(--vscode-panel-border); border-radius:6px; margin-top:8px; background:var(--vscode-input-background);">
-        <div style="font-size:11px; font-weight:600; margin-bottom:6px;">🔑 Bring Your Own Key</div>
-        <select id="byokProvider" style="width:100%; margin-bottom:6px; padding:4px 6px; font-size:11px; background:var(--vscode-input-background); color:var(--vscode-input-foreground); border:1px solid var(--vscode-input-border); border-radius:4px;">
-          <option value="">Select provider…</option>
-          <option value="OpenAI">OpenAI (GPT-4.1, o1, Codex)</option>
-          <option value="Anthropic">Anthropic (Claude Sonnet/Opus)</option>
-          <option value="OpenRouter">OpenRouter (200+ models)</option>
-          <option value="Google">Google (Gemini 2.5 Pro)</option>
-          <option value="Groq">Groq (Ultra-fast Llama)</option>
-          <option value="DeepSeek">DeepSeek (V3, R1)</option>
-          <option value="xAI">xAI (Grok 3)</option>
-          <option value="Mistral">Mistral AI (Devstral)</option>
-          <option value="Cohere">Cohere (Command R+)</option>
-          <option value="TogetherAI">Together AI</option>
-          <option value="FireworksAI">Fireworks AI</option>
-          <option value="Perplexity">Perplexity (Sonar)</option>
-          <option value="HuggingFace">HuggingFace (Inference API)</option>
-          <option value="Replicate">Replicate</option>
-          <option value="AzureOpenAI">Azure OpenAI</option>
-          <option value="AWSBedrock">AWS Bedrock</option>
-          <option value="VertexAI">Vertex AI (Google Cloud)</option>
-          <option value="Ollama">Ollama (Local)</option>
-          <option value="LMStudio">LM Studio (Local)</option>
-          <option value="Custom">Other / Custom</option>
-        </select>
-        <input id="byokKey" type="password" placeholder="Enter API key…" style="width:100%; margin-bottom:6px; padding:4px 6px; font-size:11px; background:var(--vscode-input-background); color:var(--vscode-input-foreground); border:1px solid var(--vscode-input-border); border-radius:4px; box-sizing:border-box;" />
-        <div style="display:flex; gap:6px; margin-bottom:6px;">
-          <button id="byokSaveBtn" style="flex:1; padding:4px; font-size:11px; background:var(--vscode-button-background); color:var(--vscode-button-foreground); border:none; border-radius:4px; cursor:pointer;">💾 Save</button>
-          <button id="byokVerifyBtn" style="flex:1; padding:4px; font-size:11px; background:rgba(11,106,118,0.2); color:var(--vscode-foreground); border:1px solid rgba(11,106,118,0.4); border-radius:4px; cursor:pointer;">✓ Verify</button>
-        </div>
-        <div id="byokStatus" style="font-size:10px; min-height:14px; color:var(--vscode-descriptionForeground);"></div>
-      </div>
-    </div>
+<!-- HEADER -->
+<div class="hdr">
+  <div class="hdr-logo">
+    <img src="${logoUri}" alt="HybridMind" style="width:22px;height:22px;object-fit:contain;border-radius:4px;" />
+    <span class="hdr-name">HybridMind</span>
   </div>
-
-  <!-- Autonomy & Permissions Section (always visible, collapsed by default) -->
-  <div class="config-section" id="autonomySection">
-    <div class="config-header" id="autonomyHeader">
-      <span>⚙️ Autonomy &amp; Permissions</span>
-      <span class="collapse-icon">▼</span>
-    </div>
-    <div class="config-content" id="autonomyContent">
-      <div style="padding: 8px 16px;">
-        <div class="autonomy-level">
-          <div class="level-option" data-level="1">
-            <div>🟢 L1</div>
-            <div style="font-size: 9px; margin-top: 2px;">Advisory</div>
-          </div>
-          <div class="level-option" data-level="2">
-            <div>🟡 L2</div>
-            <div style="font-size: 9px; margin-top: 2px;">Assisted</div>
-          </div>
-          <div class="level-option active" data-level="3">
-            <div>🔴 L3</div>
-            <div style="font-size: 9px; margin-top: 2px;">Full Auto</div>
-          </div>
-        </div>
-        <div class="permissions-grid" style="margin-top: 8px;">
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="read" checked />
-          <span>📂 Read files</span>
-        </label>
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="edit" checked />
-          <span>✏️ Edit files</span>
-        </label>
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="terminal" checked />
-          <span>⚡ Terminal</span>
-        </label>
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="create" checked />
-          <span>➕ Create files</span>
-        </label>
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="delete" />
-          <span>🗑️ Delete files</span>
-        </label>
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="multi-step" checked />
-          <span>🔄 Multi-step</span>
-        </label>
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="restructure" />
-          <span>🔧 Restructure</span>
-        </label>
-        <label class="permission-item">
-          <input type="checkbox" class="perm-check" data-perm="network" />
-          <span>🌐 Network</span>
-        </label>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="toolbar">
-    <button class="toolbar-button" id="clearButton">🗑️ Clear Chat</button>
-    <button class="toolbar-button" id="contextButton">📎 Include Selection</button>
-  </div>
-
-  <div id="telemetryVisualizer" style="display:none; padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background);">
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px;">
-      <span id="telemetryTitle" style="font-size:11px; font-weight:600;">🧠 Ralph Live Thought Stream</span>
-      <button id="killRalphButton" style="display:none; font-size:10px; padding:4px 8px; border:1px solid var(--vscode-button-border); border-radius:4px; background: var(--vscode-errorForeground); color:white; cursor:pointer;">🛑 Kill</button>
-    </div>
-    <div id="telemetryRows" style="display:flex; flex-direction:column; gap:4px;"></div>
-  </div>
-  
-  ${!isPro ? `
-  <div style="padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border);">
-    <button class="upgrade-banner" id="upgradeButton" style="width: 100%; padding: 8px; background: linear-gradient(135deg, #0b6a76 0%, #084a54 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 11px;">
-      ⭐ Upgrade to Pro - Unlock Premium Models
+  <div class="hdr-r">
+    <span class="tier-pill ${isProPlus ? 'pro-plus' : isPro ? 'pro' : 'free'}">${isProPlus ? 'PRO PLUS' : isPro ? 'PRO' : 'FREE'}</span>
+    <button class="ibtn" id="clrBtn" title="Clear conversation">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 13 6"/><path d="M14 6l-1.5 8H3.5L2 6"/><path d="M6.5 6V4.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5V6"/>
+      </svg>
     </button>
   </div>
-  ` : ''}
-  
-  <div class="messages-container" id="messagesContainer">
-    <div class="empty-state">
-      <div class="empty-state-icon">💬</div>
-      <h3>Welcome to HybridMind</h3>
-      <p>Start a conversation or try one of these:</p>
-      <div class="suggestions">
-        <div class="suggestion" data-prompt="Explain the selected code">Explain selected code</div>
-        <div class="suggestion" data-prompt="Review this code for best practices">Review my code</div>
-        <div class="suggestion" data-prompt="Generate unit tests for this function">Generate tests</div>
-        <div class="suggestion" data-prompt="How can I optimize this code?">Optimize code</div>
+</div>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat"><span class="slbl">Credits</span><span class="sval" id="stC">--</span></div>
+  <div class="stat"><span class="slbl">Requests</span><span class="sval" id="stR">0 / ${isPro ? '500' : '50'}</span><div class="sbar"><div class="sfill" id="stRB"></div></div></div>
+  <div class="stat"><span class="slbl">Models</span><span class="sval" id="stM">0 / ${maxModels}</span></div>
+  <div class="stat"><span class="slbl">Agents</span><span class="sval" id="stA">0 / ${maxAgents}</span></div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab on" data-p="models">Models</button>
+  <button class="tab" data-p="agents">Agents</button>
+  <button class="tab" data-p="keys">Keys</button>
+</div>
+
+<!-- MODELS PANEL -->
+<div id="panel-models" class="panel on">
+  <div><div class="flbl">Free tier</div>
+    <select class="sel" id="fmSel">
+      <option value="">Add free model</option>
+      <optgroup label="Top Free">
+        <option value="llama-3.3-70b">Llama 3.3 70B</option>
+        <option value="deepseek-r1">DeepSeek R1</option>
+        <option value="qwen3-coder">Qwen3 Coder 480B</option>
+        <option value="devstral">Devstral 2</option>
+      </optgroup>
+      <optgroup label="Fast">
+        <option value="gemini-flash">Gemini 2.0 Flash</option>
+        <option value="deepseek-v3">DeepSeek V3</option>
+        <option value="llama-3.1-8b">Llama 3.1 8B</option>
+      </optgroup>
+    </select>
+  </div>
+  <div><div class="flbl">Premium</div>
+    <select class="sel" id="pmSel" ${isPro ? '' : 'disabled'}>
+      <option value="">Add premium model${isPro ? '' : ' (Pro only)'}</option>
+      <optgroup label="Low Cost">
+        <option value="llama-4-maverick">Llama 4 Maverick</option>
+        <option value="gemini-2.0-flash">Gemini 2.0 Flash Pro</option>
+        <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+      </optgroup>
+      <optgroup label="Reasoning">
+        <option value="o3-mini">OpenAI o3 mini</option>
+        <option value="o1">OpenAI o1</option>
+      </optgroup>
+      <optgroup label="Coding">
+        <option value="gpt-codex">GPT Codex Mini</option>
+        <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
+      </optgroup>
+      <optgroup label="Flagship">
+        <option value="gpt-4.1">GPT 4.1</option>
+        <option value="claude-sonnet-4">Claude Sonnet 4</option>
+        <option value="claude-opus-4">Claude Opus 4</option>
+        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+        <option value="grok-3">Grok 3</option>
+      </optgroup>
+    </select>
+  </div>
+  <div id="tagWrap" class="tagwrap"></div>
+  ${!isPro ? '<button class="upbtn" id="upBtn">Upgrade to Pro \u2014 unlock premium models</button>' : ''}
+</div>
+
+
+
+<!-- AGENTS PANEL -->
+<div id="panel-agents" class="panel">
+  ${maxAgents === 0 ? `
+  <div class="freebanner">Agent teams are a Pro feature. Upgrade to use specialist agents.</div>
+  <button class="upbtn" id="agUpBtn">Upgrade to unlock Agent Teams</button>
+  ` : `
+  <div class="agctr"><span class="agctrlbl">Active agents</span><span class="agctrval" id="agCtrVal">0 / ${maxAgents}</span></div>
+  <div id="agSlots" class="agslots"></div>
+  <button class="btn btn-t btn-full" id="agAddBtn" style="margin-top:4px;">+ Add Agent</button>
+  <div id="agPicker" class="ag-picker">
+    <input class="ag-search" id="agSearch" placeholder="Filter agents..." autocomplete="off" />
+    <div id="agList" class="ag-list"></div>
+  </div>
+  <div class="fc-sep"></div>
+  <div class="fc-hdr" id="fcToggle">
+    <span class="fc-title">Flowchart</span>
+    <span class="fc-chev" id="fcChev">&#9662;</span>
+  </div>
+  <div id="fcBody" class="fc-body">
+    <div class="fc-tabs">
+      <button class="fc-tab on" data-fc="build">Build Steps</button>
+      <button class="fc-tab" data-fc="upload">Upload Image</button>
+    </div>
+    <div id="fcBuilderArea" style="display:flex;flex-direction:column;gap:4px;">
+      <div id="fcNodeList" class="fc-nodes"></div>
+      <div class="fc-add-row">
+        <button class="fc-addbtn" data-type="step">+ Step</button>
+        <button class="fc-addbtn" data-type="decision">⬦ Decision</button>
+        <button class="fc-addbtn" data-type="end">■ End</button>
+      </div>
+      <div class="fc-svg-wrap"><svg id="fcSvg" style="width:100%;display:block;"></svg></div>
+    </div>
+    <div id="fcUploadArea" style="display:none;flex-direction:column;gap:5px;align-items:center;">
+      <label class="btn btn-full" style="cursor:pointer;justify-content:center;">Choose Image / SVG<input type="file" id="fcFileInput" accept="image/*,.svg" style="display:none;" /></label>
+      <div id="fcFileName" style="font-size:10px;color:var(--mu);word-break:break-all;text-align:center;">No file selected</div>
+    </div>
+    <div style="display:flex;gap:5px;">
+      <button class="btn btn-t btn-sm" id="fcApply" style="flex:1;">Apply</button>
+      <button class="btn btn-sm" id="fcClear" style="flex:1;display:none;">Clear</button>
+    </div>
+    <div id="fcStatus" style="font-size:10px;color:var(--ok);display:none;text-align:center;padding:2px 0;"></div>
+  </div>
+  <div class="fc-sep"></div>
+  <div id="autoBlock" style="display:none;flex-direction:column;gap:8px;">
+    <div class="flbl" style="margin-bottom:2px;">Agentic Settings</div>
+    <div class="autogrid">
+      <div class="autoopt ${this._autonomyLevel === 1 ? 'on' : ''}" data-lv="1"><div class="anum">1</div><div class="aname">Advisory</div></div>
+      <div class="autoopt ${this._autonomyLevel === 2 ? 'on' : ''}" data-lv="2"><div class="anum">2</div><div class="aname">Assisted</div></div>
+      <div class="autoopt ${this._autonomyLevel === 3 ? 'on' : ''}" data-lv="3"><div class="anum">3</div><div class="aname">Full Auto</div></div>
+    </div>
+    <div class="togrow" id="roRow">
+      <span class="toglbl">Read only mode</span>
+      <span id="roSw" class="togsw ${this._readOnly ? 'on' : ''}"><span class="togthumb"></span></span>
+    </div>
+    <div><div class="flbl" style="margin-bottom:4px;">Permissions</div>
+      <div class="pgrid">
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="read" ${this._permissions.read ? 'checked' : ''}><span>Read files</span></label>
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="edit" ${this._permissions.edit ? 'checked' : ''}><span>Edit files</span></label>
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="terminal" ${this._permissions.terminal ? 'checked' : ''}><span>Terminal</span></label>
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="create" ${this._permissions.create ? 'checked' : ''}><span>Create files</span></label>
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="delete" ${this._permissions.delete ? 'checked' : ''}><span>Delete files</span></label>
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="multi-step" ${this._permissions['multi-step'] ? 'checked' : ''}><span>Multi step</span></label>
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="restructure" ${this._permissions.restructure ? 'checked' : ''}><span>Restructure</span></label>
+        <label class="prow"><input type="checkbox" class="pcb" data-perm="network" ${this._permissions.network ? 'checked' : ''}><span>Network</span></label>
       </div>
     </div>
   </div>
-  
-  <div class="chat-input-area">
-    <div class="chat-input-box">
-      <textarea
-        id="messageInput"
-        placeholder="Ask HybridMind anything…"
-        rows="1"
-      ></textarea>
-      <div class="chat-input-footer">
-        <div class="chat-input-left">
-          <div class="active-model-pill" id="activemodelPill">
-            <span>⚡</span><span id="activemodelLabel">Llama 3.3 70B</span>
-          </div>
-          <button class="icon-btn" id="contextButton" title="Attach selected code">📎</button>
-          <button class="icon-btn" id="clearButton" title="Clear chat">🗑</button>
-        </div>
-        <button class="send-btn" id="sendButton" title="Send (Enter)">↑</button>
+  `}
+</div>
+
+<!-- KEYS PANEL -->
+<div id="panel-keys" class="panel">
+  <div class="flbl">Bring your own API key</div>
+  <select class="sel" id="byokProv">
+    <option value="">Select provider</option>
+    <option value="openai">OpenAI</option>
+    <option value="anthropic">Anthropic</option>
+    <option value="google">Google</option>
+    <option value="deepseek">DeepSeek</option>
+    <option value="groq">Groq</option>
+    <option value="openrouter">OpenRouter</option>
+  </select>
+  <input class="inp" type="password" id="byokKey" placeholder="Paste API key">
+  <div class="brow">
+    <button class="btn btn-t" id="byokSave" style="flex:1;">Save Key</button>
+    <button class="btn" id="byokVerify" style="flex:1;">Verify</button>
+  </div>
+  <div id="byokStat" class="bstat">No key saved.</div>
+</div>
+
+<!-- RALPH -->
+<div id="ralphPanel" class="ralph">
+  <div class="ralph-hdr">
+    <span class="ralph-ttl">Ralph Live Stream</span>
+    <button id="killRalph" class="btn btn-sm" style="background:var(--err);border-color:var(--err);color:#fff;display:none;">Stop</button>
+  </div>
+  <div id="ralphRows" class="ralph-rows"></div>
+</div>
+
+<!-- MESSAGES -->
+<div class="msgs" id="msgs"></div>
+
+<!-- INPUT -->
+<div class="iarea">
+  <div class="ibox">
+    <textarea class="ita" id="msgTA" placeholder="Ask HybridMind anything..." rows="1"></textarea>
+    <div class="ifooter">
+      <div class="ileft">
+        <div class="mpill"><span class="mdot"></span><span id="amlbl">Llama 3.3 70B</span></div>
+        <button class="ctxbtn" id="ctxBtn">Context off</button>
+        <select class="wfmini" id="wfMini"><option value="single">Single</option><option value="parallel">Parallel</option><option value="chain">Chain</option><option value="agentic">Agentic</option><option value="all-to-all">All to All</option></select>
       </div>
+      <span class="charcnt" id="charcnt"></span>
+      <button class="sendbtn" id="sendBtn">Send</button>
     </div>
   </div>
+</div>
 
-  <script>
-    const vscode = acquireVsCodeApi();
-    const messagesContainer = document.getElementById('messagesContainer');
-    const messageInput = document.getElementById('messageInput');
-    const sendButton = document.getElementById('sendButton');
-    const workflowSelector = document.getElementById('workflowSelector');
-    const clearButton = document.getElementById('clearButton');
-    const upgradeButton = document.getElementById('upgradeButton');
-    const telemetryVisualizer = document.getElementById('telemetryVisualizer');
-    const telemetryRows = document.getElementById('telemetryRows');
-    const telemetryTitle = document.getElementById('telemetryTitle');
-    const killRalphButton = document.getElementById('killRalphButton');
-    
-    const MAX_MODELS = ${maxModels};
-    const IS_PRO = ${isPro};
-    
-    // Upgrade button handler
-    if (upgradeButton) {
-      upgradeButton.addEventListener('click', () => {
-        vscode.postMessage({
-          type: 'openUpgrade'
-        });
-      });
-    }
-
-    if (killRalphButton) {
-      killRalphButton.addEventListener('click', () => {
-        vscode.postMessage({ type: 'killRalphLoop' });
-      });
-    }
-    
-    let messages = [];
-    let includeContext = false;
-    let selectedModels = ['llama-3.3-70b']; // Default
-    let telemetryItems = [];
-    let autonomyLevel = 3; // Default to Full Auto
-    let permissions = {
-      read: true,
-      edit: true,
-      terminal: true,
-      create: true,
-      delete: false,
-      'multi-step': true,
-      restructure: false,
-      network: false
-    };
-
-    // Collapsible sections
-    function setupCollapse(headerId, contentId) {
-      const header = document.getElementById(headerId);
-      const content = document.getElementById(contentId);
-      if (!header || !content) return;
-      
-      const icon = header.querySelector('.collapse-icon');
-      
-      header.addEventListener('click', () => {
-        content.classList.toggle('expanded');
-        if (icon) icon.classList.toggle('expanded');
-      });
-    }
-    
-    setupCollapse('modelsHeader', 'modelsContent');
-    setupCollapse('autonomyHeader', 'autonomyContent');
-    setupCollapse('agentsHeader', 'agentsContent');
-
-    // ── Rate Tracker ──────────────────────────────────────────────────────────
-    async function updateRateTracker() {
-      try {
-        const res = await fetch('http://localhost:3000/cost-stats', {
-          headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await res.json();
-        const s = data.data || {};
-        const credits = (s.dailyRemaining !== undefined) ? '$' + Number(s.dailyRemaining).toFixed(2) : '—';
-        const reqsUsed = s.requestsToday || 0;
-        const reqsMax = ${isPro ? 500 : 50};
-        const pct = Math.min(100, (reqsUsed / reqsMax) * 100);
-        const credEl = document.getElementById('trackerCredits');
-        const barEl = document.getElementById('reqBar');
-        const reqEl = document.getElementById('trackerReqs');
-        if (credEl) credEl.textContent = credits;
-        if (reqEl) reqEl.textContent = reqsUsed + ' / ' + reqsMax;
-        if (barEl) {
-          barEl.style.width = pct + '%';
-          barEl.className = 'rate-bar-fill' + (pct > 90 ? ' crit' : pct > 70 ? ' warn' : '');
-        }
-      } catch (_) {}
-    }
-    updateRateTracker();
-    setInterval(updateRateTracker, 30000);
-
-    // ── Agents Inline Section (Embedded AgentSync) ───────────────────────────
-    let activeAgents = new Set(); // active agent IDs whose persona will be prepended
-
-    function bindAgentChips() {
-      document.querySelectorAll('.agent-chip').forEach(function(chip) {
-        chip.addEventListener('click', function(e) {
-          // Ignore clicks on the × remove button
-          if (e.target.classList.contains('chip-remove')) return;
-          const id = chip.dataset.id || '';
-          if (activeAgents.has(id)) {
-            activeAgents.delete(id);
-            chip.classList.remove('active-agent');
-          } else {
-            activeAgents.add(id);
-            chip.classList.add('active-agent');
-          }
-        });
-      });
-      document.querySelectorAll('.chip-remove').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          const id = btn.dataset.id || '';
-          const chip = document.querySelector('.agent-chip[data-id="' + id + '"]');
-          if (chip) chip.remove();
-          activeAgents.delete(id);
-        });
-      });
-    }
-    bindAgentChips();
-
-    // BYOK panel toggle
-    document.getElementById('agentByokBtn')?.addEventListener('click', () => {
-      vscode.postMessage({ type: 'openByok' });
-    });
-
-    // Add Agent — opens VS Code QuickPick via extension host
-    document.getElementById('agentAddBtn')?.addEventListener('click', () => {
-      vscode.postMessage({ type: 'openAgentPicker' });
-    });
-
-    // BYOK panel save & verify
-    var byokSaveBtn = document.getElementById('byokSaveBtn');
-    if (byokSaveBtn) {
-      byokSaveBtn.addEventListener('click', function() {
-        var provider = (document.getElementById('byokProvider') || {}).value || '';
-        var key = (document.getElementById('byokKey') || {}).value || '';
-        vscode.postMessage({ type: 'saveApiKey', provider: provider, key: key });
-      });
-    }
-    var byokVerifyBtn = document.getElementById('byokVerifyBtn');
-    if (byokVerifyBtn) {
-      byokVerifyBtn.addEventListener('click', function() {
-        var provider = (document.getElementById('byokProvider') || {}).value || '';
-        var key = (document.getElementById('byokKey') || {}).value || '';
-        vscode.postMessage({ type: 'verifyApiKey', provider: provider, key: key });
-      });
-    }
-
-    // ── Active model pill update ──────────────────────────────────────────────
-    function updateModelPill() {
-      const labelEl = document.getElementById('activemodelLabel');
-      if (!labelEl) return;
-      const modelNames = {
-        'llama-3.3-70b': 'Llama 3.3 70B', 'llama-3.1-8b': 'Llama 3.1 8B',
-        'gemini-flash': 'Gemini Flash', 'deepseek-v3': 'DeepSeek V3',
-        'deepseek-r1': 'DeepSeek R1', 'qwen3-coder': 'Qwen3 Coder',
-        'devstral': 'Devstral 2', 'mimo-flash': 'MiMo Flash',
-        'glm-4.5-air': 'GLM 4.5 Air', 'llama-4-maverick': 'Llama 4 Maverick',
-        'llama-4-scout': 'Llama 4 Scout', 'gemini-2.0-flash': 'Gemini 2.0 Flash',
-        'gpt-4.1': 'GPT-4.1', 'gpt-codex': 'Codex Mini',
-        'claude-3.5-sonnet': 'Claude 3.5 Sonnet', 'claude-sonnet-4': 'Claude Sonnet 4',
-        'claude-sonnet-4.5': 'Claude Sonnet 4.5', 'claude-opus-4': 'Claude Opus 4',
-        'claude-opus-4.5': 'Claude Opus 4.5', 'gemini-2.5-pro': 'Gemini 2.5 Pro',
-        'grok-3': 'Grok 3', 'o3-mini': 'o3-mini', 'o1': 'o1'
-      };
-      const first = selectedModels[0] || 'llama-3.3-70b';
-      labelEl.textContent = (modelNames[first] || first).substring(0, 18);
-      if (selectedModels.length > 1) labelEl.textContent += ' +' + (selectedModels.length - 1);
-    }
-
-    const selectedModelsContainer = document.getElementById('selectedModelsContainer');
-    const freeModelSelect = document.getElementById('freeModelSelect');
-    const proModelSelect = document.getElementById('proModelSelect');
-    
-    function renderSelectedModels() {
-      selectedModelsContainer.innerHTML = selectedModels.map(model => {
-        const modelNames = {
-          // Free models
-          'llama-3.3-70b': '⚡ Llama 3.3 70B',
-          'llama-3.1-8b': '⚡ Llama 3.1 8B',
-          'gemini-flash': '⚡ Gemini Flash',
-          'deepseek-v3': '⚡ DeepSeek V3',
-          'deepseek-r1': '🧠 DeepSeek R1',
-          'qwen3-coder': '💻 Qwen3 Coder',
-          'devstral': '🚀 Devstral 2',
-          'mimo-flash': '⚡ MiMo Flash',
-          'glm-4.5-air': '⚡ GLM 4.5 Air',
-          // Low cost
-          'llama-4-maverick': '🦙 Llama 4 Maverick',
-          'llama-4-scout': '🦙 Llama 4 Scout',
-          'gemini-2.0-flash': '⚡ Gemini 2.0 Flash',
-          // Premium
-          'gpt-4o': '👑 GPT-4.1 (legacy alias)',
-          'gpt-4.1': '👑 GPT-4.1',
-          'gpt-codex': '💻 GPT Codex Mini',
-          'claude-3.5-sonnet': '👑 Claude 3.5 Sonnet',
-          'claude-sonnet-4': '👑 Claude Sonnet 4',
-          'claude-sonnet-4.5': '👑 Claude Sonnet 4.5',
-          'claude-opus-4': '👑 Claude Opus 4',
-          'claude-opus-4.5': '👑 Claude Opus 4.5',
-          'gemini-2.5-pro': '👑 Gemini 2.5 Pro',
-          'grok-3': '👑 Grok 3',
-          'o3-mini': '🧠 o3-mini',
-          'o1': '🧠 o1'
-        };
-        const displayName = modelNames[model] || model;
-        return \`
-          <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 3px; margin: 2px 0; font-size: 11px;">
-            <span>\${displayName}</span>
-            <button onclick="removeModel('\${model}')" style="background: none; border: none; color: var(--vscode-foreground); cursor: pointer; opacity: 0.6; padding: 2px 6px;">✕</button>
-          </div>
-        \`;
-      }).join('');
-    }
-    
-    window.removeModel = function(model) {
-      selectedModels = selectedModels.filter(m => m !== model);
-      renderSelectedModels();
-      updateModelPill();
-      vscode.postMessage({ type: 'changeModels', models: selectedModels });
-    };
-    
-    freeModelSelect.addEventListener('change', (e) => {
-      const model = e.target.value;
-      if (model && !selectedModels.includes(model)) {
-        if (selectedModels.length >= MAX_MODELS) {
-          alert(\`\${IS_PRO ? 'Pro' : 'Free'} tier limited to \${MAX_MODELS} models!\`);
-          e.target.value = '';
-          return;
-        }
-        selectedModels.push(model);
-        renderSelectedModels();
-        updateModelPill();
-        vscode.postMessage({ type: 'changeModels', models: selectedModels });
-      }
-      e.target.value = '';
-    });
-    
-    proModelSelect.addEventListener('change', (e) => {
-      const model = e.target.value;
-      if (model && !selectedModels.includes(model)) {
-        if (selectedModels.length >= MAX_MODELS) {
-          alert(\`Pro tier limited to \${MAX_MODELS} models!\`);
-          e.target.value = '';
-          return;
-        }
-        selectedModels.push(model);
-        renderSelectedModels();
-        updateModelPill();
-        vscode.postMessage({ type: 'changeModels', models: selectedModels });
-      }
-      e.target.value = '';
-    });
-    
-    // Initial render (wrapped in try-catch so any rendering error doesn't kill event listener registration)
-    try { renderSelectedModels(); } catch(e) { console.error('renderSelectedModels error:', e); }
-    try { updateModelPill(); } catch(e) { console.error('updateModelPill error:', e); }
-    try { renderMessages(); } catch(e) { console.error('renderMessages error:', e); }
-
-    // Autonomy panel visibility
-    const autonomySection = document.getElementById('autonomySection');
-    workflowSelector.addEventListener('change', () => {
-      if (workflowSelector.value === 'agentic') {
-        autonomySection.style.display = 'block';
-      } else {
-        autonomySection.style.display = 'none';
-      }
-      vscode.postMessage({
-        type: 'changeWorkflow',
-        workflow: workflowSelector.value
-      });
-    });
-
-    // Autonomy level selector
-    document.querySelectorAll('.level-option').forEach(option => {
-      option.addEventListener('click', () => {
-        // Remove active class from all
-        document.querySelectorAll('.level-option').forEach(o => o.classList.remove('active'));
-        // Add to clicked
-        option.classList.add('active');
-        autonomyLevel = parseInt(option.dataset.level);
-        
-        // Auto-enable permissions for higher levels
-        if (autonomyLevel === 3) {
-          document.querySelectorAll('.perm-check').forEach(cb => {
-            if (cb.dataset.perm !== 'delete' && cb.dataset.perm !== 'network') {
-              cb.checked = true;
-              permissions[cb.dataset.perm] = true;
-            }
-          });
-        }
-        
-        vscode.postMessage({
-          type: 'changeAutonomy',
-          level: autonomyLevel,
-          permissions: permissions
-        });
-      });
-    });
-
-    // Permission checkboxes
-    document.querySelectorAll('.perm-check').forEach(checkbox => {
-      checkbox.addEventListener('change', () => {
-        permissions[checkbox.dataset.perm] = checkbox.checked;
-        vscode.postMessage({
-          type: 'changeAutonomy',
-          level: autonomyLevel,
-          permissions: permissions
-        });
-      });
-    });
-
-    // Handle message sending
-    sendButton.addEventListener('click', sendMessage);
-    messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
-
-    // Auto-resize textarea
-    messageInput.addEventListener('input', () => {
-      messageInput.style.height = 'auto';
-      messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
-    });
-
-    function sendMessage() {
-      let message = messageInput.value.trim();
-      if (!message) return;
-      
-      if (selectedModels.length === 0) {
-        alert('Please select at least one model');
-        return;
-      }
-
-      // Prepend active agent persona hints to the message
-      if (activeAgents.size > 0) {
-        const agentLabels = {
-          'bug-hunter': 'Bug Hunter (find issues)',
-          'code-generator': 'Code Generator (write production code)',
-          'refactoring': 'Refactoring Expert (clean code)',
-          'strategic-planner': 'Strategic Planner (step-by-step plans)',
-          'research-synthesizer': 'Research Synthesizer (thorough research)',
-          'critical-evaluator': 'Critical Evaluator (find flaws)',
-          'memory-curator': 'Memory Curator (track context)',
-          'logic-verifier': 'Logic Verifier (check correctness)',
-          'scenario-simulation': 'Scenario Simulator (edge cases)',
-          'constraint-solver': 'Constraint Solver (resolve blockers)',
-          'documenter': 'Documenter (write clear docs)',
-          'security-auditor': 'Security Auditor (find vulnerabilities)',
-          'perf-optimizer': 'Performance Optimizer (speed)',
-          'test-writer': 'Test Writer (write tests)',
-        };
-        const activeLabels = Array.from(activeAgents).map(function(id) { return agentLabels[id] || id; }).join(', ');
-        message = '[Active agents: ' + activeLabels + ']\n\n' + message;
-      }
-
-      vscode.postMessage({
-        type: 'sendMessage',
-        message: message,
-        models: selectedModels,
-        workflow: workflowSelector.value,
-        includeContext: includeContext
-      });
-
-      messageInput.value = '';
-      messageInput.style.height = 'auto';
-      sendButton.disabled = true;
-    }
-
-    // Workflow selection
-    workflowSelector.addEventListener('change', () => {
-      vscode.postMessage({
-        type: 'changeWorkflow',
-        workflow: workflowSelector.value
-      });
-    });
-
-    // Clear chat
-    clearButton.addEventListener('click', () => {
-      vscode.postMessage({ type: 'clearHistory' });
-      messages = [];
-      renderMessages();
-    });
-
-    // Context toggle
-    document.getElementById('contextButton').addEventListener('click', () => {
-      includeContext = !includeContext;
-      document.getElementById('contextButton').textContent = 
-        includeContext ? '📎 Context On' : '📎 Include Selection';
-    });
-
-    // Suggestion clicks - auto-enable context for code-related prompts
-    document.querySelectorAll('.suggestion').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const prompt = btn.dataset.prompt;
-        messageInput.value = prompt;
-        
-        // Auto-enable context for prompts that mention "code" or "selected"
-        if (prompt.toLowerCase().includes('code') || prompt.toLowerCase().includes('selected')) {
-          includeContext = true;
-          document.getElementById('contextButton').textContent = '📎 Context On';
-        }
-        
-        sendMessage();
-      });
-    });
-
-    // Receive messages from extension
-    window.addEventListener('message', event => {
-      const message = event.data;
-      if (message.type === 'updateMessages') {
-        messages = message.messages;
-        renderMessages();
-        sendButton.disabled = false;
-      } else if (message.type === 'toggleByokPanel') {
-        const panel = document.getElementById('byokPanel');
-        if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-      } else if (message.type === 'byokStatus') {
-        const statusEl = document.getElementById('byokStatus');
-        if (statusEl) {
-          statusEl.textContent = message.message || '';
-          statusEl.style.color = message.status === 'error' ? 'var(--vscode-errorForeground)' :
-                                  message.status === 'verified' || message.status === 'saved' ? '#10b981' :
-                                  'var(--vscode-descriptionForeground)';
-        }
-      } else if (message.type === 'agentAdded') {
-        // Dynamically add a new agent chip
-        const wrap = document.getElementById('agentChipsWrap');
-        if (wrap && message.id && !wrap.querySelector('.agent-chip[data-id="' + message.id + '"]')) {
-          const chip = document.createElement('span');
-          chip.className = 'agent-chip removable';
-          chip.dataset.id = message.id;
-          chip.innerHTML = message.label + ' <span class="chip-remove" data-id="' + message.id + '">×</span>';
-          wrap.appendChild(chip);
-          bindAgentChips(); // re-bind events for new chip
-        }
-      } else if (message.type === 'telemetryClear') {
-        telemetryItems = [];
-        if (telemetryRows) {
-          telemetryRows.innerHTML = '';
-        }
-      } else if (message.type === 'telemetryState') {
-        if (telemetryVisualizer) {
-          telemetryVisualizer.style.display = 'block';
-        }
-        if (telemetryTitle) {
-          telemetryTitle.textContent = '🧠 ' + (message.title || 'Ralph Live Thought Stream');
-        }
-        if (killRalphButton) {
-          killRalphButton.style.display = message.active ? 'inline-block' : 'none';
-        }
-      } else if (message.type === 'telemetryEvent' && message.event) {
-        const status = message.event.status || 'yellow';
-        const dot = status === 'green' ? '🟢' : status === 'red' ? '🔴' : '🟡';
-        const attempt = message.event.attempt || (telemetryItems.length + 1);
-        const text = dot + ' Attempt ' + attempt + ': ' + (message.event.message || 'No telemetry message');
-        telemetryItems.push(text);
-
-        if (telemetryRows) {
-          const row = document.createElement('div');
-          row.style.fontSize = '12px';
-          row.style.opacity = '0';
-          row.style.transform = 'translateY(4px)';
-          row.style.transition = 'opacity 180ms ease, transform 180ms ease';
-          row.textContent = text;
-          telemetryRows.appendChild(row);
-
-          requestAnimationFrame(() => {
-            row.style.opacity = '1';
-            row.style.transform = 'translateY(0)';
-          });
-        }
-
-        if (telemetryVisualizer) {
-          telemetryVisualizer.style.display = 'block';
-        }
-      }
-    });
-
-    function renderMessages() {
-      if (messages.length === 0) {
-        messagesContainer.innerHTML = \`
-          <div class="empty-state">
-            <div class="empty-state-icon">💬</div>
-            <h3>Welcome to HybridMind</h3>
-            <p>Start a conversation or try one of these:</p>
-            <div class="suggestions">
-              <div class="suggestion" data-prompt="Explain the selected code">Explain selected code</div>
-              <div class="suggestion" data-prompt="Review this code for best practices">Review my code</div>
-              <div class="suggestion" data-prompt="Generate unit tests for this function">Generate tests</div>
-              <div class="suggestion" data-prompt="How can I optimize this code?">Optimize code</div>
-            </div>
-          </div>
-        \`;
-        
-        // Re-attach suggestion listeners
-        document.querySelectorAll('.suggestion').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const prompt = btn.dataset.prompt;
-            messageInput.value = prompt;
-            
-            // Auto-enable context for prompts that mention "code" or "selected"
-            if (prompt.toLowerCase().includes('code') || prompt.toLowerCase().includes('selected')) {
-              includeContext = true;
-              document.getElementById('contextButton').textContent = '📎 Context On';
-            }
-            
-            sendMessage();
-          });
-        });
-        return;
-      }
-
-      messagesContainer.innerHTML = messages.map((msg, index) => {
-        const time = new Date(msg.timestamp).toLocaleTimeString([], { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-        
-        // Check if this is a suggestions message (system role with JSON)
-        if (msg.role === 'system' && msg.content.startsWith('{')) {
-          try {
-            const data = JSON.parse(msg.content);
-            if (data.type === 'suggestions' && data.suggestions) {
-              return renderSuggestions(data.suggestions);
-            }
-            // Handle next steps buttons
-            if (data.type === 'nextSteps' && data.steps) {
-              return renderNextSteps(data.steps);
-            }
-            // Handle file changes UI
-            if (data.type === 'fileChanges' && data.changes) {
-              return renderFileChanges(data.summary, data.changes);
-            }
-          } catch (e) {
-            // Not a JSON message, render normally
-          }
-        }
-        
-        let content = escapeHtml(msg.content);
-        content = formatCodeBlocks(content);
-        
-        return \`
-          <div class="message \${msg.role}">
-            <div class="message-header">
-              <span>\${msg.role === 'user' ? '👤 You' : '🤖 ' + (msg.model || 'AI')}</span>
-              <span>\${time}</span>
-            </div>
-            <div class="message-content">\${content}</div>
-          </div>
-        \`;
-      }).join('');
-
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-      // Add copy button listeners
-      document.querySelectorAll('.copy-button').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const code = e.target.dataset.code;
-          navigator.clipboard.writeText(code);
-          e.target.textContent = 'Copied!';
-          setTimeout(() => e.target.textContent = 'Copy', 2000);
-        });
-      });
-      
-      // Add suggestion button listeners
-      document.querySelectorAll('.suggestion-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const task = btn.dataset.task;
-          const model = btn.dataset.model;
-          vscode.postMessage({
-            type: 'executeSuggestion',
-            task: task,
-            models: model ? [model] : selectedModels
-          });
-        });
-      });
-      
-      // Add next-step button listeners
-      document.querySelectorAll('.next-step-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const stepId = btn.dataset.stepId;
-          vscode.postMessage({
-            type: 'executeNextStep',
-            stepId: stepId,
-            models: selectedModels
-          });
-        });
-      });
-
-      // Add file change button listeners
-      document.querySelectorAll('.view-diff-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const filePath = btn.dataset.filePath;
-          vscode.postMessage({
-            type: 'viewDiff',
-            filePath: filePath
-          });
-        });
-      });
-
-      document.querySelectorAll('.accept-changes-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          vscode.postMessage({
-            type: 'acceptChanges'
-          });
-        });
-      });
-
-      document.querySelectorAll('.reject-changes-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          vscode.postMessage({
-            type: 'rejectChanges'
-          });
-        });
-      });
-    }
-    
-    function renderSuggestions(suggestions) {
-      const priorityEmoji = {
-        'high': '🔴',
-        'medium': '🟡',
-        'low': '🟢'
-      };
-      
-      return \`
-        <div class="message assistant">
-          <div class="message-header">
-            <span>💡 Suggested Next Steps</span>
-          </div>
-          <div class="message-content">
-            <p style="margin-bottom: 12px; opacity: 0.8;">Would you like me to help with any of these?</p>
-            <div class="suggestions">
-              \${suggestions.map(s => \`
-                <div class="suggestion suggestion-btn" 
-                     data-task="\${escapeHtml(s.task)}" 
-                     data-model="\${s.model || ''}"
-                     style="border-left: 3px solid \${s.priority === 'high' ? '#f14c4c' : s.priority === 'medium' ? '#cca700' : '#89d185'}">
-                  <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                    <span>\${priorityEmoji[s.priority] || '🔵'}</span>
-                    <strong>\${escapeHtml(s.title)}</strong>
-                  </div>
-                  <div style="font-size: 11px; opacity: 0.9; margin-bottom: 4px;">
-                    \${escapeHtml(s.description)}
-                  </div>
-                  <div style="font-size: 10px; opacity: 0.7;">
-                    ⚡ \${s.model || 'Auto-select model'}
-                  </div>
-                </div>
-              \`).join('')}
-            </div>
-          </div>
-        </div>
-      \`;
-    }
-
-    function renderNextSteps(steps) {
-      const priorityEmoji = {
-        'high': '🔴',
-        'medium': '🟡',
-        'low': '🟢'
-      };
-      
-      return \`
-        <div class="next-steps-container">
-          <div class="next-steps-title">🚀 Suggested Next Actions</div>
-          \${steps.map(step => \`
-            <button class="next-step-btn" data-step-id="\${step.id}">
-              <div class="next-step-title">
-                <span class="next-step-priority \${step.priority}">\${priorityEmoji[step.priority]} \${step.priority.toUpperCase()}</span>
-                • \${escapeHtml(step.title)}
-              </div>
-              <div class="next-step-desc">\${escapeHtml(step.description)}</div>
-              <div style="font-size: 10px; opacity: 0.6; margin-top: 4px; font-style: italic;">
-                💭 \${escapeHtml(step.reasoning)}
-              </div>
-            </button>
-          \`).join('')}
-          <div style="margin-top: 8px; font-size: 10px; opacity: 0.7; text-align: center;">
-            Click any action to execute it autonomously
-          </div>
-        </div>
-      \`;
-    }
-
-    function renderFileChanges(summary, changes) {
-      const typeEmoji = {
-        'edit': '✏️',
-        'create': '➕',
-        'delete': '🗑️'
-      };
-      
-      return \`
-        <div class="file-changes-container">
-          <div class="file-changes-header">
-            <span style="font-size: 18px;">📝</span>
-            <span style="font-weight: 600; margin-left: 8px;">File Changes</span>
-          </div>
-          <div class="file-changes-summary">\${escapeHtml(summary)}</div>
-          <div class="file-changes-list">
-            \${changes.map(change => \`
-              <div class="file-change-item">
-                <span class="file-change-type">\${typeEmoji[change.type]}</span>
-                <span class="file-change-path" data-file-path="\${change.file}">
-                  \${change.file.split(/[\\/\\\\]/).pop()}
-                </span>
-                <button class="view-diff-btn" data-file-path="\${change.file}">View Diff</button>
-              </div>
-            \`).join('')}
-          </div>
-          <div class="file-changes-actions">
-            <button class="accept-changes-btn">✅ Accept All Changes</button>
-            <button class="reject-changes-btn">↩️ Reject All Changes</button>
-          </div>
-          <div style="margin-top: 8px; font-size: 10px; opacity: 0.7; text-align: center;">
-            Changes are tracked until you accept or reject them
-          </div>
-        </div>
-      \`;
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-
-    function formatCodeBlocks(content) {
-      // Match code blocks with language
-      content = content.replace(/\\\`\\\`\\\`(\\w+)?\\n([\\s\\S]*?)\\\`\\\`\\\`/g, (match, lang, code) => {
-        const escapedCode = escapeHtml(code);
-        return \`<div class="code-block"><button class="copy-button" data-code="\${escapeHtml(code)}">Copy</button><pre><code>\${escapedCode}</code></pre></div>\`;
-      });
-      
-      // Match inline code
-      content = content.replace(/\\\`([^\\\`]+)\\\`/g, '<code>$1</code>');
-      
-      return content;
-    }
-  </script>
+</div><!-- end #layout -->
+<script>
+(function(){
+var vsc=acquireVsCodeApi();
+<script>window.HM_CONFIG={alv:${this._autonomyLevel||3},ro:${this._readOnly},isPro:${isPro},maxModels:${maxModels},maxAgents:${maxAgents},perms:{read:${this._permissions.read},edit:${this._permissions.edit},terminal:${this._permissions.terminal},create:${this._permissions.create},del:${this._permissions.delete},multi:${this._permissions['multi-step']},restructure:${this._permissions.restructure},network:${this._permissions.network}}};</script>
+<script src="${scriptUri}"></script>
 </body>
 </html>`;
+    console.log('[HybridMind] Generated HTML length:', html.length);
+    return html;
   }
+}
+/**
+ * Generate a random nonce for CSP
+ */
+function getNonce() {
+  let text = '';
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 32; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
 }

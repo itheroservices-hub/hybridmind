@@ -1,7 +1,7 @@
 {
   "name": "hybridmind",
-  "displayName": "HybridMind — Autonomous AI Agent",
-  "description": "v2.0: Fully autonomous multi-agent coding system. HybridMind breaks down complex tasks, writes code, tests it, and iterates — automatically. 200+ AI models (Claude 4.5, GPT-4o, Gemini 2.5, DeepSeek R1), AgentSync with 65 specialist agents, BYOK support, MCP tool integration, and a code sandbox. Free tier available. Pro from $19/mo.",
+  "displayName": "HybridMind",
+  "description": "v2.0: Fully autonomous AI coding agent for VS Code. Plans multi-step tasks, writes code, executes in sandbox, and iterates until done. 200+ models (Claude 4.5, GPT-4o, Gemini 2.5, DeepSeek R1), 14 specialist agents, visual flowchart builder, BYOK, and live agent telemetry. Free tier available. Pro from $19/mo.",
   "publisher": "hybridmind",
   "version": "2.0.0",
   "license": "MIT",
@@ -19,6 +19,7 @@
   },
   "categories": [
     "AI",
+    "Agents",
     "Machine Learning",
     "Programming Languages",
     "Snippets"
@@ -40,6 +41,7 @@
     "byok",
     "mcp",
     "copilot",
+    "agents",
     "productivity"
   ],
   "main": "./out/extension.js",
@@ -58,7 +60,7 @@
         {
           "id": "hybridmind",
           "title": "HybridMind",
-          "icon": "$(robot)"
+          "icon": "media/activity-icon.svg"
         }
       ]
     },

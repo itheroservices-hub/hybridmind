@@ -35,7 +35,24 @@ coverage/**
 webpack.config.js
 tsup.config.js
 
+# Exclude temp/dev scripts not needed in package
+rewrite-sidebar-ui.js
+TEST_FILE.js
+TEST_FILE.js.map
+check-html.js
+check-html2.js
+check-state.js
+test-workspace/**
+scripts/**
+
+# Exclude all node_modules (bundled by vsce)
+node_modules/**
+
 # Exclude documentation that's not needed in package
 docs/**
 examples/**
 *.log
+AGENTIC_GUIDE.md
+PROTOCOL_SYSTEM.md
+SYSTEM_PROMPTS.md
+SYSTEM_PROMPT_INTEGRATION.md

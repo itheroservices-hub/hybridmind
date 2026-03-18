@@ -69,6 +69,16 @@ debug-*.js
 # VSIX packages
 *.vsix
 
+# Personal / temp files (not for upstream)
+TOMORROW.md
+tyler2.html
+hybridmind-extension/rewrite-sidebar-ui.js
+hybridmind-extension/test-workspace/
+
+# Include extension media and deploy scripts
+!hybridmind-extension/media/
+!hybridmind-extension/scripts/
+
 # Extension build outputs
 hybridmind-extension/dist/
 hybridmind-extension/out/

@@ -7,7 +7,7 @@
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "--disable-extensions"
+        "${workspaceFolder}/test-workspace"
       ],
       "outFiles": [
         "${workspaceFolder}/out/**/*.js"
