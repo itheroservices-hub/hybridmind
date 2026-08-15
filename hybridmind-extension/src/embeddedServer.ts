@@ -44,7 +44,7 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
       // Models endpoint
       if (req.url === '/models') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(getAvailableModels()));
+        res.end(JSON.stringify(getAvailableModels(req.headers)));
         return;
       }
 
@@ -55,7 +55,7 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
         req.on('end', async () => {
           try {
             const data = JSON.parse(body);
-            const result = await runModel(data.model, data.prompt, context);
+            const result = await runModel(data.model, data.prompt, context, req.headers);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result));
           } catch (error: any) {
@@ -74,7 +74,7 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
           try {
             const data = JSON.parse(body);
             const results = await Promise.all(
-              data.models.map((model: string) => runModel(model, data.prompt, context))
+              data.models.map((model: string) => runModel(model, data.prompt, context, req.headers))
             );
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ results }));
@@ -95,13 +95,13 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
             const data = JSON.parse(body);
             const steps = [];
             let currentPrompt = data.prompt;
-            
+
             for (const model of data.models) {
-              const result = await runModel(model, currentPrompt, context);
+              const result = await runModel(model, currentPrompt, context, req.headers);
               steps.push(result);
               currentPrompt = `Previous response from ${model}: ${result.content}\n\nOriginal task: ${data.prompt}`;
             }
-            
+
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ steps }));
           } catch (error: any) {
@@ -119,11 +119,11 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
         req.on('end', async () => {
           try {
             const data = JSON.parse(body);
-            
+
             // Create autonomous agent
             const agent = new AutonomousAgent(
               async (modelId: string, prompt: string) => {
-                return await runModel(modelId, prompt, context);
+                return await runModel(modelId, prompt, context, req.headers);
               },
               {
                 autonomyLevel: data.autonomyLevel || 3,
@@ -187,12 +187,38 @@ export function stopEmbeddedServer() {
   }
 }
 
-function getAvailableModels() {
+/**
+ * Pulls a single header value out of Node's IncomingHttpHeaders, which can
+ * legally hand back a string, an array of strings, or undefined.
+ */
+function getHeaderValue(headers: http.IncomingHttpHeaders, name: string): string {
+  const value = headers[name];
+  if (Array.isArray(value)) {
+    return value[0] || '';
+  }
+  return value || '';
+}
+
+/**
+ * BYOK requests carry the provider name in `x-user-api-provider` and the
+ * user's own key in `x-user-provider-key` (see licenseManager.getApiHeaders()).
+ * `Authorization` is reserved for license/session auth and must not be read
+ * as a provider key here.
+ */
+function getByokFromHeaders(headers: http.IncomingHttpHeaders): { provider: string; key: string } {
+  const provider = getHeaderValue(headers, 'x-user-api-provider').toLowerCase().trim();
+  const key = getHeaderValue(headers, 'x-user-provider-key').trim();
+  return { provider, key };
+}
+
+function getAvailableModels(headers: http.IncomingHttpHeaders = {}) {
   const config = vscode.workspace.getConfiguration('hybridmind');
   const openrouterKey = config.get('openrouterApiKey');
+  const { key: userKey } = getByokFromHeaders(headers);
 
-  // OpenRouter provides access to ALL models through one API key
-  if (!openrouterKey) {
+  // Models are available if the user has EITHER the shared OpenRouter key
+  // configured OR their own BYOK provider key attached to the request.
+  if (!openrouterKey && !userKey) {
     return [];
   }
 
@@ -222,14 +248,12 @@ function getAvailableModels() {
   ];
 }
 
-async function runModel(modelId: string, prompt: string, context: vscode.ExtensionContext): Promise<any> {
-  const config = vscode.workspace.getConfiguration('hybridmind');
-  const openrouterKey = config.get<string>('openrouterApiKey') || '';
-  
-  if (!openrouterKey) {
-    throw new Error('OpenRouter API key not configured. Add it in VS Code Settings > Extensions > HybridMind > OpenRouter API Key');
-  }
-  
+async function runModel(
+  modelId: string,
+  prompt: string,
+  context: vscode.ExtensionContext,
+  headers: http.IncomingHttpHeaders = {}
+): Promise<any> {
   // COST PROTECTION: Limit prompt size to prevent accidental huge bills
   const MAX_CHARS = 50000; // ~12,500 tokens (~$0.15 for GPT-4, ~$0.05 for Claude)
   if (prompt.length > MAX_CHARS) {
@@ -239,13 +263,54 @@ async function runModel(modelId: string, prompt: string, context: vscode.Extensi
       `Please select less code or split into smaller chunks.`
     );
   }
-  
+
   // COST WARNING: Large prompts
   if (prompt.length > 20000) {
     console.warn(`Large prompt: ${prompt.length} characters. Estimated cost: $0.10-$0.50`);
   }
-  
-  // All models now go through OpenRouter
+
+  const { provider, key: userKey } = getByokFromHeaders(headers);
+
+  // BYOK path: dispatch to whichever provider function matches the header,
+  // using the user's own key. This is the fix for the dead-code providers —
+  // previously every request silently fell through to OpenRouter regardless
+  // of what the caller asked for.
+  if (provider && userKey) {
+    switch (provider) {
+      case 'groq':
+        return runGroq(modelId, prompt, userKey);
+      case 'gemini':
+      case 'google':
+        return runGemini(modelId, prompt, userKey);
+      case 'deepseek':
+        return runDeepseek(modelId, prompt, userKey);
+      case 'qwen':
+        return runQwen(modelId, prompt, userKey);
+      case 'openai':
+        return runOpenAI(modelId, prompt, userKey);
+      case 'anthropic':
+      case 'claude':
+        return runAnthropic(modelId, prompt, userKey);
+      case 'openrouter':
+        return runOpenRouter(modelId, prompt, userKey);
+      default:
+        throw new Error(
+          `Unknown BYOK provider "${provider}". Supported providers: groq, gemini, deepseek, qwen, openai, anthropic, openrouter.`
+        );
+    }
+  }
+
+  // No per-request BYOK header — fall back to the shared OpenRouter setting
+  // (the "just paste one key in settings" default path).
+  const config = vscode.workspace.getConfiguration('hybridmind');
+  const openrouterKey = config.get<string>('openrouterApiKey') || '';
+
+  if (!openrouterKey) {
+    throw new Error(
+      'No API key configured. Run "HybridMind: Set API Key (BYOK)" to add a provider key, or set an OpenRouter API key in VS Code Settings > Extensions > HybridMind.'
+    );
+  }
+
   return runOpenRouter(modelId, prompt, openrouterKey);
 }
 

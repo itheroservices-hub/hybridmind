@@ -17,8 +17,14 @@ let usageTracker: UsageTracker;
 export async function activate(context: vscode.ExtensionContext) {
   console.log('HybridMind extension activating...');
 
-  // Initialize license manager
-  licenseManager = LicenseManager.getInstance();
+  // Initialize license manager. getInstance(context) wires up SecretStorage
+  // access for BYOK keys; initialize() loads any previously-stored key, and
+  // migrateByokSettingsToSecretStorage() handles the one-time move off of
+  // plaintext settings for users upgrading from an older version.
+  licenseManager = LicenseManager.getInstance(context);
+  await licenseManager.initialize();
+  await migrateByokSettingsToSecretStorage(context, licenseManager);
+
   // Initialize usage tracker
   usageTracker = new UsageTracker();
   context.subscriptions.push(usageTracker.getStatusBarItem());
@@ -103,6 +109,51 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   stopEmbeddedServer();
+}
+
+const MIGRATED_BYOK_FLAG = 'hybridmind.migrated_byok_v1';
+
+/**
+ * One-time migration: earlier versions stored BYOK/OpenRouter keys in plain
+ * VS Code settings (hybridmind.userApiKey / hybridmind.openrouterApiKey).
+ * Those get copied into vscode.SecretStorage here, the plaintext settings
+ * are cleared, and a global-state flag ensures this only ever runs once per
+ * install.
+ */
+async function migrateByokSettingsToSecretStorage(
+  context: vscode.ExtensionContext,
+  licenseManager: LicenseManager
+): Promise<void> {
+  const alreadyMigrated = context.globalState.get<boolean>(MIGRATED_BYOK_FLAG, false);
+  if (alreadyMigrated) {
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration('hybridmind');
+  const legacyUserKey = (config.get<string>('userApiKey') || '').trim();
+  const legacyUserProvider = (config.get<string>('userApiProvider') || '').trim();
+  const legacyOpenrouterKey = (config.get<string>('openrouterApiKey') || '').trim();
+
+  // Prefer an explicit BYOK provider key; fall back to the shared OpenRouter
+  // key (which was itself effectively a personal BYOK key under the old
+  // "everyone brings their own OpenRouter key" model).
+  const keyToMigrate = legacyUserKey || legacyOpenrouterKey;
+  const providerToMigrate = legacyUserKey ? (legacyUserProvider || 'openrouter') : 'openrouter';
+
+  if (keyToMigrate) {
+    await licenseManager.setUserApiKey(providerToMigrate, keyToMigrate);
+
+    await config.update('userApiKey', undefined, vscode.ConfigurationTarget.Global);
+    await config.update('userApiProvider', undefined, vscode.ConfigurationTarget.Global);
+    await config.update('openrouterApiKey', undefined, vscode.ConfigurationTarget.Global);
+
+    vscode.window.showInformationMessage(
+      'HybridMind: Your API key has been moved to VS Code\'s encrypted secret storage and cleared from plaintext settings. ' +
+      'Use "HybridMind: Set API Key (BYOK)" if you need to update it.'
+    );
+  }
+
+  await context.globalState.update(MIGRATED_BYOK_FLAG, true);
 }
 
 function registerCommands(context: vscode.ExtensionContext) {

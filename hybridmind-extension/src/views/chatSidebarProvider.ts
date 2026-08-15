@@ -72,6 +72,23 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Single choke point for every call into the embedded local backend.
+   * Always attaches the license/BYOK headers (X-License-Key,
+   * X-User-Api-Provider, X-User-Provider-Key) so provider dispatch and
+   * license checks behave consistently everywhere, instead of each call
+   * site deciding independently (several previously used bare
+   * 'Content-Type': 'application/json' headers and silently ignored any
+   * configured BYOK key).
+   */
+  private async _callBackend(endpoint: string, body: any): Promise<Response> {
+    return fetch(`http://localhost:${this._serverPort}${endpoint}`, {
+      method: 'POST',
+      headers: this._licenseManager.getApiHeaders(),
+      body: JSON.stringify(body)
+    });
+  }
+
+  /**
    * Get provider for a given model
    */
   private _getProviderForModel(model: string): string {
@@ -226,9 +243,12 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     }
     this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: 'Verifying Verifying key...' });
     try {
-      const response = await fetch('http://localhost:3000/run/single', {
+      // Testing a candidate key the user hasn't saved yet, so this can't go
+      // through _callBackend()/getApiHeaders() (which reads the already-
+      // stored key). Same header names/convention as the stored path though.
+      const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Api-Provider': provider, 'X-User-Api-Key': key },
+        headers: { 'Content-Type': 'application/json', 'X-User-Api-Provider': provider, 'X-User-Provider-Key': key },
         body: JSON.stringify({ model: 'llama-3.3-70b', prompt: 'Reply with only the word OK', maxTokens: 5 })
       });
       if (response.ok) {
@@ -397,14 +417,9 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         };
       }
 
-      // Call backend API - always use port 3000 (OpenRouter backend)
-      const backendPort = 3000;
-      console.log(`[HybridMind] Calling ${endpoint} on port ${backendPort} (mode: ${workflowMode})`);
-      const response = await fetch(`http://localhost:${backendPort}${endpoint}`, {
-        method: 'POST',
-        headers: this._licenseManager.getApiHeaders(),
-        body: JSON.stringify(requestBody)
-      });
+      // Call backend API
+      console.log(`[HybridMind] Calling ${endpoint} on port ${this._serverPort} (mode: ${workflowMode})`);
+      const response = await this._callBackend(endpoint, requestBody);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -576,10 +591,7 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
         .join('\n');
       
       // Call backend with fast model for intent classification
-      const response = await fetch(`http://localhost:3000/run/single`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const response = await this._callBackend('/run/single', {
           model: 'llama-3.3-70b-versatile', // Fast, free model
           prompt: `You are classifying user intent in a coding-agent confirmation flow.
 
@@ -599,7 +611,6 @@ Valid intents:
 Respond ONLY with strict JSON:
 {"intent":"confirm|cancel|adjust|new_request","confidence":0-1,"reason":"short"}`,
           maxTokens: 60
-        })
       });
 
       if (!response.ok) {
@@ -696,12 +707,9 @@ Respond ONLY with strict JSON:
     noTerminal?: boolean;
   }> {
     try {
-      const response = await fetch('http://localhost:3000/run/single', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'groq/llama-3.3-70b-versatile',
-          prompt: `Analyze this user message for execution constraints:
+      const response = await this._callBackend('/run/single', {
+        model: 'groq/llama-3.3-70b-versatile',
+        prompt: `Analyze this user message for execution constraints:
 
 "${message}"
 
@@ -713,8 +721,7 @@ Identify if the user wants any of these constraints:
 
 Respond with ONLY a JSON object like: {"readOnly": true, "noDelete": false, "noCreate": false, "noTerminal": false}
 If no constraints are mentioned, all values should be false.`,
-          maxTokens: 50
-        })
+        maxTokens: 50
       });
 
       const data = await response.json();
@@ -750,12 +757,9 @@ If no constraints are mentioned, all values should be false.`,
    */
   private async _assessSecurityRisk(operation: string, filesAffected: string[]): Promise<'low' | 'medium' | 'high' | 'critical'> {
     try {
-      const response = await fetch('http://localhost:3000/run/single', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'groq/llama-3.3-70b-versatile',
-          prompt: `Assess the security risk of this operation:
+      const response = await this._callBackend('/run/single', {
+        model: 'groq/llama-3.3-70b-versatile',
+        prompt: `Assess the security risk of this operation:
 
 Operation: ${operation}
 Files affected: ${filesAffected.join(', ')}
@@ -767,8 +771,7 @@ Risk levels:
 - CRITICAL: Deleting multiple files, rm -rf, system-wide changes, unknown packages
 
 Respond with ONLY one word: low, medium, high, or critical`,
-          maxTokens: 5
-        })
+        maxTokens: 5
       });
 
       const data = await response.json();
@@ -793,20 +796,16 @@ Respond with ONLY one word: low, medium, high, or critical`,
    */
   private async _analyzeError(error: Error, context: string): Promise<string> {
     try {
-      const response = await fetch('http://localhost:3000/run/single', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'groq/llama-3.3-70b-versatile',
-          prompt: `Analyze this error and suggest a fix:
+      const response = await this._callBackend('/run/single', {
+        model: 'groq/llama-3.3-70b-versatile',
+        prompt: `Analyze this error and suggest a fix:
 
 Error: ${error.message}
 Stack: ${error.stack?.slice(0, 200)}
 Context: ${context}
 
 Provide a clear, actionable suggestion in 1-2 sentences. Be specific about what to do next.`,
-          maxTokens: 100
-        })
+        maxTokens: 100
       });
 
       const data = await response.json();
@@ -822,12 +821,9 @@ Provide a clear, actionable suggestion in 1-2 sentences. Be specific about what 
    */
   private async _assessTaskComplexity(task: string): Promise<'simple' | 'moderate' | 'complex'> {
     try {
-      const response = await fetch('http://localhost:3000/run/single', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'groq/llama-3.3-70b-versatile',
-          prompt: `Assess the complexity of this coding task:
+      const response = await this._callBackend('/run/single', {
+        model: 'groq/llama-3.3-70b-versatile',
+        prompt: `Assess the complexity of this coding task:
 
 "${task}"
 
@@ -837,8 +833,7 @@ Complexity levels:
 - COMPLEX: Architecture changes, refactoring entire systems, database migrations
 
 Respond with ONLY one word: simple, moderate, or complex`,
-          maxTokens: 5
-        })
+        maxTokens: 5
       });
 
       const data = await response.json();
@@ -898,15 +893,11 @@ Respond with ONLY one word: simple, moderate, or complex`,
         .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
       historyMessages.push({ role: 'user', content: userMessage });
 
-      const response = await fetch('http://localhost:3000/run/single', {
-        method: 'POST',
-        headers: this._licenseManager.getApiHeaders(),
-        body: JSON.stringify({
-          model,
-          prompt: userMessage,
-          messages: historyMessages,
-          ...(contextCode ? { code: contextCode } : {})
-        })
+      const response = await this._callBackend('/run/single', {
+        model,
+        prompt: userMessage,
+        messages: historyMessages,
+        ...(contextCode ? { code: contextCode } : {})
       });
 
       const data: any = await response.json();
@@ -1288,7 +1279,6 @@ Respond with ONLY one word: simple, moderate, or complex`,
     contextCode: string;
     contextFile: string;
   }) {
-    const backendPort = 3000;
     const payload = {
       models: params.selectedModels,
       prompt: params.userMessage,
@@ -1304,7 +1294,9 @@ Respond with ONLY one word: simple, moderate, or complex`,
     this._view?.webview.postMessage({ type: 'telemetryClear' });
     this._view?.webview.postMessage({ type: 'telemetryState', active: true, title: 'Ralph loop started...' });
 
-    const response = await fetch(`http://localhost:${backendPort}/run/chain/stream`, {
+    // Streaming (SSE) response — needs the raw fetch Response, so this can't
+    // go through _callBackend(), but it attaches the same headers.
+    const response = await fetch(`http://localhost:${this._serverPort}/run/chain/stream`, {
       method: 'POST',
       headers: this._licenseManager.getApiHeaders(),
       body: JSON.stringify(payload)
@@ -1414,8 +1406,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
         return;
       }
 
-      const backendPort = 3000;
-      const response = await fetch(`http://localhost:${backendPort}/run/chain/kill/${encodeURIComponent(this._activeRalphStreamId)}`, {
+      const response = await fetch(`http://localhost:${this._serverPort}/run/chain/kill/${encodeURIComponent(this._activeRalphStreamId)}`, {
         method: 'POST',
         headers: this._licenseManager.getApiHeaders()
       });

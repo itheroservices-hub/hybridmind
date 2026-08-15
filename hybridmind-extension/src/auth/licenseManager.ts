@@ -14,6 +14,11 @@ export interface LicenseStatus {
   features: string[];
 }
 
+// Secret storage keys. Namespaced so they don't collide with anything else
+// an extension might stash in the same SecretStorage.
+const SECRET_USER_API_KEY = 'hybridmind.secrets.userApiKey';
+const SECRET_USER_API_PROVIDER = 'hybridmind.secrets.userApiProvider';
+
 export class LicenseManager {
   private static instance: LicenseManager;
   private licenseKey: string | null = null;
@@ -22,26 +27,55 @@ export class LicenseManager {
   private verificationCache: LicenseStatus | null = null;
   private readonly CACHE_DURATION = 3600000; // 1 hour
 
-  // optional user-supplied API key (BYOK) and provider name
+  // optional user-supplied API key (BYOK) and provider name.
+  // Source of truth is vscode.SecretStorage, not plaintext settings — see
+  // initialize()/setUserApiKey(). These fields are just an in-memory cache
+  // so getApiHeaders() can stay synchronous.
   private userApiKey: string | null = null;
   private userApiProvider: string | null = null;
+  private context: vscode.ExtensionContext | null = null;
+  private initialized = false;
 
   private constructor() {
     this.loadLicenseFromSettings();
   }
 
-  public static getInstance(): LicenseManager {
+  /**
+   * Pass the extension context the first time this is called (normally in
+   * activate()). Later calls elsewhere in the extension can omit it since
+   * the singleton is already constructed.
+   */
+  public static getInstance(context?: vscode.ExtensionContext): LicenseManager {
     if (!LicenseManager.instance) {
       LicenseManager.instance = new LicenseManager();
     }
+    if (context && !LicenseManager.instance.context) {
+      LicenseManager.instance.context = context;
+    }
     return LicenseManager.instance;
+  }
+
+  /**
+   * Loads the BYOK key from SecretStorage. Must be called once (and awaited)
+   * during activation, after getInstance(context), before anything reads
+   * getApiHeaders()/userApiKey. Safe to call more than once.
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized || !this.context) {
+      return;
+    }
+    this.initialized = true;
+    const storedKey = await this.context.secrets.get(SECRET_USER_API_KEY);
+    const storedProvider = await this.context.secrets.get(SECRET_USER_API_PROVIDER);
+    if (storedKey) {
+      this.userApiKey = storedKey;
+      this.userApiProvider = storedProvider || this.userApiProvider;
+    }
   }
 
   private loadLicenseFromSettings() {
     const config = vscode.workspace.getConfiguration('hybridmind');
     this.licenseKey = config.get('licenseKey') || null;
-    this.userApiKey = config.get('userApiKey') || null;
-    this.userApiProvider = config.get('userApiProvider') || null;
 
     // Optimistically set tier from the key so isPro() is correct synchronously.
     // The async verifyLicense() call will confirm or downgrade if the key is invalid.
@@ -290,8 +324,11 @@ export class LicenseManager {
     }
 
     if (this.userApiKey) {
-      // allow user to supply their own API key for AI provider
-      headers['Authorization'] = `Bearer ${this.userApiKey}`;
+      // BYOK: the user's own provider key. Deliberately NOT sent as
+      // `Authorization` — that header is reserved for license/session auth
+      // (see X-License-Key above) to avoid a future collision if a remote
+      // backend is ever reintroduced.
+      headers['X-User-Provider-Key'] = this.userApiKey;
       headers['X-User-Api-Provider'] = this.userApiProvider || '';
     }
 
@@ -299,15 +336,32 @@ export class LicenseManager {
   }
 
   /**
-   * Store a user-provided API key (BYOK) in settings.  This can be used by
-   * the webview or other UI to offer a simple modal box to collect the key.
+   * Store a user-provided API key (BYOK) in vscode.SecretStorage — never
+   * in plaintext settings. Used by the "HybridMind: Set API Key (BYOK)"
+   * command and the sidebar's inline BYOK panel.
    */
   async setUserApiKey(provider: string, key: string): Promise<void> {
     this.userApiProvider = provider;
     this.userApiKey = key;
-    const config = vscode.workspace.getConfiguration('hybridmind');
-    await config.update('userApiProvider', provider, true);
-    await config.update('userApiKey', key, true);
+    if (!this.context) {
+      console.error('LicenseManager.setUserApiKey called before context was set; key was not persisted to SecretStorage.');
+      return;
+    }
+    await this.context.secrets.store(SECRET_USER_API_KEY, key);
+    await this.context.secrets.store(SECRET_USER_API_PROVIDER, provider);
+  }
+
+  /**
+   * Clear the stored BYOK key (used by the migration path when it needs to
+   * roll back, and available for a future "forget key" command).
+   */
+  async clearUserApiKey(): Promise<void> {
+    this.userApiKey = null;
+    this.userApiProvider = null;
+    if (this.context) {
+      await this.context.secrets.delete(SECRET_USER_API_KEY);
+      await this.context.secrets.delete(SECRET_USER_API_PROVIDER);
+    }
   }
 
   async promptForUpgrade(featureName: string): Promise<void> {

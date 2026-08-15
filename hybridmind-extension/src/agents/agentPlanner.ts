@@ -6,6 +6,7 @@ import { agentClient } from './agentClient';
 import { ChangeTracker } from './changeTracker';
 import { ProtocolHandler } from './protocolHandler';
 import { AgentTools } from './agentTools';
+import { LicenseManager } from '../auth/licenseManager';
 
 export interface ExecutionPlan {
   goal: string;
@@ -300,6 +301,7 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
         model: this._currentModel,
         prompt: request.systemPrompt + '\n\n' + request.userMessage
       }, {
+        headers: LicenseManager.getInstance().getApiHeaders(),
         timeout: 60000, // 60 second timeout
         validateStatus: (status) => status < 600 // Handle all HTTP errors via response payload
       });
@@ -674,6 +676,7 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
         prompt: directPrompt,
         maxTokens: 1024  // Keep code gen responses tight so free-tier doesn't time out
       }, {
+        headers: LicenseManager.getInstance().getApiHeaders(),
         validateStatus: () => true  // Don't throw on 4xx/5xx — handle below
       });
 

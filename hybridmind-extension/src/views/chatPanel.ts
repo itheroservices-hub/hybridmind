@@ -207,14 +207,13 @@ export class ChatPanel {
   }
 
   private async handleChangeModel(model: string) {
-    // Check if model requires Pro tier
+    // Under BYOK every request is billed to the user's own provider key, so
+    // there is no legitimate reason to block specific "expensive" models by
+    // license tier anymore — the model-by-cost blocklist that used to live
+    // here has been removed. Tier still gates feature-level things like
+    // chain length (see ChainEngine.validateChain) and agent team slots,
+    // which are real product features, not a cost proxy.
     const isPro = this._licenseManager.isPro();
-    const premiumModels = ['gpt-4', 'claude-3-5-sonnet', 'claude-3-opus', 'gemini-1.5-pro'];
-
-    if (!isPro && premiumModels.includes(model)) {
-      await this._licenseManager.promptForUpgrade('Premium Models');
-      return;
-    }
 
     this._currentModel = model;
     this._panel.webview.postMessage({ command: 'modelChanged', model });
