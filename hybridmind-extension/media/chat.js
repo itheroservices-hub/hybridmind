@@ -42,6 +42,141 @@
   function esc(t) { var d = document.createElement('div'); d.textContent = String(t == null ? '' : t); return d.innerHTML; }
   function showErr(e) { var b = g('eb'); if (b) { b.style.display = 'block'; b.textContent = 'ERR: ' + (e && e.message ? e.message : String(e)); } }
 
+  // ==========================================================================
+  // Lightweight markdown + syntax highlighting (no external deps, CSP-safe).
+  // Handles: fenced code blocks (with a pending/streaming variant for an
+  // unterminated fence), inline code, bold/italic, headings, lists, links.
+  // ==========================================================================
+
+  var CM_KEYWORDS = /\b(function|return|const|let|var|if|else|for|while|do|switch|case|break|continue|class|extends|new|this|import|export|from|as|default|async|await|try|catch|finally|throw|typeof|instanceof|in|of|null|undefined|true|false|void|yield|def|elif|except|with|lambda|pass|raise|None|True|False|self|public|private|protected|static|interface|implements|namespace|type|enum|struct|fn|impl|pub|use|mod|match|package|func|defer|chan|go)\b/g;
+  var CM_TOKENS = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/|"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)/g;
+
+  function highlightCode(code) {
+    var out = [], last = 0, m;
+    CM_TOKENS.lastIndex = 0;
+    while ((m = CM_TOKENS.exec(code))) {
+      if (m.index > last) out.push({ code: code.slice(last, m.index) });
+      var val = m[0];
+      var cls = (val.charAt(0) === '/' || val.charAt(0) === '#') ? 'cm-comment' : 'cm-string';
+      out.push({ tok: val, cls: cls });
+      last = CM_TOKENS.lastIndex;
+    }
+    if (last < code.length) out.push({ code: code.slice(last) });
+
+    return out.map(function (p) {
+      if (p.tok !== undefined) return '<span class="' + p.cls + '">' + esc(p.tok) + '</span>';
+      var s = esc(p.code);
+      s = s.replace(CM_KEYWORDS, '<span class="cm-keyword">$1</span>');
+      s = s.replace(/\b(\d+\.?\d*)\b/g, '<span class="cm-number">$1</span>');
+      return s;
+    }).join('');
+  }
+
+  function inlineMd(line) {
+    var out = esc(line);
+    out = out.replace(/`([^`]+)`/g, function (_, code) { return '<code class="md-inline-code">' + code + '</code>'; });
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" class="md-link" target="_blank" rel="noopener">$1</a>');
+    return out;
+  }
+
+  var CODE_BLOCK_SEQ = 0;
+
+  function mdRender(raw) {
+    var text = String(raw == null ? '' : raw);
+
+    // An unterminated fence (still streaming) is rendered separately as a
+    // "pending" block so partial code doesn't get mangled by the line rules
+    // below, and pops cleanly into a normal code block once the closing
+    // ``` arrives on a later render pass.
+    var pendingHtml = '';
+    var openIdx = text.indexOf('```');
+    if (openIdx !== -1 && text.indexOf('```', openIdx + 3) === -1) {
+      var rest = text.slice(openIdx + 3);
+      var nl = rest.indexOf('\n');
+      var lang = nl === -1 ? rest : rest.slice(0, nl);
+      var codeSoFar = nl === -1 ? '' : rest.slice(nl + 1);
+      var langIsClean = /^[a-zA-Z0-9_+-]*$/.test(lang.trim());
+      pendingHtml = '<div class="code-block pending"><div class="code-hdr"><span class="code-lang">' +
+        esc((langIsClean && lang.trim()) || 'code') + '</span></div><pre><code>' +
+        highlightCode(langIsClean ? codeSoFar : rest) + '</code></pre></div>';
+      text = text.slice(0, openIdx);
+    }
+
+    var blocks = [];
+    text = text.replace(/```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g, function (_, lang, code) {
+      var idx = blocks.length;
+      blocks.push({ lang: lang || '', code: code.replace(/\n$/, '') });
+      return '@CODEBLOCK' + idx + '@';
+    });
+
+    var lines = text.split('\n');
+    var html = [];
+    var inList = null;
+    function closeList() { if (inList) { html.push('</' + inList + '>'); inList = null; } }
+
+    lines.forEach(function (line) {
+      var placeholderMatch = line.match(/^@CODEBLOCK(\d+)@$/);
+      if (placeholderMatch) {
+        closeList();
+        var b = blocks[parseInt(placeholderMatch[1], 10)];
+        html.push(
+          '<div class="code-block"><div class="code-hdr"><span class="code-lang">' + esc(b.lang || 'text') +
+          '</span><button class="copy-code-btn" type="button">Copy</button></div><pre><code>' +
+          highlightCode(b.code) + '</code></pre></div>'
+        );
+        return;
+      }
+
+      var headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
+      if (headingMatch) {
+        closeList();
+        var level = Math.min(headingMatch[1].length + 3, 6);
+        html.push('<h' + level + ' class="md-h">' + inlineMd(headingMatch[2]) + '</h' + level + '>');
+        return;
+      }
+
+      var ulMatch = line.match(/^\s*[-*]\s+(.*)$/);
+      var olMatch = line.match(/^\s*\d+\.\s+(.*)$/);
+      if (ulMatch) {
+        if (inList !== 'ul') { closeList(); html.push('<ul class="md-ul">'); inList = 'ul'; }
+        html.push('<li>' + inlineMd(ulMatch[1]) + '</li>');
+        return;
+      }
+      if (olMatch) {
+        if (inList !== 'ol') { closeList(); html.push('<ol class="md-ol">'); inList = 'ol'; }
+        html.push('<li>' + inlineMd(olMatch[1]) + '</li>');
+        return;
+      }
+
+      closeList();
+      if (line.trim() === '') { html.push('<div class="md-br"></div>'); return; }
+      html.push('<p class="md-p">' + inlineMd(line) + '</p>');
+    });
+    closeList();
+
+    return html.join('') + pendingHtml;
+  }
+
+  function wireCopyButtons(scope) {
+    (scope || document).querySelectorAll('.copy-code-btn').forEach(function (btn) {
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        var block = btn.closest('.code-block');
+        var codeEl = block ? block.querySelector('code') : null;
+        var text = codeEl ? codeEl.textContent : '';
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(text).then(function () {
+            var orig = btn.textContent;
+            btn.textContent = 'Copied';
+            setTimeout(function () { btn.textContent = orig; }, 1200);
+          }).catch(function () {});
+        }
+      };
+    });
+  }
+
   // DIAG
   var diag = g('diag'); if (diag) diag.style.background = 'lime';
   var _cl = 0;
@@ -415,6 +550,22 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
     });
 
+    var stopBtn = g('stopBtn');
+    if (stopBtn) stopBtn.addEventListener('click', function () {
+      vsc.postMessage({ type: 'cancelStream' });
+      stopBtn.disabled = true;
+    });
+
+    var jumpBtn = g('jumpBtn');
+    var msgsScrollEl = g('msgs');
+    if (msgsScrollEl && jumpBtn) {
+      msgsScrollEl.addEventListener('scroll', updateJumpBtn);
+      jumpBtn.addEventListener('click', function () {
+        msgsScrollEl.scrollTop = msgsScrollEl.scrollHeight;
+        jumpBtn.style.display = 'none';
+      });
+    }
+
     function updStats() {
       var sm = g('stM'), sa = g('stA');
       if (sm) sm.textContent = selMods.length + ' / ' + MAXM;
@@ -461,12 +612,13 @@
         });
         return;
       }
+      var wasNearBottom = (mc.scrollHeight - mc.scrollTop - mc.clientHeight) < 80;
+
       mc.innerHTML = msgs.map(function (m) {
         var t = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         var rl = m.role === 'user' ? 'You' : (m.model || 'HybridMind');
-        var body = esc(String(m.content || '')).replace(/\n/g, '<br>');
 
-        // Assistant responses render as collapsible answer boxes
+        // Assistant responses render as collapsible answer boxes with markdown + code blocks
         if (m.role === 'assistant') {
           // Agent Planner / Agent Summary cards start collapsed to save space
           var isCard = m.model === 'Agent Planner' || m.model === 'Agent Summary';
@@ -477,7 +629,7 @@
             + (m.model ? '<span class="ans-badge">' + esc(m.model) + '</span>' : '') + '</div>'
             + '<div class="ans-right"><span class="ans-time">' + esc(t) + '</span><span class="ans-chevron">&#9660;</span></div>'
             + '</div>'
-            + '<div class="ans-body">' + body + '</div>'
+            + '<div class="ans-body">' + mdRender(m.content) + '</div>'
             + '<div class="ans-footer"><button class="btn btn-sm insBtn">Insert</button><button class="btn btn-sm cpyBtn">Copy</button></div>'
             + '</div>';
         }
@@ -492,13 +644,13 @@
           return '<div class="status-line ' + slCls + '"><span class="sdot"></span><span class="stxt">' + esc(c) + '</span></div>';
         }
 
-        // User messages stay as flat bubbles
+        // User messages stay as flat bubbles, but still get markdown/code rendering
         return '<div class="msg ' + esc(m.role || 'assistant') + '">'
           + '<div class="mhdr"><div class="mrole"><span class="rdot2"></span><span>' + esc(rl) + '</span></div>'
           + '<span class="mtime">' + esc(t) + '</span></div>'
-          + '<div class="mbody">' + body + '</div></div>';
+          + '<div class="mbody">' + mdRender(m.content) + '</div></div>';
       }).join('');
-      mc.scrollTop = mc.scrollHeight;
+      if (wasNearBottom) mc.scrollTop = mc.scrollHeight;
       var sb = g('sendBtn'); if (sb) sb.disabled = false;
 
       // Collapsible toggle
@@ -519,6 +671,111 @@
           if (am[i] && navigator.clipboard) navigator.clipboard.writeText(am[i].content).catch(function () {});
         });
       });
+      wireCopyButtons(mc);
+      updateJumpBtn();
+    }
+
+    function updateJumpBtn() {
+      var mc = g('msgs'), jb = g('jumpBtn'); if (!mc || !jb) return;
+      var nearBottom = (mc.scrollHeight - mc.scrollTop - mc.clientHeight) < 60;
+      jb.style.display = nearBottom ? 'none' : 'flex';
+    }
+
+    // ==========================================================================
+    // Token streaming ("thought process" UI). One entry in `streams` per
+    // in-flight message id: streamStart creates the live answer box,
+    // streamReasoning/streamContent append into it (batched via
+    // requestAnimationFrame so a burst of small deltas doesn't thrash the
+    // DOM), and streamEnd/streamError finalize it — re-enabling Insert/Copy,
+    // clearing the blinking cursor, and restoring the Send button.
+    // ==========================================================================
+    var streams = {};
+
+    function ensureStreamNode(id, model) {
+      var mc = g('msgs'); if (!mc) return null;
+      if (mc.querySelector('.empty')) mc.innerHTML = '';
+      var box = document.createElement('div');
+      box.className = 'ans-box open streaming';
+      box.innerHTML =
+        '<div class="ans-hdr"><div class="ans-meta"><span class="ans-dot pulse"></span><span>HybridMind</span>' +
+        (model ? '<span class="ans-badge">' + esc(model) + '</span>' : '') + '</div>' +
+        '<div class="ans-right"><span class="ans-time">now</span><span class="ans-chevron">&#9660;</span></div></div>' +
+        '<div class="think-box" style="display:none;">' +
+        '<div class="think-hdr"><span class="think-label">Thinking</span><span class="think-chev">&#9660;</span></div>' +
+        '<div class="think-body"></div>' +
+        '</div>' +
+        '<div class="ans-body"><span class="stream-cursor"></span></div>' +
+        '<div class="ans-footer"><button class="btn btn-sm insBtn" disabled>Insert</button><button class="btn btn-sm cpyBtn" disabled>Copy</button></div>';
+      mc.appendChild(box);
+      mc.scrollTop = mc.scrollHeight;
+
+      box.querySelector('.ans-hdr').addEventListener('click', function () { box.classList.toggle('open'); });
+      box.querySelector('.think-hdr').addEventListener('click', function () {
+        box.querySelector('.think-box').classList.toggle('collapsed');
+      });
+
+      return box;
+    }
+
+    function scheduleStreamRender(id) {
+      var st = streams[id]; if (!st || st.scheduled) return;
+      st.scheduled = true;
+      requestAnimationFrame(function () { st.scheduled = false; renderStreamNode(id); });
+    }
+
+    function renderStreamNode(id) {
+      var st = streams[id]; if (!st || !st.box) return;
+      var thinkBox = st.box.querySelector('.think-box');
+      var thinkBody = st.box.querySelector('.think-body');
+      var ansBody = st.box.querySelector('.ans-body');
+
+      if (st.reasoningRaw) {
+        thinkBox.style.display = 'block';
+        thinkBody.innerHTML = mdRender(st.reasoningRaw);
+        // Auto-collapse the thinking panel once the real answer starts —
+        // matches the "collapsible once the answer starts" behavior.
+        if (st.contentRaw && !thinkBox.classList.contains('collapsed')) {
+          thinkBox.classList.add('collapsed');
+        }
+      }
+
+      ansBody.innerHTML = mdRender(st.contentRaw) + '<span class="stream-cursor"></span>';
+      wireCopyButtons(st.box);
+
+      var mc = g('msgs');
+      if (mc) {
+        var nearBottom = (mc.scrollHeight - mc.scrollTop - mc.clientHeight) < 80;
+        if (nearBottom) mc.scrollTop = mc.scrollHeight;
+        updateJumpBtn();
+      }
+    }
+
+    function finalizeStream(id, errorMessage) {
+      var st = streams[id];
+      var sb = g('sendBtn'); if (sb) { sb.style.display = ''; sb.disabled = false; }
+      var stopB = g('stopBtn'); if (stopB) { stopB.style.display = 'none'; stopB.disabled = false; }
+
+      if (!st || !st.box) { delete streams[id]; return; }
+      var box = st.box;
+      box.classList.remove('streaming');
+
+      var cursor = box.querySelector('.stream-cursor'); if (cursor) cursor.remove();
+      var thinkBox = box.querySelector('.think-box'); if (thinkBox) thinkBox.classList.add('collapsed');
+      var dot = box.querySelector('.ans-dot'); if (dot) dot.classList.remove('pulse');
+
+      if (errorMessage) {
+        var err = document.createElement('div');
+        err.className = 'stream-error';
+        err.textContent = 'Error: ' + errorMessage;
+        box.querySelector('.ans-body').appendChild(err);
+      }
+
+      var insBtn = box.querySelector('.insBtn');
+      if (insBtn) { insBtn.disabled = false; insBtn.addEventListener('click', function (e) { e.stopPropagation(); vsc.postMessage({ type: 'insertCode', code: st.contentRaw }); }); }
+      var cpyBtn = box.querySelector('.cpyBtn');
+      if (cpyBtn) { cpyBtn.disabled = false; cpyBtn.addEventListener('click', function (e) { e.stopPropagation(); if (navigator.clipboard) navigator.clipboard.writeText(st.contentRaw).catch(function () {}); }); }
+
+      delete streams[id];
     }
 
     // VSCode message handler
@@ -528,6 +785,30 @@
         case 'updateMessages':
           msgs = m.messages || []; renderMsgs();
           var sb = g('sendBtn'); if (sb) sb.disabled = false;
+          break;
+        case 'streamStart': {
+          streams[m.id] = { model: m.model, contentRaw: '', reasoningRaw: '', box: ensureStreamNode(m.id, m.model), scheduled: false };
+          var sBtn = g('sendBtn'); if (sBtn) sBtn.style.display = 'none';
+          var stBtn = g('stopBtn'); if (stBtn) { stBtn.style.display = ''; stBtn.disabled = false; }
+          break;
+        }
+        case 'streamReasoning': {
+          var stR = streams[m.id]; if (!stR) break;
+          stR.reasoningRaw += m.delta || '';
+          scheduleStreamRender(m.id);
+          break;
+        }
+        case 'streamContent': {
+          var stC = streams[m.id]; if (!stC) break;
+          stC.contentRaw += m.delta || '';
+          scheduleStreamRender(m.id);
+          break;
+        }
+        case 'streamEnd':
+          finalizeStream(m.id);
+          break;
+        case 'streamError':
+          finalizeStream(m.id, m.message);
           break;
         case 'byokStatus': {
           var el = g('byokStat');

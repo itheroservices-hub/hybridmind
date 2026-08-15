@@ -156,6 +156,52 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
         return;
       }
 
+      // Streaming single-model endpoint — Server-Sent Events.
+      // Additive sibling of /run/single: same BYOK dispatch rules, but pushes
+      // `delta` events as tokens arrive instead of waiting for the full
+      // response. Used by the chat UI's "thought process" streaming view.
+      if (req.url === '/run/single/stream' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+          const controller = new AbortController();
+          req.on('close', () => controller.abort());
+          // Once the client disconnects, the abort above stops new writes
+          // from being scheduled, but a write already in flight when the
+          // socket closes can still land on a destroyed stream and emit
+          // 'error'. res has no listener for that by default, which would
+          // otherwise surface as an unhandled 'error' event and crash the
+          // extension host. Swallow it — the client is gone either way.
+          res.on('error', () => {});
+
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+          });
+
+          try {
+            const data = JSON.parse(body);
+            const result = await streamModel(
+              data.model,
+              data.prompt,
+              data.messages,
+              context,
+              req.headers,
+              controller.signal,
+              (kind, text) => writeSSE(res, 'delta', { kind, text })
+            );
+            writeSSE(res, 'done', result);
+          } catch (error: any) {
+            const message = error?.name === 'AbortError' ? 'Stopped by user.' : (error?.message || 'Unknown streaming error');
+            writeSSE(res, 'error', { message });
+          } finally {
+            res.end();
+          }
+        });
+        return;
+      }
+
       // Not found
       res.writeHead(404);
       res.end('Not found');
@@ -312,6 +358,270 @@ async function runModel(
   }
 
   return runOpenRouter(modelId, prompt, openrouterKey);
+}
+
+type StreamDeltaKind = 'content' | 'reasoning';
+type StreamDeltaFn = (kind: StreamDeltaKind, text: string) => void;
+interface StreamResult {
+  content: string;
+  reasoning: string;
+  model: string;
+  provider: string;
+  usage?: any;
+}
+
+function writeSSE(res: http.ServerResponse, event: string, data: any) {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/**
+ * Streaming counterpart of runModel(). Additive — reuses the exact same BYOK
+ * dispatch rules as runModel() but pushes deltas as they arrive instead of
+ * waiting for a full response. Providers whose API doesn't offer real
+ * token streaming (Gemini, Qwen) fall back to a single non-streaming call
+ * whose result is then chunked out via simulateStreamFromResult() so the
+ * caller always sees the same delta/done event shape either way.
+ */
+async function streamModel(
+  modelId: string,
+  prompt: string,
+  messages: Array<{ role: string; content: string }> | undefined,
+  context: vscode.ExtensionContext,
+  headers: http.IncomingHttpHeaders,
+  signal: AbortSignal,
+  onDelta: StreamDeltaFn
+): Promise<StreamResult> {
+  const MAX_CHARS = 50000;
+  if (prompt.length > MAX_CHARS) {
+    throw new Error(
+      `Prompt too large: ${prompt.length.toLocaleString()} characters. ` +
+      `Maximum: ${MAX_CHARS.toLocaleString()} characters (≈12,500 tokens). ` +
+      `Please select less code or split into smaller chunks.`
+    );
+  }
+
+  const chatMessages = messages && messages.length
+    ? messages.map(m => ({ role: m.role, content: m.content }))
+    : [{ role: 'user', content: prompt }];
+
+  const { provider, key: userKey } = getByokFromHeaders(headers);
+
+  if (provider && userKey) {
+    switch (provider) {
+      case 'groq':
+        return streamOpenAICompatible('https://api.groq.com/openai/v1/chat/completions', userKey, {}, modelId, chatMessages, 'groq', signal, onDelta);
+      case 'deepseek':
+        return streamOpenAICompatible('https://api.deepseek.com/chat/completions', userKey, {}, modelId, chatMessages, 'deepseek', signal, onDelta);
+      case 'openai':
+        return streamOpenAICompatible('https://api.openai.com/v1/chat/completions', userKey, {}, modelId, chatMessages, 'openai', signal, onDelta);
+      case 'openrouter':
+        return streamOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', userKey, {
+          'HTTP-Referer': 'https://hybridmind.app',
+          'X-Title': 'HybridMind VS Code Extension'
+        }, modelId, chatMessages, 'openrouter', signal, onDelta);
+      case 'anthropic':
+      case 'claude':
+        return streamAnthropic(modelId, chatMessages, userKey, signal, onDelta);
+      case 'gemini':
+      case 'google':
+        return simulateStreamFromResult(await runGemini(modelId, prompt, userKey), onDelta);
+      case 'qwen':
+        return simulateStreamFromResult(await runQwen(modelId, prompt, userKey), onDelta);
+      default:
+        throw new Error(
+          `Unknown BYOK provider "${provider}". Supported providers: groq, gemini, deepseek, qwen, openai, anthropic, openrouter.`
+        );
+    }
+  }
+
+  const config = vscode.workspace.getConfiguration('hybridmind');
+  const openrouterKey = config.get<string>('openrouterApiKey') || '';
+
+  if (!openrouterKey) {
+    throw new Error(
+      'No API key configured. Run "HybridMind: Set API Key (BYOK)" to add a provider key, or set an OpenRouter API key in VS Code Settings > Extensions > HybridMind.'
+    );
+  }
+
+  return streamOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', openrouterKey, {
+    'HTTP-Referer': 'https://hybridmind.app',
+    'X-Title': 'HybridMind VS Code Extension'
+  }, modelId, chatMessages, 'openrouter', signal, onDelta);
+}
+
+/**
+ * Shared SSE streaming path for every OpenAI-compatible chat/completions API
+ * (Groq, OpenAI, DeepSeek, OpenRouter). Forwards `delta.content` as 'content'
+ * deltas. Also watches for `delta.reasoning_content` (DeepSeek reasoner
+ * models) and `delta.reasoning` (OpenRouter's reasoning-token field, e.g.
+ * DeepSeek R1) and forwards those as a distinct 'reasoning' kind so the UI
+ * can render a separate "thinking" region.
+ */
+async function streamOpenAICompatible(
+  url: string,
+  apiKey: string,
+  extraHeaders: Record<string, string>,
+  model: string,
+  messages: Array<{ role: string; content: string }>,
+  providerName: string,
+  signal: AbortSignal,
+  onDelta: StreamDeltaFn
+): Promise<StreamResult> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      ...extraHeaders
+    },
+    body: JSON.stringify({ model, messages, stream: true, max_tokens: 4000 }),
+    signal
+  });
+
+  if (!response.ok || !response.body) {
+    const errorText = await response.text().catch(() => '');
+    if (response.status === 401) {
+      throw new Error(`Invalid ${providerName} API key. Check your settings.`);
+    } else if (response.status === 429) {
+      throw new Error(`${providerName} rate limit exceeded. Wait a few seconds and try again.`);
+    }
+    throw new Error(`${providerName} API error (${response.status}): ${errorText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  let reasoning = '';
+  let usage: any = undefined;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const dataStr = trimmed.slice(5).trim();
+      if (!dataStr || dataStr === '[DONE]') continue;
+
+      let json: any;
+      try {
+        json = JSON.parse(dataStr);
+      } catch {
+        continue;
+      }
+
+      const delta = json?.choices?.[0]?.delta;
+      if (delta?.reasoning_content) {
+        reasoning += delta.reasoning_content;
+        onDelta('reasoning', delta.reasoning_content);
+      }
+      if (delta?.reasoning) {
+        reasoning += delta.reasoning;
+        onDelta('reasoning', delta.reasoning);
+      }
+      if (delta?.content) {
+        content += delta.content;
+        onDelta('content', delta.content);
+      }
+      if (json?.usage) {
+        usage = json.usage;
+      }
+    }
+  }
+
+  return { content, reasoning, model, provider: providerName, usage };
+}
+
+/**
+ * Anthropic's SSE event shape is different from the OpenAI-style providers
+ * (event: content_block_delta / message_delta rather than a flat
+ * `choices[0].delta`), so it gets its own small parser.
+ */
+async function streamAnthropic(
+  model: string,
+  messages: Array<{ role: string; content: string }>,
+  apiKey: string,
+  signal: AbortSignal,
+  onDelta: StreamDeltaFn
+): Promise<StreamResult> {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ model, messages, max_tokens: 4000, stream: true }),
+    signal
+  });
+
+  if (!response.ok || !response.body) {
+    const errorText = await response.text().catch(() => '');
+    if (response.status === 401) {
+      throw new Error('Invalid Anthropic API key. Check your settings.');
+    } else if (response.status === 429) {
+      throw new Error('Anthropic rate limit exceeded. Wait a few seconds and try again.');
+    }
+    throw new Error(`Anthropic API error (${response.status}): ${errorText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const dataStr = trimmed.slice(5).trim();
+      if (!dataStr) continue;
+
+      let json: any;
+      try {
+        json = JSON.parse(dataStr);
+      } catch {
+        continue;
+      }
+
+      if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta' && json.delta.text) {
+        content += json.delta.text;
+        onDelta('content', json.delta.text);
+      }
+    }
+  }
+
+  return { content, reasoning: '', model, provider: 'anthropic', usage: undefined };
+}
+
+/**
+ * Providers we don't have real token streaming for yet (Gemini, Qwen) still
+ * get a non-streaming call under the hood, but the result is chunked out
+ * through the same onDelta callback so the UI never sees a jarring
+ * instant full-response dump regardless of which provider answered.
+ */
+async function simulateStreamFromResult(
+  result: { content: string; model: string; provider: string },
+  onDelta: StreamDeltaFn
+): Promise<StreamResult> {
+  const text = result.content || '';
+  const chunkSize = 20;
+  for (let i = 0; i < text.length; i += chunkSize) {
+    onDelta('content', text.slice(i, i + chunkSize));
+    await new Promise(resolve => setTimeout(resolve, 12));
+  }
+  return { content: text, reasoning: '', model: result.model, provider: result.provider, usage: undefined };
 }
 
 async function runGroq(model: string, prompt: string, apiKey: string): Promise<any> {

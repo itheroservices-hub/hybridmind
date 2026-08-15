@@ -49,6 +49,10 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   private _activeRalphStreamId: string | null = null;
   private _activeRalphChainId: string | null = null;
 
+  // Single-model token streaming (thought-process UI)
+  private _streamCounter: number = 0;
+  private _streamAbortController: AbortController | null = null;
+
   constructor(
     private readonly _extensionUri: vscode.Uri,
     serverPort: number
@@ -171,6 +175,9 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           break;
         case 'killRalphLoop':
           await this._killRalphLoop();
+          break;
+        case 'cancelStream':
+          this._cancelStream();
           break;
         case 'openByok':
           // Toggle inline BYOK panel in the webview
@@ -366,6 +373,19 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
 
+      // Single-model mode streams tokens (and, where the provider distinguishes
+      // it, reasoning) live into the webview instead of waiting for the full
+      // response. This is the everyday chat path, so it's the one that gets
+      // the real "thought process" streaming UI.
+      if (workflowMode === 'single') {
+        const historyMessages = this._messages
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .slice(-20)
+          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+        await this._streamSingleModel(selectedModels[0], userMessage, historyMessages);
+        return;
+      }
+
       let requestBody: any = {
         tier: this._licenseManager.isPro() ? 'pro' : 'free'
       };
@@ -402,19 +422,10 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           }
         };
       } else {
-        // Single model mode - send full conversation history as messages array
-        endpoint = '/run/single';
-        const historyMessages = this._messages
-          .filter(m => m.role === 'user' || m.role === 'assistant')
-          .slice(-20)
-          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-        // Append current user message
-        historyMessages.push({ role: 'user', content: userMessage });
-        requestBody = {
-          model: selectedModels[0],
-          prompt: userMessage,  // kept for backward compat with other call sites
-          messages: historyMessages
-        };
+        // Every other workflowMode ('single', 'agentic') returns earlier in
+        // this function, so this is unreachable in practice. Guard it
+        // defensively rather than silently calling an empty endpoint.
+        throw new Error(`Unhandled workflow mode: ${workflowMode}`);
       }
 
       // Call backend API
@@ -505,58 +516,11 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
           cost: responseData.cost
         };
         this._messages.push(assistantMsg);
-      } else if (workflowMode === 'agentic') {
-        // Backend agentic workflow (Planner -> Executor -> Reviewer)
-        const result = responseData;
-        
-        // Show execution steps if available
-        if (result.execution?.results) {
-          for (const step of result.execution.results) {
-            const stepMsg: ChatMessage = {
-              role: 'assistant',
-              content: `**Step ${step.stepName}** (${step.action})\n${step.success ? 'Success:' : 'Error:'} ${step.confirmation?.message || 'Executed'}\n\nChanges: ${step.changes?.linesAdded || 0} added, ${step.changes?.linesRemoved || 0} removed`,
-              model: step.model,
-              timestamp: new Date()
-            };
-            this._messages.push(stepMsg);
-          }
-        }
-        
-        // Show review if available
-        if (result.review) {
-          const reviewMsg: ChatMessage = {
-            role: 'assistant',
-            content: `**Review Review**\n\n${result.review.summary || 'Review complete'}\n\n**Quality Score:** ${result.review.qualityScore || 'N/A'}\n**Issues:** ${result.review.issues?.length || 0}`,
-            model: 'Reviewer',
-            timestamp: new Date()
-          };
-          this._messages.push(reviewMsg);
-        }
-        
-        // Final result
-        const assistantMsg: ChatMessage = {
-          role: 'assistant',
-          content: `**Complete Agentic Workflow Complete**\n\n${result.finalOutput || 'Task completed successfully'}`,
-          model: 'Workflow Engine',
-          timestamp: new Date(),
-          tokens: result.totalUsage?.totalTokens,
-          cost: 0
-        };
-        this._messages.push(assistantMsg);
-      } else {
-        // Single model response - backend returns {success: true, data: {output: "...", model: "..."}}
-        const responseData = data.data || data;
-        const assistantMsg: ChatMessage = {
-          role: 'assistant',
-          content: responseData.output || responseData.content || responseData.response || responseData.message || 'No response',
-          model: responseData.model || selectedModels[0],
-          timestamp: new Date(),
-          tokens: data.meta?.usage?.totalTokens || responseData.usage?.total_tokens,
-          cost: responseData.cost
-        };
-        this._messages.push(assistantMsg);
       }
-      
+      // Note: 'agentic' mode is handled earlier via _handleAutonomousExecution()
+      // and 'single' mode via _streamSingleModel() — both return before
+      // reaching this point.
+
       this._updateWebview();
 
     } catch (error: any) {
@@ -881,49 +845,27 @@ Respond with ONLY one word: simple, moderate, or complex`,
   }
 
   /**
-   * Answer a Q&A request directly via the single-model endpoint, bypassing planning.
+   * Answer a Q&A request directly via the streaming single-model path,
+   * bypassing planning. userMsg has already been pushed into this._messages
+   * by the caller (_handleSendMessage), so history is read from there.
    */
   private async _answerDirectly(userMessage: string, models: string[], contextCode: string) {
-    this._view?.webview.postMessage({ type: 'thinking', value: true });
     try {
       const model = models[0] || this._selectedModels[0] || 'llama-3.3-70b-versatile';
       const historyMessages = this._messages
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .slice(-20)
         .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-      historyMessages.push({ role: 'user', content: userMessage });
 
-      const response = await this._callBackend('/run/single', {
-        model,
-        prompt: userMessage,
-        messages: historyMessages,
-        ...(contextCode ? { code: contextCode } : {})
-      });
+      const prompt = contextCode
+        ? `${userMessage}\n\nSelected code:\n\`\`\`\n${contextCode}\n\`\`\``
+        : userMessage;
 
-      const data: any = await response.json();
-
-      if (!response.ok) {
-        const msg = data?.error?.message || data?.message || `Backend error ${response.status}`;
-        throw new Error(msg);
-      }
-
-      // Backend wraps in { success, data: { output } } via responseFormatter.modelResult
-      const output = data?.data?.output
-        || data?.data?.content
-        || data?.output
-        || data?.content
-        || '';
-      if (!output) { throw new Error('No response from model'); }
-
-      const assistantMsg: ChatMessage = { role: 'assistant', content: output, model, timestamp: new Date() };
-      this._messages.push(assistantMsg);
-      this._updateWebview();
+      await this._streamSingleModel(model, prompt, historyMessages);
     } catch (e: any) {
       const errMsg: ChatMessage = { role: 'assistant', content: `Error getting response: ${e.message}`, timestamp: new Date() };
       this._messages.push(errMsg);
       this._updateWebview();
-    } finally {
-      this._view?.webview.postMessage({ type: 'thinking', value: false });
     }
   }
 
@@ -1432,6 +1374,168 @@ Respond with ONLY one word: simple, moderate, or complex`,
     }
   }
 
+  /**
+   * Stream a single model's answer token-by-token into the webview.
+   *
+   * Talks to the embedded server's /run/single/stream SSE endpoint (see
+   * embeddedServer.ts) rather than the plain JSON /run/single endpoint. The
+   * webview gets three message types while this runs: 'streamStart' (once,
+   * carries the message id + model so the UI can render a live answer box),
+   * 'streamReasoning' / 'streamContent' (one per delta, carries the id and
+   * the incremental text to append), and 'streamEnd' / 'streamError' (once,
+   * finalizes the box). The finished message is also appended to
+   * this._messages for normal history/persistence, matching every other
+   * workflow mode — but _updateWebview() (a full message-list replace) is
+   * deliberately NOT called here, since the webview already has the final
+   * text from the incremental deltas and a full replace would just cause a
+   * visible flicker/scroll jump for no benefit.
+   */
+  private async _streamSingleModel(
+    model: string,
+    prompt: string,
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  ): Promise<void> {
+    // Only one token stream should be in flight at a time. The webview hides
+    // the Send button while streaming, but the textarea's Enter-to-send
+    // handler doesn't check that, so a second message can still slip through
+    // and start an overlapping stream. Without this, the earlier stream's
+    // AbortController reference gets overwritten here, so Stop can only ever
+    // reach the newest stream — the older one keeps running against the
+    // provider (burning tokens/cost) with no way for the UI to cancel it, and
+    // its eventual streamEnd/streamError would incorrectly reset the
+    // Send/Stop button state for the still-running newer stream. Cancelling
+    // any existing stream before starting a new one keeps the "one active
+    // stream" invariant the rest of this method (and the UI) assumes.
+    if (this._streamAbortController) {
+      this._streamAbortController.abort();
+    }
+
+    const streamId = `s${++this._streamCounter}`;
+    const abortController = new AbortController();
+    this._streamAbortController = abortController;
+
+    this._view?.webview.postMessage({ type: 'streamStart', id: streamId, model });
+
+    let content = '';
+    let reasoning = '';
+
+    try {
+      const response = await fetch(`http://localhost:${this._serverPort}/run/single/stream`, {
+        method: 'POST',
+        headers: this._licenseManager.getApiHeaders(),
+        body: JSON.stringify({ model, prompt, messages }),
+        signal: abortController.signal
+      });
+
+      if (!response.ok || !response.body) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Stream request failed (${response.status}): ${errorText}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let streamErrorMessage: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+
+        for (const rawEvent of events) {
+          const lines = rawEvent.split('\n').map(l => l.trim()).filter(Boolean);
+          if (!lines.length) continue;
+
+          let eventName = 'message';
+          let dataText = '';
+          for (const line of lines) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            if (line.startsWith('data:')) dataText += line.slice(5).trim();
+          }
+          if (!dataText) continue;
+
+          let payload: any;
+          try {
+            payload = JSON.parse(dataText);
+          } catch {
+            payload = {};
+          }
+
+          if (eventName === 'delta') {
+            const text: string = payload.text || '';
+            if (payload.kind === 'reasoning') {
+              reasoning += text;
+              this._view?.webview.postMessage({ type: 'streamReasoning', id: streamId, delta: text });
+            } else {
+              content += text;
+              this._view?.webview.postMessage({ type: 'streamContent', id: streamId, delta: text });
+            }
+          } else if (eventName === 'error') {
+            streamErrorMessage = payload.message || 'Stream error';
+          }
+          // 'done' just confirms model/usage metadata — the full text is
+          // already assembled from the deltas above, nothing more to do.
+        }
+      }
+
+      if (streamErrorMessage) {
+        throw new Error(streamErrorMessage);
+      }
+
+      const assistantMsg: ChatMessage = {
+        role: 'assistant',
+        content: content || '(No response)',
+        model,
+        timestamp: new Date()
+      };
+      this._messages.push(assistantMsg);
+      this._view?.webview.postMessage({ type: 'streamEnd', id: streamId, content: assistantMsg.content, model });
+    } catch (error: any) {
+      const wasCancelled = error?.name === 'AbortError';
+
+      if (wasCancelled && content) {
+        // Partial answer is still worth keeping — mark it as interrupted
+        // rather than throwing it away.
+        const assistantMsg: ChatMessage = {
+          role: 'assistant',
+          content: `${content}\n\n*(Stopped by user.)*`,
+          model,
+          timestamp: new Date()
+        };
+        this._messages.push(assistantMsg);
+        this._view?.webview.postMessage({ type: 'streamEnd', id: streamId, content: assistantMsg.content, model });
+      } else if (wasCancelled) {
+        this._view?.webview.postMessage({ type: 'streamError', id: streamId, message: 'Stopped by user.' });
+      } else {
+        const message = error?.message || 'Unknown streaming error';
+        const assistantMsg: ChatMessage = {
+          role: 'assistant',
+          content: content
+            ? `${content}\n\n*(Stream interrupted: ${message})*`
+            : `Error: ${message}`,
+          model,
+          timestamp: new Date()
+        };
+        this._messages.push(assistantMsg);
+        this._view?.webview.postMessage({ type: 'streamError', id: streamId, message, content: assistantMsg.content });
+      }
+    } finally {
+      if (this._streamAbortController === abortController) {
+        this._streamAbortController = null;
+      }
+    }
+  }
+
+  /** Abort the in-flight single-model stream, if any (Stop button in the UI). */
+  private _cancelStream() {
+    if (this._streamAbortController) {
+      this._streamAbortController.abort();
+    }
+  }
+
   private _updateWebview() {
     if (this._view) {
       this._view.webview.postMessage({
@@ -1653,7 +1757,10 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
 .rdot.ok { background: var(--ok); } .rdot.w { background: var(--warn); } .rdot.e { background: var(--err); }
 
 /* === MESSAGES === */
+.msgs-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
 .msgs { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.jump-btn { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); padding: 5px 12px; border-radius: var(--rp); border: 1px solid var(--tr); background: var(--vscode-editor-background,#1e1e1e); color: var(--tb); font-size: 10px; font-weight: 600; font-family: inherit; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.25); z-index: 5; }
+.jump-btn:hover { background: var(--tm); }
 .msg { border-radius: var(--r); border: 1px solid var(--bd); background: var(--sf); flex-shrink: 0; }
 .msg.user { border-color: var(--tr); background: var(--ts); }
 .msg.assistant { border-color: rgba(56,189,248,.25); }
@@ -1694,6 +1801,49 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
 .ans-body code { font-family: monospace; font-size: 11px; background: rgba(128,128,128,.12); padding: 1px 4px; border-radius: 3px; }
 .ans-footer { display: none; gap: 5px; padding: 4px 10px 7px; }
 .ans-box.open .ans-footer { display: flex; }
+.ans-dot.pulse { animation: hm-pulse 1.1s ease-in-out infinite; }
+@keyframes hm-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* === THINKING / REASONING PANEL === */
+.think-box { margin: 0 12px 8px; border-radius: var(--rs); border: 1px dashed var(--bd); background: rgba(128,128,128,.05); overflow: hidden; }
+.think-hdr { display: flex; align-items: center; justify-content: space-between; padding: 5px 9px; cursor: pointer; user-select: none; font-size: 10px; font-weight: 600; color: var(--mu); letter-spacing: .3px; text-transform: uppercase; }
+.think-hdr:hover { color: var(--tb); }
+.think-chev { font-size: 9px; transition: transform 150ms; }
+.think-box.collapsed .think-chev { transform: rotate(-90deg); }
+.think-box.collapsed .think-body { display: none; }
+.think-body { padding: 0 9px 8px; font-size: 11px; line-height: 1.55; color: var(--mu); white-space: normal; max-height: 260px; overflow-y: auto; font-style: italic; }
+.think-body .md-p, .think-body .md-h { color: var(--mu); }
+
+/* === STREAMING CURSOR === */
+.stream-cursor { display: inline-block; width: 6px; height: 13px; margin-left: 1px; background: var(--tb); vertical-align: text-bottom; animation: hm-blink 0.9s step-start infinite; }
+@keyframes hm-blink { 50% { opacity: 0; } }
+.stream-error { margin-top: 8px; padding: 6px 8px; border-radius: var(--rs); border: 1px solid rgba(239,68,68,.35); background: rgba(239,68,68,.08); color: #f87171; font-size: 11px; }
+
+/* === MARKDOWN RENDERING (assistant / system message bodies) === */
+.md-p { margin: 0 0 6px; }
+.md-p:last-child { margin-bottom: 0; }
+.md-br { height: 6px; }
+.md-h { margin: 10px 0 5px; font-weight: 700; line-height: 1.3; }
+.md-h:first-child { margin-top: 0; }
+.md-ul, .md-ol { margin: 2px 0 8px; padding-left: 18px; }
+.md-ul li, .md-ol li { margin: 2px 0; line-height: 1.5; }
+.md-inline-code { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; background: rgba(128,128,128,.15); border: 1px solid rgba(128,128,128,.15); padding: 1px 4px; border-radius: 3px; }
+.md-link { color: var(--tb); text-decoration: underline; text-underline-offset: 2px; }
+
+/* === CODE BLOCKS === */
+.code-block { margin: 6px 0 10px; border-radius: var(--rs); border: 1px solid var(--bd); background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background,#1e1e1e)); overflow: hidden; }
+.code-block:last-child { margin-bottom: 0; }
+.code-hdr { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: rgba(128,128,128,.10); border-bottom: 1px solid var(--bd); }
+.code-lang { font-size: 9px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--mu); }
+.copy-code-btn { font-size: 9px; font-weight: 600; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--bd); background: transparent; color: var(--mu); cursor: pointer; font-family: inherit; transition: all 120ms; }
+.copy-code-btn:hover { border-color: var(--tr); color: var(--tb); background: var(--ts); }
+.code-block pre { margin: 0; padding: 8px 10px; overflow-x: auto; }
+.code-block code { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.5; white-space: pre; background: none; padding: 0; }
+.code-block.pending { border-style: dashed; opacity: .9; }
+.cm-keyword { color: #c586c0; }
+.cm-string { color: #ce9178; }
+.cm-comment { color: #6a9955; font-style: italic; }
+.cm-number { color: #b5cea8; }
 
 /* === EMPTY STATE === */
 .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 28px 16px; text-align: center; flex: 1; min-height: 180px; }
@@ -1939,7 +2089,10 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
 </div>
 
 <!-- MESSAGES -->
-<div class="msgs" id="msgs"></div>
+<div class="msgs-wrap">
+  <div class="msgs" id="msgs"></div>
+  <button id="jumpBtn" class="jump-btn" style="display:none;" type="button">&#8595; Jump to latest</button>
+</div>
 
 <!-- INPUT -->
 <div class="iarea">
@@ -1952,15 +2105,13 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
         <select class="wfmini" id="wfMini"><option value="single">Single</option><option value="parallel">Parallel</option><option value="chain">Chain</option><option value="agentic">Agentic</option><option value="all-to-all">All to All</option></select>
       </div>
       <span class="charcnt" id="charcnt"></span>
+      <button class="sendbtn" id="stopBtn" style="display:none;background:var(--err);border-color:var(--err);">Stop</button>
       <button class="sendbtn" id="sendBtn">Send</button>
     </div>
   </div>
 </div>
 
 </div><!-- end #layout -->
-<script>
-(function(){
-var vsc=acquireVsCodeApi();
 <script>window.HM_CONFIG={alv:${this._autonomyLevel||3},ro:${this._readOnly},isPro:${isPro},maxModels:${maxModels},maxAgents:${maxAgents},perms:{read:${this._permissions.read},edit:${this._permissions.edit},terminal:${this._permissions.terminal},create:${this._permissions.create},del:${this._permissions.delete},multi:${this._permissions['multi-step']},restructure:${this._permissions.restructure},network:${this._permissions.network}}};</script>
 <script src="${scriptUri}"></script>
 </body>
