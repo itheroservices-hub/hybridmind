@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.0] - 2026-08-15 (BYOK relaunch)
+
+### Changed
+- Relaunched under a strict bring-your-own-key model: every request routes directly to your own OpenAI, Anthropic, OpenRouter, Google, Groq, DeepSeek, or Qwen key via `HybridMind: Set API Key (BYOK)`. No HybridMind-run backend, no shared usage pool.
+- Keys now stored in VS Code's encrypted SecretStorage, not plaintext settings. Existing plaintext keys migrate automatically on first activation.
+- Closed a real security gap in the autonomous agent's command/file execution path: every terminal command and file edit now passes through allowlist and workspace-containment validation before running, regardless of autonomy level.
+
+### Removed
+- The standalone backend service (`hybridmind-backend/`) is retired and archived, not deployed. Nothing in the shipped extension depends on it.
+- Pro/Enterprise license activation is currently non-functional — there is no live verification server behind it yet. BYOK works fully without a license key; do not purchase a license expecting it to unlock anything until this is announced as working.
+
+### Note on prior root-level release notes
+`CHANGELOG_v2.0.0.md` (repo root) describes an earlier, more ambitious v2.0 vision — sandboxed execution, 14 specialist agents, a task-decomposition service — that described the now-archived backend, not the shipped extension. Treat this file (`hybridmind-extension/CHANGELOG.md`) as the accurate record of what's actually in the VS Code extension.
+
 ## [1.8.0] - 2026-02-18
 
 ### Added

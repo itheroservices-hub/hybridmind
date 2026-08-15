@@ -77,20 +77,30 @@ export class LicenseManager {
     const config = vscode.workspace.getConfiguration('hybridmind');
     this.licenseKey = config.get('licenseKey') || null;
 
-    // Optimistically set tier from the key so isPro() is correct synchronously.
-    // The async verifyLicense() call will confirm or downgrade if the key is invalid.
-    if (this.licenseKey) {
-      const k = this.licenseKey.toLowerCase();
-      if (k.includes('enterprise')) { this.tier = 'enterprise'; }
-      else if (k.includes('proplus') || k.includes('pro-plus') || k.includes('pro_plus')) { this.tier = 'pro-plus'; }
-      else { this.tier = 'pro'; }
-    }
+    // Deliberately fail closed: tier stays 'free' (the class field default)
+    // until verifyLicense() actually confirms a key with a real server.
+    // This used to optimistically grant a tier from substring-matching the
+    // key text itself (e.g. any key containing "enterprise" got Enterprise
+    // tier, permanently, offline, with no verification ever occurring) —
+    // that was a complete client-side bypass, found in security review.
   }
 
+  /**
+   * NOTE: no live verification server exists yet. hybridmind-backend, the
+   * only service that ever implemented POST /license/verify, is archived
+   * and not deployed (see hybridmind-backend-archived/README.md). Until a
+   * real endpoint is stood up and this URL points at it, every call here
+   * fails and correctly falls back to Free — meaning Pro/Enterprise cannot
+   * actually be activated right now regardless of payment. That is the
+   * correct fail-closed behavior given there is nothing to verify against;
+   * it does mean license purchases must not be marketed as functional until
+   * a real verification backend exists.
+   */
   async verifyLicense(key?: string): Promise<LicenseStatus> {
     const licenseToVerify = key || this.licenseKey;
 
     if (!licenseToVerify) {
+      this.tier = 'free';
       return this.getFreeStatus();
     }
 
@@ -108,6 +118,7 @@ export class LicenseManager {
 
       if (!response.ok) {
         console.error('License verification failed:', response.status);
+        this.tier = 'free';
         return this.getFreeStatus();
       }
 
@@ -117,7 +128,7 @@ export class LicenseManager {
         this.tier = data.tier as LicenseTier;
         this.licenseKey = licenseToVerify;
         this.lastVerified = new Date();
-        
+
         const status: LicenseStatus = {
           valid: true,
           tier: this.tier,
@@ -126,7 +137,7 @@ export class LicenseManager {
         };
 
         this.verificationCache = status;
-        
+
         // Save to settings if this is a new key
         if (key) {
           await this.saveLicenseToSettings(key);
@@ -135,10 +146,14 @@ export class LicenseManager {
         return status;
       }
 
+      this.tier = 'free';
       return this.getFreeStatus();
 
     } catch (error) {
       console.error('License verification error:', error);
+      // Fail closed: a network/server failure must never leave a client-side
+      // tier assignment in place unverified. See loadLicenseFromSettings().
+      this.tier = 'free';
       return this.getFreeStatus();
     }
   }
@@ -411,9 +426,9 @@ export class LicenseManager {
 
     const status = await this.verifyLicense(key);
 
-    if (status.valid && status.tier === 'pro') {
+    if (status.valid && status.tier !== 'free') {
       vscode.window.showInformationMessage(
-        '✅ HybridMind Pro activated! All premium features unlocked.'
+        `✅ HybridMind ${this.getStatusBarText().replace(/^\$\([^)]+\)\s*/, '')} activated! All premium features unlocked.`
       );
     } else {
       vscode.window.showErrorMessage(

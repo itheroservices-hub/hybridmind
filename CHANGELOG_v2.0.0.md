@@ -1,5 +1,11 @@
 # HybridMind v2.0.0 Release Notes
 
+> **Historical document, does not describe the shipped extension.** This
+> described the standalone `hybridmind-backend/` service's REST API
+> (sandboxed execution, `/task/decompose`, etc.), which is now archived and
+> not deployed anywhere. For what's actually in the VS Code extension you
+> installed, see `hybridmind-extension/CHANGELOG.md`.
+
 **Release Date:** February 21, 2026  
 **Codename:** Autonomous Agent System
 

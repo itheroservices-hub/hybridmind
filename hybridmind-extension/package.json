@@ -1,7 +1,7 @@
 {
   "name": "hybridmind",
   "displayName": "HybridMind",
-  "description": "v2.0: Fully autonomous AI coding agent for VS Code. Plans multi-step tasks, writes code, executes in sandbox, and iterates until done. 200+ models (Claude 4.5, GPT-4o, Gemini 2.5, DeepSeek R1), 14 specialist agents, visual flowchart builder, BYOK, and live agent telemetry. Free tier available. Pro from $19/mo.",
+  "description": "Autonomous AI coding agent for VS Code. Plans multi-step tasks, writes code, runs terminal commands with built-in safety validation, and iterates until done. Bring your own API key for OpenAI, Anthropic, OpenRouter, Google, Groq, DeepSeek, or Qwen — every request goes straight to your provider, billed to your own account.",
   "publisher": "hybridmind",
   "version": "2.0.0",
   "license": "MIT",
