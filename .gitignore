@@ -47,6 +47,10 @@ dist/
 build/
 out/
 test-out/
+# Compiled test output that should only ever exist in test-out/, this
+# rule is a safety net in case a stray tsc/ts-node run compiles in place.
+hybridmind-extension/test/**/*.test.js
+hybridmind-extension/test/**/*.test.js.map
 
 # Temporary
 tmp/
