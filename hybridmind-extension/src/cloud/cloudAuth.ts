@@ -53,22 +53,37 @@ export class CloudAuth {
       return null;
     }
 
-    this.client = createClient(url, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false } // handled manually below via SecretStorage
-    });
+    // createClient() throws synchronously on a malformed URL (e.g. a typo
+    // in hybridmind.cloudUrl), not just when the setting is empty. Cloud Pro
+    // must stay additive even for a misconfigured value, not just a missing
+    // one -- an uncaught throw here would propagate out of initialize() and
+    // fail activate() for BYOK users too, which is exactly what this whole
+    // module is designed never to do.
+    try {
+      this.client = createClient(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false } // handled manually below via SecretStorage
+      });
+    } catch (e) {
+      console.error('HybridMind Cloud: invalid cloud configuration, Cloud Pro disabled', e);
+      return null;
+    }
     return this.client;
   }
 
-  /** Restore a previously-saved session, if any. Call once during activate(). */
+  /** Restore a previously-saved session, if any. Call once during activate().
+   * Wrapped in a single try/catch end-to-end (not just around JSON.parse/
+   * setSession) so a SecretStorage read failure (seen in the wild on some
+   * Linux setups without a keyring backend) can't propagate out of
+   * activate() and break BYOK for a user who never even touched Cloud Pro. */
   async initialize(): Promise<void> {
     if (!this.context) return;
-    const stored = await this.context.secrets.get(SECRET_SESSION);
-    if (!stored) return;
-
-    const client = this.getClient();
-    if (!client) return;
-
     try {
+      const stored = await this.context.secrets.get(SECRET_SESSION);
+      if (!stored) return;
+
+      const client = this.getClient();
+      if (!client) return;
+
       const parsed: Session = JSON.parse(stored);
       const { data, error } = await client.auth.setSession({
         access_token: parsed.access_token,
