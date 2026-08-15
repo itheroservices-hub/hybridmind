@@ -40,7 +40,7 @@ HybridMind runs entirely on your machine — a small local server starts when VS
 
 **Supported providers**
 
-Directly wired for per-provider dispatch: **OpenAI**, **Anthropic**, **Google (Gemini)**, **Groq**, **DeepSeek**, **Qwen**, and **OpenRouter** (which itself proxies 200+ additional models through a single key). Other provider names can be entered via "Other / Custom" in the picker but are not yet directly dispatched.
+**OpenAI**, **Anthropic**, **Google (Gemini)**, **Groq**, **DeepSeek**, **Qwen**, and **OpenRouter** (which itself proxies 200+ additional models through a single key). The `HybridMind: Set API Key (BYOK)` picker only lists these seven — every entry is wired to a real per-provider dispatch path, so a saved key always works. (An earlier build's picker offered ~20 additional provider names that weren't actually implemented; that list was trimmed back to what's real.)
 
 **Where your key is stored**
 

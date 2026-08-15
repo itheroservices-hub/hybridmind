@@ -266,7 +266,11 @@ function registerCommands(context: vscode.ExtensionContext) {
     })
   );
 
-  // Bring‑Your‑Own‑Key (BYOK) command — 20+ providers
+  // Bring‑Your‑Own‑Key (BYOK) command
+  // NOTE: this list must stay in lockstep with the dispatch switch in
+  // embeddedServer.ts's runModel()/getAvailableModels() — every value here
+  // needs a matching case there, or the key saves successfully but every
+  // request against it throws "Unknown BYOK provider" at request time.
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.setApiKey', async () => {
       type ProviderItem = vscode.QuickPickItem & { value: string };
@@ -277,41 +281,16 @@ function registerCommands(context: vscode.ExtensionContext) {
         { label: '$(key) Google (Gemini)', description: 'Gemini 2.5 Pro, Flash, Nano',              value: 'Google' },
         { label: '$(key) Groq',            description: 'Ultra-fast Llama, Mixtral, DeepSeek',       value: 'Groq' },
         { label: '$(key) DeepSeek',        description: 'DeepSeek V3, R1, R1-Distill',              value: 'DeepSeek' },
-        { label: '$(key) xAI (Grok)',      description: 'Grok 3, Grok 2, Grok Vision',              value: 'xAI' },
-        { label: '$(key) Mistral AI',      description: 'Mistral Large, Codestral, Devstral',        value: 'Mistral' },
-        { label: '$(key) Cohere',          description: 'Command R+, Command A, Embed v4',           value: 'Cohere' },
-        { label: '$(key) Together AI',     description: 'Llama, Mixtral, Qwen via Together',         value: 'TogetherAI' },
-        { label: '$(key) Fireworks AI',    description: 'Fast open-source inference',                value: 'FireworksAI' },
-        { label: '$(key) Perplexity',      description: 'Sonar Pro (online LLMs with search)',       value: 'Perplexity' },
-        { label: '$(key) HuggingFace',     description: 'Open-source model hub (Inference API)',     value: 'HuggingFace' },
-        { label: '$(key) Replicate',       description: 'Open-source model hosting & fine-tunes',    value: 'Replicate' },
-        { label: '$(key) Azure OpenAI',    description: 'Microsoft-hosted OpenAI models',            value: 'AzureOpenAI' },
-        { label: '$(key) AWS Bedrock',     description: 'Claude, Titan, Llama via AWS',              value: 'AWSBedrock' },
-        { label: '$(key) Vertex AI',       description: 'Gemini and more via Google Cloud',          value: 'VertexAI' },
-        { label: '$(key) AI21 Labs',       description: 'Jamba 1.5 Large, Jamba Mini',               value: 'AI21' },
-        { label: '$(key) Qwen (Alibaba)',  description: 'Qwen 2.5, Qwen3, QwQ Coder',               value: 'Qwen' },
-        { label: '$(key) Novita AI',       description: 'Fast Llama, Flux image, open models',       value: 'NovitaAI' },
-        { label: '$(key) Cloudflare AI',   description: 'Edge inference via Cloudflare Workers AI',  value: 'CloudflareAI' },
-        { label: '$(key) Ollama (Local)',  description: 'Self-hosted local models (http://localhost:11434)', value: 'Ollama' },
-        { label: '$(key) LM Studio',       description: 'Local GGUF model server (OpenAI-compatible)', value: 'LMStudio' },
-        { label: '$(key) Other / Custom',  description: 'Enter any provider name manually',          value: '__custom__' }
+        { label: '$(key) Qwen (Alibaba)',  description: 'Qwen 2.5, Qwen3, QwQ Coder',               value: 'Qwen' }
       ];
 
       const selected = await vscode.window.showQuickPick(providers, {
         placeHolder: 'Select AI provider to configure',
-        title: 'HybridMind BYOK — Bring Your Own Key (24 providers)'
+        title: 'HybridMind BYOK — Bring Your Own Key'
       });
       if (!selected) return;
 
-      let providerName = selected.value;
-      if (providerName === '__custom__') {
-        const custom = await vscode.window.showInputBox({
-          prompt: 'Enter the provider name',
-          placeHolder: 'MyProvider'
-        });
-        if (!custom) return;
-        providerName = custom;
-      }
+      const providerName = selected.value;
 
       const displayName = selected.label.replace('$(key) ', '');
       const key = await vscode.window.showInputBox({

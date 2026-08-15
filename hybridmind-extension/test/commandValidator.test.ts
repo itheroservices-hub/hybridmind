@@ -44,6 +44,16 @@ describe('commandValidator', () => {
       assert.strictEqual(result.valid, false);
       assert.match(result.reason ?? '', /[Pp]ath traversal/);
     });
+
+    it('rejects input redirection: node < script.js would run an arbitrary file as interpreter stdin with no -e/-c needed', () => {
+      const result = validateCommand('node < malicious.js');
+      assert.strictEqual(result.valid, false);
+    });
+
+    it('rejects output redirection: any allowed binary could otherwise overwrite any file on disk outside workspace containment', () => {
+      const result = validateCommand('echo hi > ../../../../important-file.txt');
+      assert.strictEqual(result.valid, false);
+    });
   });
 
   describe('interpreter code escapes (the gap an allowlist on binary name alone cannot close)', () => {
@@ -97,6 +107,14 @@ describe('commandValidator', () => {
       assert.strictEqual(result.valid, true);
       assert.strictEqual(result.requiresApproval, false);
     });
+
+    it('requires approval for --eval=... with an equals sign, not just a bare --eval flag', () => {
+      // Node accepts both `node --eval "code"` and `node --eval=code`; the
+      // original ^--eval$ exact-match regex only caught the first form.
+      const result = validateCommand('node --eval=console.log(1)');
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.requiresApproval, true);
+    });
   });
 
   describe('policy-required approval regardless of allowlist validity', () => {
@@ -110,6 +128,11 @@ describe('commandValidator', () => {
 
     it('does not flag an ordinary git status', () => {
       assert.strictEqual(requiresApprovalByPolicy('git status'), false);
+    });
+
+    it('flags every npx invocation, not just ones that look like a deploy: npx runs arbitrary published npm code for whatever package name it is given', () => {
+      assert.strictEqual(requiresApprovalByPolicy('npx some-innocuous-looking-package'), true);
+      assert.strictEqual(requiresApprovalByPolicy('npx create-react-app my-app'), true);
     });
   });
 

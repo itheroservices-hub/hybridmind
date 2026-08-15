@@ -266,7 +266,7 @@
         "hybridmind.openrouterApiKey": {
           "type": "string",
           "default": "",
-          "description": "OpenRouter API Key - Unified access to ALL 200+ AI models (GPT-4, Claude, Gemini, Llama, DeepSeek, etc.). Get from: https://openrouter.ai/keys"
+          "markdownDescription": "**Deprecated setting.** Use the `HybridMind: Set API Key (BYOK)` command instead, which stores your key in VS Code's encrypted SecretStorage rather than here in plaintext. If you have never run that command, a key entered here is used once on next activation and then migrated to SecretStorage automatically; after that migration this setting has no effect."
         },
         "hybridmind.modelSelection.mode": {
           "type": "string",
@@ -319,12 +319,12 @@
         "hybridmind.userApiProvider": {
           "type": "string",
           "default": "",
-          "description": "BYOK: The AI provider name for your own API key (e.g. OpenAI, Anthropic, OpenRouter)"
+          "markdownDescription": "**Deprecated setting.** Use the `HybridMind: Set API Key (BYOK)` command instead, which stores your provider and key in VS Code's encrypted SecretStorage rather than here in plaintext. Not read after the one-time migration to SecretStorage completes."
         },
         "hybridmind.userApiKey": {
           "type": "string",
           "default": "",
-          "description": "BYOK: Your personal API key for the selected provider. Stored in VS Code user settings."
+          "markdownDescription": "**Deprecated setting.** Use the `HybridMind: Set API Key (BYOK)` command instead, which stores your key in VS Code's encrypted SecretStorage rather than here in plaintext. Not read after the one-time migration to SecretStorage completes."
         }
       }
     }

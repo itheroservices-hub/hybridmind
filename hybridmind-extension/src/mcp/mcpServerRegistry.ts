@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { LicenseManager } from '../auth/licenseManager';
 
 const MCP_PROVIDER_ID = 'hybridmind.mcpRegistry';
 
@@ -24,10 +25,13 @@ export function registerHybridMindMcpProviders(
     },
 
     resolveMcpServerDefinition: async (server: any) => {
-      const config = vscode.workspace.getConfiguration('hybridmind');
-      const openrouterApiKey = config.get<string>('openrouterApiKey') || '';
+      // Reads via LicenseManager (SecretStorage-backed), not the
+      // openrouterApiKey setting directly: that setting is cleared by the
+      // BYOK migration for anyone who has ever set a key, so checking it
+      // here would silently go stale post-migration even with a working key.
+      const hasKey = LicenseManager.getInstance().hasUserApiKey();
 
-      if (server && server.headers && openrouterApiKey) {
+      if (server && server.headers && hasKey) {
         server.headers = {
           ...server.headers,
           'x-hybridmind-openrouter-key-present': 'true'

@@ -336,6 +336,18 @@ export class LicenseManager {
   }
 
   /**
+   * True if a BYOK key is currently set, without exposing the key itself.
+   * Callers that only need to know "is BYOK configured" (e.g. an MCP server
+   * definition deciding whether to attach a presence flag) should use this
+   * rather than reading the openrouterApiKey setting directly — that
+   * setting is cleared by the SecretStorage migration for anyone who has
+   * ever used BYOK, so checking it directly goes stale.
+   */
+  hasUserApiKey(): boolean {
+    return !!this.userApiKey;
+  }
+
+  /**
    * Store a user-provided API key (BYOK) in vscode.SecretStorage — never
    * in plaintext settings. Used by the "HybridMind: Set API Key (BYOK)"
    * command and the sidebar's inline BYOK panel.

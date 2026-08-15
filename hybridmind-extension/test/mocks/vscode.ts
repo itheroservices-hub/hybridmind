@@ -13,6 +13,7 @@
 export const sendTextCalls: string[] = [];
 export const createTerminalCalls: number[] = [];
 export const showWarningMessageCalls: any[][] = [];
+export const writeFileCalls: { uri: any; content: any }[] = [];
 
 let approvalChoice: 'Approve' | 'Deny' | undefined = undefined;
 let workspaceRoot = 'C:\\fake-workspace';
@@ -22,6 +23,7 @@ export function resetVscodeMock(): void {
   sendTextCalls.length = 0;
   createTerminalCalls.length = 0;
   showWarningMessageCalls.length = 0;
+  writeFileCalls.length = 0;
   approvalChoice = undefined;
   workspaceRoot = 'C:\\fake-workspace';
   hasWorkspace = true;
@@ -72,12 +74,13 @@ export const workspace = {
   applyEdit: (_edit: any) => Promise.resolve(true),
   fs: {
     readFile: (_uri: any) => Promise.resolve(Buffer.from('')),
-    writeFile: (_uri: any, _content: any) => Promise.resolve(),
+    writeFile: (uri: any, content: any) => { writeFileCalls.push({ uri, content }); return Promise.resolve(); },
   },
 };
 
 export const Uri = {
   file: (p: string) => ({ fsPath: p }),
+  joinPath: (base: any, ...segments: string[]) => ({ fsPath: [base.fsPath, ...segments].join('/') }),
 };
 
 export class WorkspaceEdit {

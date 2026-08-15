@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { WorkspaceAnalyzer } from './workspaceAnalyzer';
 import { AutonomyManager, AutonomyLevel } from './autonomyManager';
 import { agentClient } from './agentClient';
@@ -7,6 +6,7 @@ import { ChangeTracker } from './changeTracker';
 import { ProtocolHandler } from './protocolHandler';
 import { AgentTools } from './agentTools';
 import { LicenseManager } from '../auth/licenseManager';
+import { safeFileUri } from '../security/workspacePath';
 
 export interface ExecutionPlan {
   goal: string;
@@ -526,21 +526,18 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
           
           if (targetFile) {
             try {
-              // Resolve to absolute path if relative
+              // Resolve through the same workspace-containment check every
+              // other file-touching path in the extension uses. step.file
+              // comes from an LLM-generated plan step and is untrusted input,
+              // an absolute or ../ path here previously reached disk directly.
               let fileUri: vscode.Uri;
-              if (path.isAbsolute(targetFile)) {
-                fileUri = vscode.Uri.file(targetFile);
-              } else {
-                // Relative path - resolve against workspace
-                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-                if (workspaceFolder) {
-                  fileUri = vscode.Uri.joinPath(workspaceFolder.uri, targetFile);
-                  targetFile = fileUri.fsPath; // Update to absolute path
-                } else {
-                  return { success: false, error: 'No workspace folder open' };
-                }
+              try {
+                fileUri = safeFileUri(targetFile);
+              } catch (e: any) {
+                return { success: false, error: e.message };
               }
-              
+              targetFile = fileUri.fsPath; // Update to the resolved absolute path
+
               // For create operations, don't try to read existing file
               let content = '';
               if (step.type === 'create') {
