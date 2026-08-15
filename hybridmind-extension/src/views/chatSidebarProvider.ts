@@ -1395,6 +1395,21 @@ Respond with ONLY one word: simple, moderate, or complex`,
     prompt: string,
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
   ): Promise<void> {
+    // Only one token stream should be in flight at a time. The webview hides
+    // the Send button while streaming, but the textarea's Enter-to-send
+    // handler doesn't check that, so a second message can still slip through
+    // and start an overlapping stream. Without this, the earlier stream's
+    // AbortController reference gets overwritten here, so Stop can only ever
+    // reach the newest stream — the older one keeps running against the
+    // provider (burning tokens/cost) with no way for the UI to cancel it, and
+    // its eventual streamEnd/streamError would incorrectly reset the
+    // Send/Stop button state for the still-running newer stream. Cancelling
+    // any existing stream before starting a new one keeps the "one active
+    // stream" invariant the rest of this method (and the UI) assumes.
+    if (this._streamAbortController) {
+      this._streamAbortController.abort();
+    }
+
     const streamId = `s${++this._streamCounter}`;
     const abortController = new AbortController();
     this._streamAbortController = abortController;

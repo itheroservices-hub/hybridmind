@@ -166,6 +166,13 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
         req.on('end', async () => {
           const controller = new AbortController();
           req.on('close', () => controller.abort());
+          // Once the client disconnects, the abort above stops new writes
+          // from being scheduled, but a write already in flight when the
+          // socket closes can still land on a destroyed stream and emit
+          // 'error'. res has no listener for that by default, which would
+          // otherwise surface as an unhandled 'error' event and crash the
+          // extension host. Swallow it — the client is gone either way.
+          res.on('error', () => {});
 
           res.writeHead(200, {
             'Content-Type': 'text/event-stream',
