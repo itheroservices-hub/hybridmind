@@ -550,6 +550,22 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
     });
 
+    var stopBtn = g('stopBtn');
+    if (stopBtn) stopBtn.addEventListener('click', function () {
+      vsc.postMessage({ type: 'cancelStream' });
+      stopBtn.disabled = true;
+    });
+
+    var jumpBtn = g('jumpBtn');
+    var msgsScrollEl = g('msgs');
+    if (msgsScrollEl && jumpBtn) {
+      msgsScrollEl.addEventListener('scroll', updateJumpBtn);
+      jumpBtn.addEventListener('click', function () {
+        msgsScrollEl.scrollTop = msgsScrollEl.scrollHeight;
+        jumpBtn.style.display = 'none';
+      });
+    }
+
     function updStats() {
       var sm = g('stM'), sa = g('stA');
       if (sm) sm.textContent = selMods.length + ' / ' + MAXM;
@@ -665,6 +681,103 @@
       jb.style.display = nearBottom ? 'none' : 'flex';
     }
 
+    // ==========================================================================
+    // Token streaming ("thought process" UI). One entry in `streams` per
+    // in-flight message id: streamStart creates the live answer box,
+    // streamReasoning/streamContent append into it (batched via
+    // requestAnimationFrame so a burst of small deltas doesn't thrash the
+    // DOM), and streamEnd/streamError finalize it — re-enabling Insert/Copy,
+    // clearing the blinking cursor, and restoring the Send button.
+    // ==========================================================================
+    var streams = {};
+
+    function ensureStreamNode(id, model) {
+      var mc = g('msgs'); if (!mc) return null;
+      if (mc.querySelector('.empty')) mc.innerHTML = '';
+      var box = document.createElement('div');
+      box.className = 'ans-box open streaming';
+      box.innerHTML =
+        '<div class="ans-hdr"><div class="ans-meta"><span class="ans-dot pulse"></span><span>HybridMind</span>' +
+        (model ? '<span class="ans-badge">' + esc(model) + '</span>' : '') + '</div>' +
+        '<div class="ans-right"><span class="ans-time">now</span><span class="ans-chevron">&#9660;</span></div></div>' +
+        '<div class="think-box" style="display:none;">' +
+        '<div class="think-hdr"><span class="think-label">Thinking</span><span class="think-chev">&#9660;</span></div>' +
+        '<div class="think-body"></div>' +
+        '</div>' +
+        '<div class="ans-body"><span class="stream-cursor"></span></div>' +
+        '<div class="ans-footer"><button class="btn btn-sm insBtn" disabled>Insert</button><button class="btn btn-sm cpyBtn" disabled>Copy</button></div>';
+      mc.appendChild(box);
+      mc.scrollTop = mc.scrollHeight;
+
+      box.querySelector('.ans-hdr').addEventListener('click', function () { box.classList.toggle('open'); });
+      box.querySelector('.think-hdr').addEventListener('click', function () {
+        box.querySelector('.think-box').classList.toggle('collapsed');
+      });
+
+      return box;
+    }
+
+    function scheduleStreamRender(id) {
+      var st = streams[id]; if (!st || st.scheduled) return;
+      st.scheduled = true;
+      requestAnimationFrame(function () { st.scheduled = false; renderStreamNode(id); });
+    }
+
+    function renderStreamNode(id) {
+      var st = streams[id]; if (!st || !st.box) return;
+      var thinkBox = st.box.querySelector('.think-box');
+      var thinkBody = st.box.querySelector('.think-body');
+      var ansBody = st.box.querySelector('.ans-body');
+
+      if (st.reasoningRaw) {
+        thinkBox.style.display = 'block';
+        thinkBody.innerHTML = mdRender(st.reasoningRaw);
+        // Auto-collapse the thinking panel once the real answer starts —
+        // matches the "collapsible once the answer starts" behavior.
+        if (st.contentRaw && !thinkBox.classList.contains('collapsed')) {
+          thinkBox.classList.add('collapsed');
+        }
+      }
+
+      ansBody.innerHTML = mdRender(st.contentRaw) + '<span class="stream-cursor"></span>';
+      wireCopyButtons(st.box);
+
+      var mc = g('msgs');
+      if (mc) {
+        var nearBottom = (mc.scrollHeight - mc.scrollTop - mc.clientHeight) < 80;
+        if (nearBottom) mc.scrollTop = mc.scrollHeight;
+        updateJumpBtn();
+      }
+    }
+
+    function finalizeStream(id, errorMessage) {
+      var st = streams[id];
+      var sb = g('sendBtn'); if (sb) { sb.style.display = ''; sb.disabled = false; }
+      var stopB = g('stopBtn'); if (stopB) { stopB.style.display = 'none'; stopB.disabled = false; }
+
+      if (!st || !st.box) { delete streams[id]; return; }
+      var box = st.box;
+      box.classList.remove('streaming');
+
+      var cursor = box.querySelector('.stream-cursor'); if (cursor) cursor.remove();
+      var thinkBox = box.querySelector('.think-box'); if (thinkBox) thinkBox.classList.add('collapsed');
+      var dot = box.querySelector('.ans-dot'); if (dot) dot.classList.remove('pulse');
+
+      if (errorMessage) {
+        var err = document.createElement('div');
+        err.className = 'stream-error';
+        err.textContent = 'Error: ' + errorMessage;
+        box.querySelector('.ans-body').appendChild(err);
+      }
+
+      var insBtn = box.querySelector('.insBtn');
+      if (insBtn) { insBtn.disabled = false; insBtn.addEventListener('click', function (e) { e.stopPropagation(); vsc.postMessage({ type: 'insertCode', code: st.contentRaw }); }); }
+      var cpyBtn = box.querySelector('.cpyBtn');
+      if (cpyBtn) { cpyBtn.disabled = false; cpyBtn.addEventListener('click', function (e) { e.stopPropagation(); if (navigator.clipboard) navigator.clipboard.writeText(st.contentRaw).catch(function () {}); }); }
+
+      delete streams[id];
+    }
+
     // VSCode message handler
     window.addEventListener('message', function (ev) {
       var m = ev.data; if (!m || !m.type) return;
@@ -672,6 +785,30 @@
         case 'updateMessages':
           msgs = m.messages || []; renderMsgs();
           var sb = g('sendBtn'); if (sb) sb.disabled = false;
+          break;
+        case 'streamStart': {
+          streams[m.id] = { model: m.model, contentRaw: '', reasoningRaw: '', box: ensureStreamNode(m.id, m.model), scheduled: false };
+          var sBtn = g('sendBtn'); if (sBtn) sBtn.style.display = 'none';
+          var stBtn = g('stopBtn'); if (stBtn) { stBtn.style.display = ''; stBtn.disabled = false; }
+          break;
+        }
+        case 'streamReasoning': {
+          var stR = streams[m.id]; if (!stR) break;
+          stR.reasoningRaw += m.delta || '';
+          scheduleStreamRender(m.id);
+          break;
+        }
+        case 'streamContent': {
+          var stC = streams[m.id]; if (!stC) break;
+          stC.contentRaw += m.delta || '';
+          scheduleStreamRender(m.id);
+          break;
+        }
+        case 'streamEnd':
+          finalizeStream(m.id);
+          break;
+        case 'streamError':
+          finalizeStream(m.id, m.message);
           break;
         case 'byokStatus': {
           var el = g('byokStat');
