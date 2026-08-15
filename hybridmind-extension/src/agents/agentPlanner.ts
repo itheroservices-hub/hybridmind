@@ -5,6 +5,7 @@ import { AutonomyManager, AutonomyLevel } from './autonomyManager';
 import { agentClient } from './agentClient';
 import { ChangeTracker } from './changeTracker';
 import { ProtocolHandler } from './protocolHandler';
+import { AgentTools } from './agentTools';
 
 export interface ExecutionPlan {
   goal: string;
@@ -495,10 +496,13 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
       switch (step.type) {
         case 'terminal':
           if (step.command) {
-            // Execute terminal command
-            const terminal = vscode.window.createTerminal('HybridMind Agent');
-            terminal.show();
-            terminal.sendText(step.command);
+            // Routed through AgentTools.executeCommand so this goes through
+            // the same command validation every other execution path does,
+            // rather than sending raw text to a terminal directly.
+            const termResult = await AgentTools.executeCommand(step.command);
+            if (!termResult.success) {
+              return { success: false, error: termResult.error };
+            }
             return { success: true, details: `Executed: ${step.command}` };
           }
           return { success: false, error: 'No command provided' };
@@ -576,9 +580,12 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
 
         case 'install':
           if (step.command) {
-            const terminal = vscode.window.createTerminal('Package Install');
-            terminal.show();
-            terminal.sendText(step.command);
+            // Same reasoning as the 'terminal' case above: route through the
+            // validated single execution path, don't send raw text directly.
+            const installResult = await AgentTools.executeCommand(step.command);
+            if (!installResult.success) {
+              return { success: false, error: installResult.error };
+            }
             return { success: true, details: `Installing: ${step.command}` };
           }
           return { success: false, error: 'No install command provided' };

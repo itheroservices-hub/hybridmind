@@ -5,6 +5,9 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { validate as validateCommand } from '../security/commandValidator';
+import { safeFileUri } from '../security/workspacePath';
+import { getActiveAutonomyLevel, AutonomyLevel } from './autonomyManager';
 
 export interface ToolResult {
   success: boolean;
@@ -18,7 +21,7 @@ export class AgentTools {
    */
   static async readFile(filePath: string): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(filePath);
+      const uri = safeFileUri(filePath);
       const fileContent = await vscode.workspace.fs.readFile(uri);
       const text = Buffer.from(fileContent).toString('utf8');
       
@@ -43,7 +46,7 @@ export class AgentTools {
    */
   static async writeFile(filePath: string, content: string): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(filePath);
+      const uri = safeFileUri(filePath);
       const buffer = Buffer.from(content, 'utf8');
       await vscode.workspace.fs.writeFile(uri, buffer);
       
@@ -140,7 +143,7 @@ export class AgentTools {
    */
   static async listDirectory(dirPath: string): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(dirPath);
+      const uri = safeFileUri(dirPath);
       const entries = await vscode.workspace.fs.readDirectory(uri);
       
       const files = entries
@@ -289,9 +292,41 @@ export class AgentTools {
   }
 
   /**
-   * Execute a terminal command
+   * Execute a terminal command.
+   *
+   * This is the single choke point every command-executing tool call in this
+   * class (and therefore every autonomous agent dispatch path that calls
+   * into AgentTools) passes through, so validation lives here rather than at
+   * each caller. Autonomy level (see autonomyManager.ts) only ever controls
+   * whether a genuinely safe action skips a confirmation prompt, it never
+   * skips this check, including under FullAuto.
    */
   static async executeCommand(command: string, cwd?: string): Promise<ToolResult> {
+    const validation = validateCommand(command);
+
+    if (!validation.valid) {
+      return { success: false, error: `Blocked: ${validation.reason}` };
+    }
+
+    // A validator-flagged action always asks, regardless of autonomy level,
+    // this is the non-negotiable floor. Advisory additionally asks about
+    // validator-cleared commands too, matching its "ask before every
+    // action" definition, Assisted and FullAuto do not add that extra
+    // prompt on top of what the validator already decided.
+    const needsPrompt = validation.requiresApproval || getActiveAutonomyLevel() === AutonomyLevel.Advisory;
+
+    if (needsPrompt) {
+      const reason = validation.reason ?? 'Advisory mode asks before every action.';
+      const choice = await vscode.window.showWarningMessage(
+        `HybridMind wants to run:\n\n${command}\n\n${reason}`,
+        { modal: true },
+        'Approve', 'Deny'
+      );
+      if (choice !== 'Approve') {
+        return { success: false, error: 'Command denied: requires approval and was not approved.' };
+      }
+    }
+
     try {
       return new Promise((resolve) => {
         const terminal = vscode.window.createTerminal({
@@ -416,7 +451,7 @@ export class AgentTools {
    */
   static async createFile(filePath: string, content: string): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(filePath);
+      const uri = safeFileUri(filePath);
       const buffer = Buffer.from(content, 'utf8');
       await vscode.workspace.fs.writeFile(uri, buffer);
       
@@ -455,7 +490,7 @@ export class AgentTools {
       const workspaceEdit = new vscode.WorkspaceEdit();
 
       for (const edit of edits) {
-        const uri = vscode.Uri.file(edit.filePath);
+        const uri = safeFileUri(edit.filePath);
         const start = new vscode.Position(edit.startLine, edit.startChar);
         const end = new vscode.Position(edit.endLine, edit.endChar);
         const range = new vscode.Range(start, end);
@@ -497,7 +532,7 @@ export class AgentTools {
     newText: string
   ): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(filePath);
+      const uri = safeFileUri(filePath);
       const document = await vscode.workspace.openTextDocument(uri);
       
       const line = document.lineAt(lineNumber);
@@ -554,7 +589,7 @@ export class AgentTools {
     text: string
   ): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(filePath);
+      const uri = safeFileUri(filePath);
       const position = new vscode.Position(lineNumber, character);
 
       const workspaceEdit = new vscode.WorkspaceEdit();
@@ -597,7 +632,7 @@ export class AgentTools {
     endChar: number
   ): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(filePath);
+      const uri = safeFileUri(filePath);
       const start = new vscode.Position(startLine, startChar);
       const end = new vscode.Position(endLine, endChar);
       const range = new vscode.Range(start, end);
@@ -637,7 +672,7 @@ export class AgentTools {
       const diagnostics = vscode.languages.getDiagnostics();
       
       if (filePath) {
-        const uri = vscode.Uri.file(filePath);
+        const uri = safeFileUri(filePath);
         const fileDiagnostics = vscode.languages.getDiagnostics(uri);
         
         return {
@@ -683,7 +718,7 @@ export class AgentTools {
    */
   static async formatDocument(filePath: string): Promise<ToolResult> {
     try {
-      const uri = vscode.Uri.file(filePath);
+      const uri = safeFileUri(filePath);
       const document = await vscode.workspace.openTextDocument(uri);
       
       const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(

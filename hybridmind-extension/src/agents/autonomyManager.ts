@@ -7,6 +7,25 @@ export enum AutonomyLevel {
   FullAuto = 'L3'  // Full autonomy
 }
 
+/**
+ * Shared, session-wide autonomy level. AgentTools (a static class with no
+ * instance of its own) and any AutonomyManager instance both read/write this
+ * so the level a user picks in the UI actually affects execution, rather
+ * than being tracked by an AutonomyManager instance that nothing in the
+ * real dispatch path consults. This does not gate whether validation runs,
+ * see commandValidator.ts, it only gates whether an already-valid,
+ * non-approval-required action still asks for confirmation.
+ */
+let _activeAutonomyLevel: AutonomyLevel = AutonomyLevel.FullAuto;
+
+export function getActiveAutonomyLevel(): AutonomyLevel {
+  return _activeAutonomyLevel;
+}
+
+export function setActiveAutonomyLevel(level: AutonomyLevel): void {
+  _activeAutonomyLevel = level;
+}
+
 export interface ToolPermissions {
   allowFileEdits: boolean;
   allowFileCreation: boolean;
@@ -35,14 +54,19 @@ export class AutonomyManager {
     allowPackageInstalls: false
   };
   private _guardrailConfig: GuardrailConfig = {
-    backendUrl: 'http://localhost:5000',
-    useBackendGuardrails: true,
+    // No backend is deployed (see hybridmind-backend-archived/README.md).
+    // useBackendGuardrails defaults off so approval checks go straight to
+    // _requestLocalPermission instead of a network call that would always
+    // fail after a multi-second timeout.
+    backendUrl: undefined,
+    useBackendGuardrails: false,
     tier: 'free',
     userId: 'vscode-user'
   };
 
   constructor(level?: AutonomyLevel, permissions?: Partial<ToolPermissions>, guardrailConfig?: GuardrailConfig) {
     this._level = level || AutonomyLevel.FullAuto;
+    setActiveAutonomyLevel(this._level);
     if (permissions) {
       this._permissions = { ...this._permissions, ...permissions };
     }
@@ -63,6 +87,7 @@ export class AutonomyManager {
    */
   public setLevel(level: AutonomyLevel): void {
     this._level = level;
+    setActiveAutonomyLevel(level);
   }
 
   /**

@@ -7,6 +7,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ToolCall } from './agentClient';
 import { ChangeTracker } from './changeTracker';
+import { resolveWorkspacePath } from '../security/workspacePath';
+import { getActiveAutonomyLevel, AutonomyLevel } from './autonomyManager';
 
 export class ToolExecutor {
   private outputChannel: vscode.OutputChannel;
@@ -58,11 +60,35 @@ export class ToolExecutor {
   }
 
   /**
+   * In Advisory mode (ask before every action), confirm even a routine,
+   * non-destructive file operation before it runs. Assisted and FullAuto
+   * don't add this prompt, matching how AgentTools.executeCommand treats
+   * autonomy level for terminal commands, only Advisory asks about
+   * everything; deletion keeps its own always-on confirm below regardless
+   * of level, since that one is destructive rather than routine.
+   */
+  private async confirmIfAdvisory(description: string): Promise<boolean> {
+    if (getActiveAutonomyLevel() !== AutonomyLevel.Advisory) {
+      return true;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      `HybridMind wants to: ${description}\n\nAdvisory mode asks before every action.`,
+      { modal: true },
+      'Approve', 'Deny'
+    );
+    return choice === 'Approve';
+  }
+
+  /**
    * Apply edit - Replace code at a specific location
    */
   private async applyEdit(tool: ToolCall): Promise<void> {
     if (!tool.file || !tool.start || !tool.end || tool.text === undefined) {
       throw new Error('apply_edit requires file, start, end, and text');
+    }
+    if (!(await this.confirmIfAdvisory(`edit ${tool.file}`))) {
+      this.log(`⚠️ Edit cancelled (Advisory mode): ${tool.file}`);
+      return;
     }
 
     const filePath = this.resolveFilePath(tool.file);
@@ -113,6 +139,10 @@ export class ToolExecutor {
     if (!tool.file || !tool.position || tool.text === undefined) {
       throw new Error('insert_text requires file, position, and text');
     }
+    if (!(await this.confirmIfAdvisory(`insert text into ${tool.file}`))) {
+      this.log(`⚠️ Insert cancelled (Advisory mode): ${tool.file}`);
+      return;
+    }
 
     const filePath = this.resolveFilePath(tool.file);
     const uri = vscode.Uri.file(filePath);
@@ -158,6 +188,10 @@ export class ToolExecutor {
   private async createFile(tool: ToolCall): Promise<void> {
     if (!tool.path) {
       throw new Error('create_file requires path');
+    }
+    if (!(await this.confirmIfAdvisory(`create ${tool.path}`))) {
+      this.log(`⚠️ File creation cancelled (Advisory mode): ${tool.path}`);
+      return;
     }
 
     const filePath = this.resolveFilePath(tool.path);
@@ -286,21 +320,13 @@ export class ToolExecutor {
   }
 
   /**
-   * Resolve file path (relative to workspace or absolute)
+   * Resolve file path relative to the workspace. Delegates to the shared
+   * resolveWorkspacePath (src/security/workspacePath.ts) so every
+   * file-touching tool in the extension enforces the same containment
+   * check from one place, not a copy per file.
    */
   private resolveFilePath(filePath: string): string {
-    // If already absolute, return as-is
-    if (path.isAbsolute(filePath)) {
-      return filePath;
-    }
-
-    // Otherwise, resolve relative to workspace
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-      throw new Error('No workspace folder open');
-    }
-
-    return path.join(workspaceFolders[0].uri.fsPath, filePath);
+    return resolveWorkspacePath(filePath);
   }
 
   /**
