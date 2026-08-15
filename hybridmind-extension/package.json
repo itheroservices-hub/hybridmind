@@ -49,7 +49,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile",
+    "pretest": "npm run compile && tsc -p tsconfig.test.json && node test/create-vscode-shim.js",
+    "test": "mocha \"test-out/test/**/*.test.js\"",
     "lint": "eslint src --ext ts",
     "package": "vsce package"
   },
@@ -270,14 +271,24 @@
         "hybridmind.modelSelection.mode": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "manual", "template"],
+          "enum": [
+            "auto",
+            "manual",
+            "template"
+          ],
           "description": "Model selection mode: auto (smart selection), manual (user picks), template (predefined chains)"
         },
-
         "hybridmind.modelSelection.defaultTemplate": {
           "type": "string",
           "default": "coding-standard",
-          "enum": ["coding-standard", "coding-premium", "coding-budget", "research-deep", "review-comprehensive", "quick-fix"],
+          "enum": [
+            "coding-standard",
+            "coding-premium",
+            "coding-budget",
+            "research-deep",
+            "review-comprehensive",
+            "quick-fix"
+          ],
           "description": "Default chain template to use in template mode"
         },
         "hybridmind.modelSelection.customChain": {
@@ -288,7 +299,11 @@
         "hybridmind.ui.theme": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "light", "dark"],
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
           "description": "UI theme preference"
         },
         "hybridmind.ui.compactMode": {
@@ -319,8 +334,12 @@
     "dotenv": "^17.2.3"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^25.0.5",
     "@types/vscode": "^1.108.0",
+    "cross-env": "^10.1.0",
+    "mocha": "^11.8.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
 }

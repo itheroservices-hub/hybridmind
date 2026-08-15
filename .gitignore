@@ -46,6 +46,7 @@ coverage
 dist/
 build/
 out/
+test-out/
 
 # Temporary
 tmp/
