@@ -99,6 +99,16 @@
         "icon": "$(key)"
       },
       {
+        "command": "hybridmind.cloudSignIn",
+        "title": "HybridMind: Sign In to HybridMind Cloud",
+        "icon": "$(account)"
+      },
+      {
+        "command": "hybridmind.upgradeToCloudPro",
+        "title": "HybridMind: Upgrade to HybridMind Pro",
+        "icon": "$(star-full)"
+      },
+      {
         "command": "hybridmind.runAgentTeam",
         "title": "HybridMind: Run Agent Team",
         "icon": "$(array)"
@@ -325,11 +335,27 @@
           "type": "string",
           "default": "",
           "markdownDescription": "**Deprecated setting.** Use the `HybridMind: Set API Key (BYOK)` command instead, which stores your key in VS Code's encrypted SecretStorage rather than here in plaintext. Not read after the one-time migration to SecretStorage completes."
+        },
+        "hybridmind.cloudUrl": {
+          "type": "string",
+          "default": "",
+          "description": "HybridMind Cloud (optional): Supabase project URL. Leave empty to disable Cloud Pro sign-in/sync entirely -- BYOK works fully without this."
+        },
+        "hybridmind.cloudAnonKey": {
+          "type": "string",
+          "default": "",
+          "description": "HybridMind Cloud (optional): Supabase anon/publishable key. This is meant to be public -- Row Level Security on the server is what actually protects data, not secrecy of this value."
+        },
+        "hybridmind.cloudCheckoutUrl": {
+          "type": "string",
+          "default": "",
+          "description": "HybridMind Cloud (optional): Stripe Checkout link for HybridMind Pro. Leave empty until the Stripe product/price has been created and a checkout link generated."
         }
       }
     }
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
     "axios": "^1.13.2",
     "dotenv": "^17.2.3"
   },

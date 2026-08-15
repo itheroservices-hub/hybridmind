@@ -8,6 +8,9 @@ import { AgentConfig } from './agents/agentConfig';
 import { registerAgenticCommands } from './commands/agenticCommands';
 import { registerMultiModelCommands } from './commands/multiModelCommands';
 import { UsageTracker } from './utils/usageTracker';
+import { CloudAuth } from './cloud/cloudAuth';
+import { checkCloudProActive } from './cloud/cloudSync';
+import { registerCloudCommands } from './cloud/cloudCommands';
 
 let serverPort: number | null = null;
 let licenseManager: LicenseManager;
@@ -24,6 +27,18 @@ export async function activate(context: vscode.ExtensionContext) {
   licenseManager = LicenseManager.getInstance(context);
   await licenseManager.initialize();
   await migrateByokSettingsToSecretStorage(context, licenseManager);
+
+  // HybridMind Cloud Pro: restore any existing sign-in and check real
+  // subscription status server-side. Fully optional and additive -- if
+  // hybridmind.cloudUrl isn't configured yet (Supabase project not
+  // provisioned), CloudAuth silently no-ops and BYOK usage is unaffected.
+  const cloudAuth = CloudAuth.getInstance(context);
+  await cloudAuth.initialize();
+  if (cloudAuth.isSignedIn()) {
+    const active = await checkCloudProActive();
+    licenseManager.setCloudProActive(active);
+  }
+  registerCloudCommands(context);
 
   // Initialize usage tracker
   usageTracker = new UsageTracker();

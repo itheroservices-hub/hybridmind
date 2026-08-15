@@ -86,6 +86,18 @@ export class LicenseManager {
   }
 
   /**
+   * Called by src/cloud/cloudSync.ts's checkCloudProActive() after a real
+   * server-side check against the HybridMind Cloud subscription_status
+   * table (see supabase/functions/check-subscription). This is the only
+   * legitimate way this.tier is ever set to something other than 'free' --
+   * same fail-closed principle as verifyLicense() above, just for the
+   * Cloud Pro subscription path instead of the legacy typed-in license key.
+   */
+  setCloudProActive(active: boolean): void {
+    this.tier = active ? 'pro' : 'free';
+  }
+
+  /**
    * NOTE: no live verification server exists yet. hybridmind-backend, the
    * only service that ever implemented POST /license/verify, is archived
    * and not deployed (see hybridmind-backend-archived/README.md). Until a
