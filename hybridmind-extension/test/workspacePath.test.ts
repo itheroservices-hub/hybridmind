@@ -1,9 +1,10 @@
 import * as assert from 'assert';
 import { resolveWorkspacePath } from '../src/security/workspacePath';
+import { FAKE_WORKSPACE_ROOT, OUTSIDE_ABSOLUTE_PATH } from './mocks/platformPaths';
 import { resetVscodeMock, setWorkspaceRoot, setNoWorkspace } from './mocks/vscode';
 
 describe('resolveWorkspacePath / safeFileUri', () => {
-  const root = 'C:\\fake-workspace';
+  const root = FAKE_WORKSPACE_ROOT;
 
   beforeEach(() => {
     resetVscodeMock();
@@ -17,7 +18,7 @@ describe('resolveWorkspacePath / safeFileUri', () => {
 
   it('blocks an absolute path outside the workspace, the gap that let a tool call reach any file on disk', () => {
     assert.throws(
-      () => resolveWorkspacePath('C:\\Users\\someone\\.ssh\\id_rsa'),
+      () => resolveWorkspacePath(OUTSIDE_ABSOLUTE_PATH),
       /Blocked/,
     );
   });

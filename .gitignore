@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-package-lock.json
+# package-lock.json is committed: CI installs with npm ci, which requires it.
 
 # Environment Variables (CRITICAL: Never commit these!)
 .env

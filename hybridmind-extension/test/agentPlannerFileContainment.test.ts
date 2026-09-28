@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { AgentPlanner, ExecutionPlan } from '../src/agents/agentPlanner';
 import { AutonomyManager, AutonomyLevel } from '../src/agents/autonomyManager';
+import { FAKE_WORKSPACE_ROOT, OUTSIDE_ABSOLUTE_PATH } from './mocks/platformPaths';
 import { resetVscodeMock, setWorkspaceRoot, writeFileCalls } from './mocks/vscode';
 
 /**
@@ -16,7 +17,7 @@ import { resetVscodeMock, setWorkspaceRoot, writeFileCalls } from './mocks/vscod
 describe('AgentPlanner file steps respect workspace containment', () => {
   beforeEach(() => {
     resetVscodeMock();
-    setWorkspaceRoot('C:\\fake-workspace');
+    setWorkspaceRoot(FAKE_WORKSPACE_ROOT);
   });
 
   function makePlan(file: string): ExecutionPlan {
@@ -50,7 +51,7 @@ describe('AgentPlanner file steps respect workspace containment', () => {
 
   it('blocks a create step whose file path is absolute and outside the workspace', async () => {
     const planner = new AgentPlanner(new AutonomyManager(AutonomyLevel.FullAuto));
-    const plan = makePlan('C:\\Users\\someone\\.ssh\\id_rsa');
+    const plan = makePlan(OUTSIDE_ABSOLUTE_PATH);
 
     const result = await planner.executePlan(plan);
 
