@@ -1,7 +1,7 @@
 {
   "name": "hybridmind",
   "displayName": "HybridMind",
-  "description": "Autonomous AI coding agent for VS Code. Plans multi-step tasks, writes code, runs terminal commands with built-in safety validation, and iterates until done. Bring your own API key for OpenAI, Anthropic, OpenRouter, Google, Groq, DeepSeek, or Qwen — every request goes straight to your provider, billed to your own account.",
+  "description": "Autonomous AI coding agent for VS Code. Plans multi-step tasks, writes code, runs terminal commands with built-in safety validation, and iterates until done. Bring your own API key for OpenAI, Anthropic, OpenRouter, Google, Groq, DeepSeek, or Qwen \u2014 every request goes straight to your provider, billed to your own account.",
   "publisher": "hybridmind",
   "version": "2.0.0",
   "license": "MIT",
@@ -159,27 +159,27 @@
       },
       {
         "command": "hybridmind.refactorWithAI",
-        "title": "HybridMind: 🤖 Refactor with Autonomous Agent",
+        "title": "HybridMind: \ud83e\udd16 Refactor with Autonomous Agent",
         "icon": "$(robot)"
       },
       {
         "command": "hybridmind.autonomousDebug",
-        "title": "HybridMind: 🔧 Autonomous Debug (Fix All Errors)",
+        "title": "HybridMind: \ud83d\udd27 Autonomous Debug (Fix All Errors)",
         "icon": "$(debug-alt)"
       },
       {
         "command": "hybridmind.runStrictJsonWorkflow",
-        "title": "HybridMind: ⚡ Run AI Workflow (Strict JSON)",
+        "title": "HybridMind: \u26a1 Run AI Workflow (Strict JSON)",
         "icon": "$(rocket)"
       },
       {
         "command": "hybridmind.strictJsonQuickFix",
-        "title": "HybridMind: ⚡ Quick Fix (Strict JSON)",
+        "title": "HybridMind: \u26a1 Quick Fix (Strict JSON)",
         "icon": "$(wrench)"
       },
       {
         "command": "hybridmind.strictJsonAddFeature",
-        "title": "HybridMind: ⚡ Add Feature (Strict JSON)",
+        "title": "HybridMind: \u26a1 Add Feature (Strict JSON)",
         "icon": "$(add)"
       },
       {
@@ -367,5 +367,8 @@
     "mocha": "^11.8.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.1.2"
   }
 }
