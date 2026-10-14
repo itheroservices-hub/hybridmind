@@ -76,12 +76,22 @@ jobs:
           listing=$(unzip -l "$vsix")
           # Here-strings, not `echo | grep -q`: under pipefail, grep -q exits on
           # the first match, echo takes SIGPIPE, and a found match reads as failure.
-          for dep in axios @supabase/supabase-js dotenv @hybridmind/ontology-core @hybridmind/local-runtimes; do
+          for dep in axios @supabase/supabase-js dotenv @hybridmind/ontology-core @hybridmind/local-runtimes mcpsteward; do
             grep -q "extension/node_modules/$dep/package.json" <<<"$listing" \
               || { echo "ERROR: $dep is missing from $vsix"; exit 1; }
           done
           grep -q "extension/out/extension.js" <<<"$listing" \
             || { echo "ERROR: out/extension.js is missing from $vsix"; exit 1; }
+          # The MCP Servers view loads these two files by path.
+          for file in dist/api.js dist/trust/index.js; do
+            grep -q "extension/node_modules/mcpsteward/$file" <<<"$listing" \
+              || { echo "ERROR: mcpsteward/$file is missing from $vsix"; exit 1; }
+          done
+          # TypeScript is an optional peer of mcpsteward that HybridMind never
+          # uses, and it adds 23 MB if .vscodeignore stops excluding it.
+          if grep -q "extension/node_modules/typescript/" <<<"$listing"; then
+            echo "ERROR: typescript was packaged into $vsix"; exit 1
+          fi
           echo "All runtime dependencies present in $vsix"
 
       # Publishes only when a VSCE_PAT secret exists: a Marketplace token with

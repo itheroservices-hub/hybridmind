@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.2.0] - 2026-10-14
+
+HybridMind becomes **HybridMind: MCP Trust and AI Agent**. It now watches the
+MCP servers your AI tools use, powered by MCP Steward.
+
+### Added
+- **MCP Servers view.** Lists every MCP server configured on your machine for
+  VS Code, Cursor, Claude and other clients. Finding them only reads config
+  files; no server is started and nothing is sent anywhere.
+- **Keys in config files.** Servers with an API key written directly into a
+  config file are marked, and you are told once per server.
+- **Approve.** Starts a server once and remembers the tools it advertises.
+- **Check for changes.** Compares what an approved server advertises now with
+  what you approved, and lists each change with a risk level and its reasons.
+  A tool description rewritten after approval, the classic sign of a poisoned
+  server, is flagged critical when the new text carries an instruction tag or
+  points at a credential file.
+- **Check all.** Checks every approved server in turn.
+- Approvals are shared with the `mcpsteward` command line tool.
+
+### Not included
+- Servers whose configuration reads `${env:NAME}` values cannot be approved or
+  checked from the editor, because HybridMind does not pass your environment
+  to servers it starts. The `mcpsteward` command line tool can.
+- Servers that need you to sign in are reported as such and not checked.
+
 ## [2.1.2] - 2026-10-14
 
 2.1.1 made the extension start again. This release makes it usable with your
