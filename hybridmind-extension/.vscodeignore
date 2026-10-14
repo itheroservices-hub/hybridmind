@@ -45,8 +45,11 @@ check-state.js
 test-workspace/**
 scripts/**
 
-# Exclude all node_modules (bundled by vsce)
-node_modules/**
+# node_modules is NOT excluded wholesale. vsce does not bundle: it packages
+# production dependencies from node_modules as they are, so excluding the
+# directory ships an extension that cannot load (out/agents/agentClient.js
+# requires axios at startup). The narrower node_modules rules above still trim
+# tests, docs and type definitions from those dependencies.
 
 # Exclude documentation that's not needed in package
 docs/**
@@ -56,3 +59,10 @@ AGENTIC_GUIDE.md
 PROTOCOL_SYSTEM.md
 SYSTEM_PROMPTS.md
 SYSTEM_PROMPT_INTEGRATION.md
+
+# Development and server-side files that are not part of the extension
+test/**
+test-out/**
+tsconfig.test.json
+.github/**
+supabase/**
