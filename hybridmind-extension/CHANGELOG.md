@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.1.0] - 2026-10-14
+
+First Marketplace release since 2.0.0 in March. Everything in the 2.0.0 BYOK
+relaunch entry below ships to users for the first time in this version: that
+work was finished in August but never published, and the Marketplace already
+held a different build under 2.0.0, so it goes out here.
+
+### Security
+- The autonomous agent's terminal commands and file edits pass through the
+  allowlist and workspace-containment checks described below, at every
+  autonomy level. Users on the March build did not have these.
+- Provider keys are stored in VS Code's encrypted SecretStorage, and plaintext
+  keys from older versions migrate automatically on first activation.
+- Pinned `serialize-javascript` to a fixed release (RCE and denial-of-service
+  advisories), pulled in through the test runner.
+
+### Fixed
+- The extension package now includes its runtime dependencies. `.vscodeignore`
+  excluded all of `node_modules`, so a package built from it could not load:
+  the agent client requires `axios` at startup. 2.0.0 was built with the same
+  exclusion. If HybridMind failed to start for you, this is the likely cause.
+- The workspace-containment tests used Windows-only paths, so on Linux and
+  macOS they passed or failed without exercising the check. They now use a path
+  that is absolute on the platform running them.
+
+### Internal
+- CI builds and tests the extension, fails on a failing test, and audits
+  dependencies. It previously tested an archived backend and passed without
+  checking anything.
+- Groundwork for local models: a model catalog with Ollama and LM Studio
+  discovery, GPU telemetry, and a decision ontology are included as libraries.
+  Nothing in the extension uses them yet, so they change no behavior in this
+  release.
+
 ## [2.0.0] - 2026-08-15 (BYOK relaunch)
 
 ### Changed
