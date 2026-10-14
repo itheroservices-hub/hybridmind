@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # Manual runs release whatever version package.json holds on the chosen
+  # branch, and create its v<version> tag. This lets a release start without
+  # pushing a tag, which some environments that can merge cannot do.
+  workflow_dispatch:
+
+# Creating the release, and the tag on a manual run, needs write access.
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -33,14 +41,23 @@ jobs:
       # Packaging used to end in `|| echo "...skipping"`, so a failure still
       # produced a release, just without the .vsix. It fails loudly now.
       - name: Build extension (VSIX)
+        id: build
         working-directory: hybridmind-extension
         run: |
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "ERROR: tag $GITHUB_REF_NAME does not match package.json version $version"
+          tag="v$version"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            if [ "$tag" != "$GITHUB_REF_NAME" ]; then
+              echo "ERROR: tag $GITHUB_REF_NAME does not match package.json version $version"
+              exit 1
+            fi
+          elif git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            # A manual run must not overwrite a release that already exists.
+            echo "ERROR: $tag already exists; bump the version in package.json first"
             exit 1
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           npm ci
           mkdir -p ../dist
           npx --yes @vscode/vsce@4.0.0 package --out "../dist/hybridmind-$version.vsix"
@@ -88,10 +105,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.build.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: dist/*.vsix
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Release summary
-        run: echo "Release created for ${{ github.ref_name }}"
+        run: echo "Release created for ${{ steps.build.outputs.tag }}"
