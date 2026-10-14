@@ -166,6 +166,28 @@ describe('loadCatalog', () => {
     });
   });
 
+  it('recognises Google\'s way of refusing a key, which is a 400 and not a 401', async () => {
+    const { impl } = fakeFetch({
+      'https://generativelanguage.googleapis.com/v1beta/models': {
+        status: 400,
+        body: { error: { code: 400, status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } }
+      }
+    });
+
+    await assert.rejects(loadCatalog('google', KEY, { fetchImpl: impl }), (error: any) => error.kind === 'rejected-key');
+  });
+
+  it('does not blame the key for a 400 that is about something else', async () => {
+    const { impl } = fakeFetch({
+      'https://generativelanguage.googleapis.com/v1beta/models': {
+        status: 400,
+        body: { error: { code: 400, status: 'INVALID_ARGUMENT', details: [{ reason: 'SOMETHING_ELSE' }] } }
+      }
+    });
+
+    await assert.rejects(loadCatalog('google', KEY, { fetchImpl: impl }), (error: any) => error.kind === 'provider');
+  });
+
   it('reports a network failure as its own kind, so "check your connection" is not shown for a bad key', async () => {
     const impl = async () => { throw new Error('getaddrinfo ENOTFOUND'); };
 

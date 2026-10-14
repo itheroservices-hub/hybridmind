@@ -55,6 +55,11 @@ interface ProviderSpec {
    * about whether the key is good and it has to be checked somewhere else.
    */
   keyCheckUrl?: string;
+  /**
+   * For a provider that reports a bad key with something other than 401 or
+   * 403. Given the status and the parsed error body of a failed request.
+   */
+  rejectsKey?(status: number, body: any): boolean;
 }
 
 const bearer = (key: string) => ({ Authorization: `Bearer ${key}` });
@@ -126,7 +131,11 @@ const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         })
         .filter((model) => !NOT_CHAT.test(model.id));
     },
-    preferred: [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/, /flash/, /^gemini-/]
+    preferred: [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/, /flash/, /^gemini-/],
+    // Google answers an invalid key with 400 INVALID_ARGUMENT, not 401.
+    rejectsKey: (status, body) => status === 400
+      && Array.isArray(body?.error?.details)
+      && body.error.details.some((detail: any) => detail?.reason === 'API_KEY_INVALID')
   },
   groq: {
     label: 'Groq',
@@ -184,7 +193,8 @@ export function pickDefaultModel(provider: ProviderId, models: CatalogModel[]): 
 const MAX_MODELS = 600;
 const DEFAULT_TIMEOUT_MS = 10000;
 
-async function getJson(url: string, headers: Record<string, string>, label: string, fetchImpl: FetchLike, timeoutMs: number): Promise<any> {
+async function getJson(url: string, headers: Record<string, string>, spec: ProviderSpec, fetchImpl: FetchLike, timeoutMs: number): Promise<any> {
+  const label = spec.label;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
@@ -197,10 +207,17 @@ async function getJson(url: string, headers: Record<string, string>, label: stri
     clearTimeout(timer);
   }
 
+  const rejected = `${label} rejected this key. Check that it was copied in full and is still active.`;
   if (response.status === 401 || response.status === 403) {
-    throw new CatalogError('rejected-key', `${label} rejected this key. Check that it was copied in full and is still active.`);
+    throw new CatalogError('rejected-key', rejected);
   }
   if (!response.ok) {
+    if (spec.rejectsKey) {
+      const errorBody = await response.json().catch(() => null);
+      if (spec.rejectsKey(response.status, errorBody)) {
+        throw new CatalogError('rejected-key', rejected);
+      }
+    }
     throw new CatalogError('provider', `${label} answered with an error (${response.status}). Try again in a moment.`);
   }
 
@@ -234,7 +251,7 @@ export async function loadCatalog(rawProvider: string | null | undefined, key: s
 
   const spec = PROVIDERS[provider];
   const fetchImpl = options.fetchImpl || (fetch as unknown as FetchLike);
-  const body = await getJson(spec.listUrl, spec.headers(key), spec.label, fetchImpl, options.timeoutMs || DEFAULT_TIMEOUT_MS);
+  const body = await getJson(spec.listUrl, spec.headers(key), spec, fetchImpl, options.timeoutMs || DEFAULT_TIMEOUT_MS);
 
   const seen = new Set<string>();
   const models: CatalogModel[] = [];
@@ -258,7 +275,7 @@ export async function verifyKey(rawProvider: string | null | undefined, key: str
   const spec = PROVIDERS[catalog.provider];
   if (spec.keyCheckUrl) {
     const fetchImpl = options.fetchImpl || (fetch as unknown as FetchLike);
-    await getJson(spec.keyCheckUrl, spec.headers(key as string), spec.label, fetchImpl, options.timeoutMs || DEFAULT_TIMEOUT_MS);
+    await getJson(spec.keyCheckUrl, spec.headers(key as string), spec, fetchImpl, options.timeoutMs || DEFAULT_TIMEOUT_MS);
   }
   return catalog;
 }
