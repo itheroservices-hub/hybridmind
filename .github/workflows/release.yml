@@ -58,7 +58,10 @@ jobs:
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          npm ci
+          # The job runs with NODE_ENV=production, under which npm ci skips
+          # devDependencies, and the compile needs typescript and @types/*.
+          # vsce still packages only production dependencies.
+          npm ci --include=dev
           mkdir -p ../dist
           npx --yes @vscode/vsce@4.0.0 package --out "../dist/hybridmind-$version.vsix"
 
