@@ -2,7 +2,7 @@
 
 See every MCP server your AI tools use, and know when one changes.
 
-HybridMind lists every MCP server configured on your machine for VS Code, Cursor, Claude and others, and flags API keys left in their config files. Approve a server once, and HybridMind tells you if its tools change afterward. It also includes a coding agent that runs on your own API key. Nothing leaves your machine except your own requests to your own provider.
+HybridMind lists every MCP server configured on your machine for VS Code, Cursor, Claude and others, and flags API keys left in their config files. Approve a server once, and HybridMind tells you if its tools change afterward. It also includes a coding agent that runs on your own API key. Nothing leaves your machine except requests you start yourself: chat with your own AI provider, and approving or checking a server you choose.
 
 Powered by [MCP Steward](https://www.npmjs.com/package/mcpsteward).
 
@@ -15,13 +15,14 @@ Search "HybridMind" in the VS Code Marketplace and install.
 Open the HybridMind icon in the activity bar. The **MCP Servers** view lists every server it finds in your MCP config files.
 
 - **Finding servers starts nothing.** HybridMind only reads the config files. No server is started and nothing is sent anywhere.
-- **Keys in config files.** A server whose API key is written directly into a config file is marked with a key icon, and you are told once. Anyone who can read that file can use the key, so it belongs in an environment variable or your client's secret store instead.
-- **Approve.** Approving a server starts it once, reads the tools it advertises, and remembers them. Only approve a server you trust as it is today.
+- **Keys in config files.** A server whose API key is written directly into a config file is marked with a key icon, and you are told once per server. Anyone who can read that file can use the key, so it belongs in an environment variable or your client's secret store instead.
+- **Approve.** Approving a server starts it once, reads the tools it advertises, and remembers them. The prompt shows the program it will run or the host it will contact, and the config file that says so. Only approve a server you trust as it is today.
 - **Check for changes.** Starts the server again and compares what it advertises now with what you approved. A tool whose description was rewritten after approval is the classic sign of a poisoned server, so changes are listed under the server with a risk level and the reasons for it. Risk levels are a heuristic, not a verdict.
 - **Check all.** The checklist button in the view title checks every approved server in turn.
+- **Untrusted projects.** MCP config files inside a project are read only after you trust the workspace, and HybridMind stays off in Restricted Mode.
 - **Same approvals as the command line.** Approvals are kept in `~/.mcpsteward/pins`, where the `mcpsteward` command line tool keeps them, so approving in one shows in the other.
 
-A server whose configuration reads a value from your environment, such as `${env:TOKEN}`, cannot be approved or checked from the editor, because HybridMind does not pass your environment to servers it starts. Run `npx mcpsteward trust <name>` in a terminal for those.
+A server whose configuration reads a value from your environment, such as `${env:TOKEN}`, cannot be approved or checked from the editor, because HybridMind does not pass your environment to servers it starts. Run `npx mcpsteward trust <id>` in a terminal for those; the error message gives the id.
 
 ## The coding agent
 

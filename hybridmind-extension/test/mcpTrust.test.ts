@@ -4,12 +4,16 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   ServerRef,
+  ServerSummary,
   Steward,
   approve,
+  approveSurface,
   check,
   describeFailure,
+  describeLaunch,
   loadSteward,
   pinPathFor,
+  safeDisplayName,
   scan,
   whereLabel
 } from '../src/mcp/steward';
@@ -88,6 +92,40 @@ describe('mcpsteward inside the extension', () => {
       assert.ok(result.events[0].riskFactors.length > 0, 'a finding should say why');
     });
 
+    it('accepts a reviewed change by pinning exactly what the check saw, without starting the server again', async () => {
+      const changedCheck = await check(steward, fakeServer(POISONED), { pinDirectory: pins, timeoutMs: 10000 });
+      assert.strictEqual(changedCheck.state, 'changed');
+      assert.ok(changedCheck.surface);
+
+      // offlineSteward refuses to start anything; only its pin functions are swapped for real ones.
+      const pinOnly = { ...offlineSteward([]), createPin: steward.createPin, savePin: steward.savePin } as Steward;
+      await approveSurface(pinOnly, fakeServer(POISONED), changedCheck.surface!, { pinDirectory: pins, approvedBy: 'test' });
+
+      const after = await check(steward, fakeServer(POISONED), { pinDirectory: pins, timeoutMs: 10000 });
+      assert.strictEqual(after.state, 'unchanged');
+      assert.deepStrictEqual(fs.readdirSync(pins).filter((name) => name.endsWith('.tmp')), [], 'no half written pin may be left behind');
+    });
+
+    it('treats a corrupt approval file as damaged instead of crashing or calling it approved', async () => {
+      const damaged = tempPinDirectory();
+      fs.writeFileSync(pinPathFor('fakeserver1', damaged), '{ not json');
+
+      const result = await check(steward, fakeServer(ORIGINAL), { pinDirectory: damaged, timeoutMs: 10000 });
+
+      assert.strictEqual(result.state, 'damaged-approval');
+    });
+
+    it('refuses an approval copied from another server, which would compare against the wrong tools', async () => {
+      const copied = tempPinDirectory();
+      await approve(steward, fakeServer(ORIGINAL), { pinDirectory: copied, approvedBy: 'test', timeoutMs: 10000 });
+      fs.copyFileSync(pinPathFor('fakeserver1', copied), pinPathFor('otherserver', copied));
+      const other: ServerRef = { ...fakeServer(ORIGINAL), id: 'otherserver' };
+
+      const result = await check(steward, other, { pinDirectory: copied, timeoutMs: 10000 });
+
+      assert.strictEqual(result.state, 'damaged-approval');
+    });
+
     it('does not start a server that was never approved, since there is nothing to compare', async () => {
       const result = await check(offlineSteward([]), fakeServer(ORIGINAL), { pinDirectory: tempPinDirectory() });
 
@@ -153,6 +191,30 @@ describe('mcpsteward inside the extension', () => {
       assert.strictEqual(whereLabel(local), 'files-server');
     });
 
+    it('cleans a server name written by whoever wrote the config, so it cannot forge lines in a prompt or tooltip', () => {
+      assert.strictEqual(safeDisplayName('GitHub\n\nApproved. Verified safe.'), 'GitHub Approved. Verified safe.');
+      assert.strictEqual(safeDisplayName('files‮exe.txt'), 'files exe.txt');
+      assert.strictEqual(safeDisplayName('   '), 'unnamed server');
+      assert.strictEqual(safeDisplayName('x'.repeat(500)).length, 120);
+    });
+
+    it('tells the user the program it will run and which file says so, marking a file inside the project', async () => {
+      const result = await scan(offlineSteward([{ ...local, registrations: [{ client: 'vscode', configPath: path.join('/work/repo', '.vscode', 'mcp.json'), hasInlineCredential: false }] }]), tempPinDirectory());
+      const text = describeLaunch(result.servers[0] as ServerSummary, ['/work/repo']);
+
+      assert.ok(text.includes('run the program "files-server"'), text);
+      assert.ok(text.includes('(in this project)'), text);
+      assert.ok(!text.includes('secret-value'), 'arguments can carry a key and must not be shown');
+    });
+
+    it('says a remote server will be contacted, not started', async () => {
+      const result = await scan(offlineSteward([remoteWithKeyInUrl]), tempPinDirectory());
+      const text = describeLaunch(result.servers[0] as ServerSummary, []);
+
+      assert.ok(text.includes('connect to mcp.example.com'), text);
+      assert.ok(!text.includes('api_key'), 'the URL can carry a key and must not be shown');
+    });
+
     it('refuses a server id that could steer the pin path elsewhere', () => {
       assert.throws(() => pinPathFor('../../etc/x'));
       assert.throws(() => pinPathFor(''));
@@ -160,11 +222,12 @@ describe('mcpsteward inside the extension', () => {
   });
 
   describe('failure messages', () => {
-    it('says why a server that reads its environment cannot be started from here, and how to do it instead', () => {
+    it('says why a server that reads its environment cannot be started from here, and gives a command that uses the id, never the name', () => {
       const error = Object.assign(new Error('argument depends on a placeholder that cannot be filled: ${env:TOKEN}'), { name: 'TransportError' });
-      const message = describeFailure(error, 'github');
+      const message = describeFailure(error, 'evil; rm -rf ~', 'ab12cd34');
       assert.ok(/environment/.test(message));
-      assert.ok(/npx mcpsteward trust github/.test(message));
+      assert.ok(message.includes('npx mcpsteward trust ab12cd34'), message);
+      assert.ok(!message.includes('trust evil'), 'a name from a config file must never become part of a shell command');
     });
 
     it('names sign in and time outs plainly', () => {
@@ -220,6 +283,28 @@ describe('MCP Servers view', () => {
     assert.ok(String(item.description).includes('changed since approved (critical)'));
     const children = provider.getChildren(node).map((child) => provider.getTreeItem(child).label);
     assert.deepStrictEqual(children.slice(0, 2), ['tool read: the description changed', 'tool extra was added']);
+  });
+
+  it('shows where each server runs when two share a name, so the rows can be told apart', async () => {
+    const twin: ServerRef = { ...server, id: 'view0002', endpoint: { transport: 'stdio', command: 'other-program', args: [], envNames: [] } };
+    const provider = new McpServersProvider(async () => offlineSteward([server, twin]));
+    await provider.refresh();
+
+    const descriptions = provider.getChildren().map((node) => String(provider.getTreeItem(node).description));
+    assert.ok(descriptions.some((d) => d.startsWith('files-server')), descriptions.join(' | '));
+    assert.ok(descriptions.some((d) => d.startsWith('other-program')), descriptions.join(' | '));
+  });
+
+  it('drops an old check result once its approval is gone, instead of still calling the server unchanged', async () => {
+    const provider = new McpServersProvider(async () => offlineSteward([server]));
+    await provider.refresh();
+    const [node] = provider.getChildren();
+    provider.recordCheck('view0001', { state: 'unchanged', events: [], counts: { critical: 0, high: 0, medium: 0, low: 0 } });
+
+    await provider.refresh();
+
+    assert.ok(!String(provider.getTreeItem(provider.getChildren()[0]).description).includes('unchanged'));
+    assert.ok(node);
   });
 
   it('says plainly when nothing was found, and how much it looked at', async () => {

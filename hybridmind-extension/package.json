@@ -302,5 +302,11 @@
   },
   "overrides": {
     "serialize-javascript": "^7.1.2"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "HybridMind can run commands and edit files, and its MCP Servers view starts configured MCP servers on request, so it stays off until you trust the workspace."
+    }
   }
 }

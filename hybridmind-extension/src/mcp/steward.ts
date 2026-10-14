@@ -47,7 +47,9 @@ interface Surface {
 }
 
 interface Pin {
+  readonly serverId: string;
   readonly surfaceRoot: string;
+  readonly descriptorHashes: Readonly<Record<string, string>>;
   readonly approvedAt: string;
 }
 
@@ -68,7 +70,7 @@ interface OperationOptions {
 export interface Steward {
   inventory(options?: { projectDirectories?: readonly string[] }): Promise<Inventory>;
   captureServer(server: ServerRef, options?: OperationOptions): Promise<Surface>;
-  diffServer(server: ServerRef, pin: Pin, options?: OperationOptions): Promise<{ report: { readonly pinnedAt: string; readonly events: readonly DriftEvent[]; readonly unchanged: number } }>;
+  diffServer(server: ServerRef, pin: Pin, options?: OperationOptions): Promise<{ surface: Surface; report: { readonly pinnedAt: string; readonly events: readonly DriftEvent[]; readonly unchanged: number } }>;
   createPin(surface: Surface, options: { approvedBy: string }): Pin;
   savePin(pinPath: string, pin: Pin): Promise<void>;
   loadPin(pinPath: string): Promise<Pin>;
@@ -84,18 +86,22 @@ const importEsm = new Function('specifier', 'return import(specifier)') as (spec
 
 /** The installed mcpsteward package directory, found by walking up from here. */
 function findPackageRoot(start: string = __dirname): string {
+  // This file runs from out/mcp in the extension and from test-out/src/mcp in
+  // tests, so the extension root is at most four levels up. Looking further
+  // would pick up whatever happens to sit above the extension.
   let dir = start;
-  for (;;) {
+  for (let level = 0; level <= 4; level++) {
     const candidate = path.join(dir, 'node_modules', 'mcpsteward');
     if (fs.existsSync(path.join(candidate, 'package.json'))) {
       return candidate;
     }
     const parent = path.dirname(dir);
     if (parent === dir) {
-      throw new Error('mcpsteward is not installed alongside HybridMind.');
+      break;
     }
     dir = parent;
   }
+  throw new Error('mcpsteward is not installed alongside HybridMind.');
 }
 
 let loaded: Promise<Steward> | null = null;
@@ -178,6 +184,19 @@ const CLIENT_LABELS: Record<string, string> = {
   zed: 'Zed'
 };
 
+/**
+ * A server name as it is safe to show: a config file key, written by whoever
+ * wrote the file, so line breaks, control and direction override characters
+ * are collapsed and the length is capped. Used for every label, tooltip,
+ * prompt and notification.
+ */
+export function safeDisplayName(name: string): string {
+  const cleaned = String(name || '')
+    .replace(/[\s\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]+/g, ' ')
+    .trim();
+  return (cleaned || 'unnamed server').slice(0, 120);
+}
+
 export function clientLabel(client: string): string {
   return CLIENT_LABELS[client] || client;
 }
@@ -197,6 +216,26 @@ export function whereLabel(server: ServerRef): string {
  * @param projectDirectories open workspace folders, so project level configs
  *   such as .vscode/mcp.json and .mcp.json are found as well as user level ones.
  */
+/**
+ * What approving or checking `server` will do, in plain words: the program it
+ * runs or the host it connects to, and where that is configured.
+ */
+export function describeLaunch(server: ServerSummary, workspaceFolders: readonly string[] = []): string {
+  const action = server.transport === 'http'
+    ? `connect to ${server.where} and send the headers in its configuration`
+    : `run the program "${server.where}" with the arguments in its configuration`;
+  const files = server.registrations.map((site) => {
+    const inProject = workspaceFolders.some((folder) => isInside(site.configPath, folder));
+    return `${site.configPath}${inProject ? ' (in this project)' : ''}`;
+  });
+  return `This will ${action}, as set in:\n${files.join('\n') || 'an unknown file'}`;
+}
+
+function isInside(file: string, folder: string): boolean {
+  const relative = path.relative(folder, file);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
 export async function scan(steward: Steward, pinDirectory: string = defaultPinDirectory(), projectDirectories: readonly string[] = []): Promise<ScanResult> {
   const inventory = await steward.inventory(projectDirectories.length ? { projectDirectories } : undefined);
   const servers = inventory.servers.map((ref): ServerSummary => {
@@ -210,7 +249,7 @@ export async function scan(steward: Steward, pinDirectory: string = defaultPinDi
     return {
       ref,
       id: ref.id,
-      name: ref.name,
+      name: safeDisplayName(ref.name),
       transport: ref.endpoint.transport,
       where: whereLabel(ref),
       authPosture: ref.authPosture,
@@ -240,8 +279,27 @@ export interface ApproveResult {
 
 export async function approve(steward: Steward, server: ServerRef, options: OperationOptions & { approvedBy?: string; pinDirectory?: string } = {}): Promise<ApproveResult> {
   const surface = await steward.captureServer(server, { signal: options.signal, timeoutMs: options.timeoutMs });
+  return approveSurface(steward, server, surface, options);
+}
+
+/**
+ * Pin a surface that was already captured, such as the one a check just
+ * compared. Accepting a reviewed change this way pins exactly what the user
+ * looked at, not a fresh capture that could differ from it.
+ */
+export async function approveSurface(steward: Steward, server: ServerRef, surface: Surface, options: { approvedBy?: string; pinDirectory?: string } = {}): Promise<ApproveResult> {
   const pin = steward.createPin(surface, { approvedBy: options.approvedBy || safeUserName() });
-  await steward.savePin(pinPathFor(server.id, options.pinDirectory), pin);
+  const finalPath = pinPathFor(server.id, options.pinDirectory);
+  // Written beside the final file and renamed into place, so another window
+  // reading the pin never sees half of one.
+  const temporaryPath = `${finalPath}.${process.pid}.${Date.now()}.tmp`;
+  await steward.savePin(temporaryPath, pin);
+  try {
+    await fs.promises.rename(temporaryPath, finalPath);
+  } catch (error) {
+    await fs.promises.rm(temporaryPath, { force: true });
+    throw error;
+  }
   return {
     approvedAt: pin.approvedAt,
     tools: surface.descriptors.filter((descriptor) => descriptor.category === 'tool').length,
@@ -250,7 +308,9 @@ export async function approve(steward: Steward, server: ServerRef, options: Oper
 }
 
 export interface CheckResult {
-  readonly state: 'not-approved' | 'unchanged' | 'changed';
+  readonly state: 'not-approved' | 'unchanged' | 'changed' | 'damaged-approval';
+  /** What the server advertised during this check, for accepting a change as reviewed. */
+  readonly surface?: Surface;
   readonly approvedAt?: string;
   readonly unchanged?: number;
   /** Most severe first. */
@@ -267,8 +327,18 @@ export async function check(steward: Steward, server: ServerRef, options: Operat
   if (!fs.existsSync(pinPath)) {
     return { state: 'not-approved', events: [], counts: emptyCounts };
   }
-  const pin = await steward.loadPin(pinPath);
-  const { report } = await steward.diffServer(server, pin, { signal: options.signal, timeoutMs: options.timeoutMs });
+  let pin: Pin;
+  try {
+    pin = await steward.loadPin(pinPath);
+  } catch {
+    return { state: 'damaged-approval', events: [], counts: emptyCounts };
+  }
+  // A pin can be edited by hand or copied between servers. One that does not
+  // belong to this server, or has nothing to compare, is not an approval.
+  if (pin.serverId !== server.id || !pin.descriptorHashes || typeof pin.descriptorHashes !== 'object') {
+    return { state: 'damaged-approval', events: [], counts: emptyCounts };
+  }
+  const { surface, report } = await steward.diffServer(server, pin, { signal: options.signal, timeoutMs: options.timeoutMs });
 
   const events = [...report.events].sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk));
   const counts = { ...emptyCounts };
@@ -277,6 +347,7 @@ export async function check(steward: Steward, server: ServerRef, options: Operat
   }
   return {
     state: events.length ? 'changed' : 'unchanged',
+    surface,
     approvedAt: report.pinnedAt,
     unchanged: report.unchanged,
     events,
@@ -296,7 +367,7 @@ function safeUserName(): string {
 // ---------------------------------------------------------------------------
 // Failures, in words a person can act on.
 
-export function describeFailure(error: unknown, serverName: string): string {
+export function describeFailure(error: unknown, serverName: string, serverId?: string): string {
   const name = (error as any)?.name || '';
   const message = String((error as any)?.message || error || '');
 
@@ -312,7 +383,8 @@ export function describeFailure(error: unknown, serverName: string): string {
   if (/placeholder/i.test(message)) {
     // The library never hands a server this editor's environment, so a config
     // that reads ${env:NAME} cannot be started from here.
-    return `${serverName} reads a value from your environment in its configuration. HybridMind does not pass your environment to servers it starts. Run "npx mcpsteward trust ${serverName}" in a terminal instead.`;
+    const target = serverId && SAFE_SERVER_ID.test(serverId) ? ` ${serverId}` : '';
+    return `${serverName} reads a value from your environment in its configuration. HybridMind does not pass your environment to servers it starts. Run "npx mcpsteward trust${target}" in a terminal instead.`;
   }
   if (/not found/i.test(message) && /command/i.test(message)) {
     return `${serverName} could not be started: its program is not installed or not on your PATH.`;

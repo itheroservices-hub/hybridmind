@@ -6,8 +6,10 @@ import {
   ServerSummary,
   Steward,
   approve,
+  approveSurface,
   check,
   describeFailure,
+  describeLaunch,
   loadSteward,
   scan
 } from './steward';
@@ -47,6 +49,7 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
   private scanning: Promise<void> | null = null;
   /** Results of checks run this session, by server id. */
   private readonly checks = new Map<string, CheckResult>();
+  private duplicateNames = new Set<string>();
 
   constructor(private readonly loadStewardFn: () => Promise<Steward> = loadSteward) {}
 
@@ -63,9 +66,19 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
     if (!this.scanning) {
       this.scanning = (async () => {
         try {
-          const folders = (vscode.workspace.workspaceFolders || []).map((folder) => folder.uri.fsPath);
+          // A workspace's own MCP configs are read only once it is trusted, the
+          // same line VS Code draws before starting workspace MCP servers.
+          const folders = vscode.workspace.isTrusted === false ? [] : workspaceFolderPaths();
           this.result = await scan(await this.loadStewardFn(), undefined, folders);
           this.error = null;
+          // A check result is only meaningful while the approval it was made
+          // against still exists.
+          const approved = new Set(this.result.servers.filter((server) => server.approved).map((server) => server.id));
+          for (const id of [...this.checks.keys()]) {
+            if (!approved.has(id)) {
+              this.checks.delete(id);
+            }
+          }
         } catch (error: any) {
           this.error = `Could not read MCP configuration: ${error?.message || error}`;
         } finally {
@@ -94,6 +107,11 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
       if (!this.result) {
         return [{ kind: 'note', label: 'Looking for MCP servers...', icon: 'loading~spin' }];
       }
+      const counts = new Map<string, number>();
+      for (const server of this.result.servers) {
+        counts.set(server.name, (counts.get(server.name) || 0) + 1);
+      }
+      this.duplicateNames = new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
       const nodes: Node[] = this.result.servers.map((server) => ({ kind: 'server', server }));
       for (const problem of this.result.problems) {
         nodes.push({ kind: 'note', label: `Could not read a ${problem.client} config file`, detail: `${problem.configPath}\n${problem.reason}`, icon: 'warning' });
@@ -135,6 +153,9 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
         item.id = `server:${server.id}`;
 
         const badges: string[] = [];
+        if (this.duplicateNames.has(server.name)) {
+          badges.push(server.where);
+        }
         if (result?.state === 'changed') {
           badges.push(`changed since approved (${result.worstRisk})`);
         } else if (result?.state === 'unchanged') {
@@ -201,7 +222,11 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
 }
 
 function escapeMarkdown(text: string): string {
-  return text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
+  return text.replace(/\s+/g, ' ').replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
+}
+
+function workspaceFolderPaths(): string[] {
+  return (vscode.workspace.workspaceFolders || []).map((folder) => folder.uri.fsPath);
 }
 
 function formatDate(iso?: string): string {
@@ -232,10 +257,15 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
   };
 
   // Scanning only reads config files, so it is safe to do whenever the view shows.
-  void refreshAndWarn();
+  void refreshAndWarn().catch(() => undefined);
+  if (vscode.workspace.onDidGrantWorkspaceTrust) {
+    context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      void refreshAndWarn().catch(() => undefined);
+    }));
+  }
   context.subscriptions.push(view.onDidChangeVisibility((event) => {
     if (event.visible) {
-      void provider.refresh();
+      void provider.refresh().catch(() => undefined);
     }
   }));
 
@@ -247,20 +277,42 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
     }
   }));
 
-  context.subscriptions.push(vscode.commands.registerCommand('hybridmind.mcp.approve', async (node?: { kind: string; server?: ServerSummary }) => {
+  context.subscriptions.push(vscode.commands.registerCommand('hybridmind.mcp.approve', async (node?: { kind: string; server?: ServerSummary }, reviewed?: CheckResult) => {
     const server = node?.kind === 'server' ? node.server : undefined;
     if (!server) {
       return;
     }
-    const choice = await vscode.window.showInformationMessage(
+    // Accepting a change just reviewed pins what the check saw; nothing runs again.
+    if (reviewed?.surface) {
+      try {
+        const result = await approveSurface(await provider.steward(), server.ref, reviewed.surface);
+        provider.forgetCheck(server.id);
+        await provider.refresh();
+        vscode.window.showInformationMessage(`Approved ${server.name} as it is now: ${result.tools} tool(s) and ${result.items} item(s) in all.`);
+      } catch (error) {
+        vscode.window.showErrorMessage(describeFailure(error, server.name, server.id));
+      }
+      return;
+    }
+
+    const replaces = server.approved ? ' This replaces your earlier approval of it.' : '';
+    const choice = await vscode.window.showWarningMessage(
       `Approve ${server.name}?`,
       {
         modal: true,
-        detail: `HybridMind will start ${server.name} once to read the tools it advertises, then remember them as approved. Later checks compare against this. Only approve a server you trust as it is today.`
+        detail: `${describeLaunch(server, workspaceFolderPaths())}\n\nHybridMind reads the tools it advertises and remembers them as approved, so later checks can spot changes.${replaces} Only approve a server you trust as it is today.`
       },
-      'Start and approve'
+      'Approve',
+      'Open config file'
     );
-    if (choice !== 'Start and approve') {
+    if (choice === 'Open config file') {
+      const first = server.registrations[0]?.configPath;
+      if (first) {
+        await vscode.commands.executeCommand('hybridmind.mcp.openConfig', first);
+      }
+      return;
+    }
+    if (choice !== 'Approve') {
       return;
     }
     try {
@@ -268,15 +320,19 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
         { location: vscode.ProgressLocation.Notification, title: `Approving ${server.name}`, cancellable: true },
         async (_progress, token) => {
           const controller = new AbortController();
-          token.onCancellationRequested(() => controller.abort());
-          return approve(await provider.steward(), server.ref, { signal: controller.signal, timeoutMs: CAPTURE_TIMEOUT_MS });
+          const subscription = token.onCancellationRequested(() => controller.abort());
+          try {
+            return await approve(await provider.steward(), server.ref, { signal: controller.signal, timeoutMs: CAPTURE_TIMEOUT_MS });
+          } finally {
+            subscription.dispose();
+          }
         }
       );
       provider.forgetCheck(server.id);
       await provider.refresh();
       vscode.window.showInformationMessage(`Approved ${server.name}: ${result.tools} tool(s) and ${result.items} item(s) in all. Use Check for changes to compare against this later.`);
     } catch (error) {
-      vscode.window.showErrorMessage(describeFailure(error, server.name));
+      vscode.window.showErrorMessage(describeFailure(error, server.name, server.id));
     }
   }));
 
@@ -296,11 +352,17 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
         { location: vscode.ProgressLocation.Notification, title: `Checking ${server.name} for changes`, cancellable: true },
         async (_progress, token) => {
           const controller = new AbortController();
-          token.onCancellationRequested(() => controller.abort());
-          return runCheck(server, controller.signal);
+          const subscription = token.onCancellationRequested(() => controller.abort());
+          try {
+            return await runCheck(server, controller.signal);
+          } finally {
+            subscription.dispose();
+          }
         }
       );
-      if (result.state === 'not-approved') {
+      if (result.state === 'damaged-approval') {
+        vscode.window.showWarningMessage(`The approval saved for ${server.name} is damaged or belongs to another server, so it cannot be compared. Approve it again.`);
+      } else if (result.state === 'not-approved') {
         vscode.window.showInformationMessage(`${server.name} has not been approved yet, so there is nothing to compare against. Approve it first.`);
       } else if (result.state === 'unchanged') {
         vscode.window.showInformationMessage(`${server.name} is unchanged since you approved it on ${formatDate(result.approvedAt)}.`);
@@ -313,11 +375,13 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
         if (action === 'Show') {
           await vscode.commands.executeCommand(`${MCP_VIEW_ID}.focus`);
         } else if (action === 'Approve as it is now') {
-          await vscode.commands.executeCommand('hybridmind.mcp.approve', { kind: 'server', server });
+          // Pins the surface this check compared, which is what the user just
+          // reviewed, rather than starting the server again.
+          await vscode.commands.executeCommand('hybridmind.mcp.approve', { kind: 'server', server }, result);
         }
       }
     } catch (error) {
-      vscode.window.showErrorMessage(describeFailure(error, server.name));
+      vscode.window.showErrorMessage(describeFailure(error, server.name, server.id));
     }
   }));
 
@@ -330,27 +394,44 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
     }
     const changed: string[] = [];
     const failed: string[] = [];
+    let completed = 0;
+    let cancelled = false;
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Checking approved MCP servers', cancellable: true },
       async (progress, token) => {
         const controller = new AbortController();
-        token.onCancellationRequested(() => controller.abort());
-        for (const [index, server] of approved.entries()) {
-          if (token.isCancellationRequested) {
-            break;
-          }
-          progress.report({ message: `${server.name} (${index + 1} of ${approved.length})`, increment: 100 / approved.length });
-          try {
-            const result = await runCheck(server, controller.signal);
-            if (result.state === 'changed') {
-              changed.push(`${server.name} (${result.worstRisk})`);
+        const subscription = token.onCancellationRequested(() => controller.abort());
+        try {
+          for (const [index, server] of approved.entries()) {
+            if (token.isCancellationRequested) {
+              break;
             }
-          } catch (error) {
-            failed.push(describeFailure(error, server.name));
+            progress.report({ message: `${server.name} (${index + 1} of ${approved.length})`, increment: 100 / approved.length });
+            try {
+              const result = await runCheck(server, controller.signal);
+              completed += 1;
+              if (result.state === 'changed') {
+                changed.push(`${server.name} (${result.worstRisk})`);
+              } else if (result.state === 'damaged-approval') {
+                failed.push(`The approval saved for ${server.name} is damaged. Approve it again.`);
+              }
+            } catch (error) {
+              if (token.isCancellationRequested) {
+                break;
+              }
+              failed.push(describeFailure(error, server.name, server.id));
+            }
           }
+        } finally {
+          cancelled = token.isCancellationRequested;
+          subscription.dispose();
         }
       }
     );
+    if (cancelled) {
+      vscode.window.showInformationMessage(`Stopped after checking ${completed} of ${approved.length} approved server(s).${changed.length ? ` Changed so far: ${changed.join(', ')}.` : ''}`);
+      return;
+    }
     if (changed.length) {
       vscode.window.showWarningMessage(`Changed since approved: ${changed.join(', ')}. Expand them in MCP Servers to see what changed.`);
     } else if (!failed.length) {
