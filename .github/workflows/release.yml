@@ -30,17 +30,65 @@ jobs:
       - name: Security audit (fail on high/critical)
         run: npm audit --audit-level=high
 
+      # Packaging used to end in `|| echo "...skipping"`, so a failure still
+      # produced a release, just without the .vsix. It fails loudly now.
       - name: Build extension (VSIX)
+        working-directory: hybridmind-extension
         run: |
-          mkdir -p dist
-          cd hybridmind-extension
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "ERROR: tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
           npm ci
-          npx vsce package --out ../dist/hybridmind-extension.vsix || echo "VSIX packaging requires vsce — skipping in CI"
+          mkdir -p ../dist
+          npx --yes @vscode/vsce@4.0.0 package --out "../dist/hybridmind-$version.vsix"
+
+      # vsce does not bundle; it packages production dependencies from
+      # node_modules. A .vscodeignore that excluded node_modules shipped a
+      # .vsix whose extension.js failed on require('axios') before activating.
+      # This makes that impossible to release again.
+      - name: Verify the VSIX carries its runtime dependencies
+        run: |
+          set -euo pipefail
+          vsix=$(ls dist/*.vsix)
+          listing=$(unzip -l "$vsix")
+          # Here-strings, not `echo | grep -q`: under pipefail, grep -q exits on
+          # the first match, echo takes SIGPIPE, and a found match reads as failure.
+          for dep in axios @supabase/supabase-js dotenv @hybridmind/ontology-core @hybridmind/local-runtimes; do
+            grep -q "extension/node_modules/$dep/package.json" <<<"$listing" \
+              || { echo "ERROR: $dep is missing from $vsix"; exit 1; }
+          done
+          grep -q "extension/out/extension.js" <<<"$listing" \
+            || { echo "ERROR: out/extension.js is missing from $vsix"; exit 1; }
+          echo "All runtime dependencies present in $vsix"
+
+      # Publishes only when a VSCE_PAT secret exists: a Marketplace token with
+      # the Marketplace (Manage) scope, from an account that owns the
+      # publisher. Without one, the release still gets the .vsix attached for a
+      # manual upload.
+      #
+      # The token is scoped to the step that needs it. A step's `if` cannot read
+      # its own env, and job-level env would hand the token to every step,
+      # including npm ci, which runs third-party install scripts. So one step
+      # reports only whether the secret exists, and only the publish step sees it.
+      - name: Check for a Marketplace token
+        id: pat
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: echo "present=${VSCE_PAT:+yes}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to the VS Code Marketplace
+        if: steps.pat.outputs.present == 'yes'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce@4.0.0 publish --packagePath dist/*.vsix
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/hybridmind-extension.vsix
+          files: dist/*.vsix
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
