@@ -68,31 +68,6 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.showErrorMessage(`Failed to start HybridMind server: ${error.message}`);
   });
 
-  // Check if backend has models available (non-blocking, 4s timeout)
-  const _ctl = new AbortController();
-  const _timer = setTimeout(() => _ctl.abort(), 4000);
-  fetch(`http://localhost:${serverPort}/models`, {
-    signal: _ctl.signal,
-    headers: licenseManager.getApiHeaders()
-  }).then(async (response) => {
-    clearTimeout(_timer);
-    const result = await response.json() as any;
-    const models = result.data?.models || [];
-    if (!models || models.length === 0) {
-      const action = await vscode.window.showWarningMessage(
-        'No AI models available. Please check your .env file in the backend.',
-        'Open .env File'
-      );
-      if (action === 'Open .env File') {
-        const envPath = vscode.Uri.file('e:\\IThero\\HybridMind\\.env');
-        vscode.window.showTextDocument(envPath);
-      }
-    }
-  }).catch(() => {
-    clearTimeout(_timer);
-    // Server not running or unreachable — silently skip check
-  });
-
   // Create status bar item
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.text = licenseManager.isPro() ? '$(star-full) HybridMind Pro' : 'HybridMind Free';
