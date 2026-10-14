@@ -1,0 +1,9 @@
+{
+  "name": "@hybridmind/local-runtimes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loopback clients for locally served models (Ollama, LM Studio) and nvidia-smi telemetry. Plain Node, no shell, no dependencies.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": ["index.js", "index.d.ts", "ollama.cjs", "lmstudio.cjs", "gpu.cjs"]
+}
