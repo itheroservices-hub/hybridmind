@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.1.1] - 2026-10-14
+
+2.1.0 never reached the Marketplace, so this is the version that carries
+everything listed under 2.1.0 below.
+
+### Fixed
+- The Marketplace refused the 2.1.0 package because its manifest listed
+  `Agents` as a category, which is not one the Marketplace has. It is listed
+  under `Chat` instead. Packaging and CI both passed with the bad category,
+  because the Marketplace only checks it at upload.
+
+### Internal
+- A test now fails when the manifest names a category the Marketplace does not
+  accept, so this is caught before a release is built.
+
 ## [2.1.0] - 2026-10-14
 
 First Marketplace release since 2.0.0 in March. Everything in the 2.0.0 BYOK
