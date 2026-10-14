@@ -1,9 +1,9 @@
 {
   "name": "hybridmind",
-  "displayName": "HybridMind",
-  "description": "Autonomous AI coding agent for VS Code. Plans multi-step tasks, writes code, runs terminal commands with built-in safety validation, and iterates until done. Bring your own API key for OpenAI, Anthropic, OpenRouter, Google, Groq, DeepSeek, or Qwen. Every request goes straight to your provider, billed to your own account.",
+  "displayName": "HybridMind: MCP Trust and AI Agent",
+  "description": "See every MCP server your AI tools use, and know when one changes. Powered by MCP Steward. Also includes a coding agent that runs on your own API key.",
   "publisher": "hybridmind",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "license": "MIT",
   "icon": "icon.png",
   "galleryBanner": {
@@ -42,7 +42,12 @@
     "mcp",
     "copilot",
     "agents",
-    "productivity"
+    "productivity",
+    "mcp security",
+    "model context protocol",
+    "mcp servers",
+    "tool poisoning",
+    "mcpsteward"
   ],
   "main": "./out/extension.js",
   "scripts": {
@@ -68,6 +73,11 @@
     },
     "views": {
       "hybridmind": [
+        {
+          "id": "hybridmind.mcpServers",
+          "name": "MCP Servers",
+          "contextualTitle": "HybridMind MCP Servers"
+        },
         {
           "type": "webview",
           "id": "hybridmind.chatView",
@@ -96,6 +106,30 @@
         "command": "hybridmind.showAgentOutput",
         "title": "HybridMind: Show Agent Output",
         "icon": "$(output)"
+      },
+      {
+        "command": "hybridmind.mcp.refresh",
+        "title": "HybridMind: Scan MCP Servers",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "hybridmind.mcp.checkAll",
+        "title": "HybridMind: Check All Approved MCP Servers",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "hybridmind.mcp.approve",
+        "title": "Approve Current Tools",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "hybridmind.mcp.check",
+        "title": "Check for Changes",
+        "icon": "$(search)"
+      },
+      {
+        "command": "hybridmind.mcp.openConfig",
+        "title": "Open Config File"
       }
     ],
     "keybindings": [
@@ -110,6 +144,52 @@
         {
           "command": "hybridmind.openChat",
           "when": "true"
+        },
+        {
+          "command": "hybridmind.mcp.approve",
+          "when": "false"
+        },
+        {
+          "command": "hybridmind.mcp.check",
+          "when": "false"
+        },
+        {
+          "command": "hybridmind.mcp.openConfig",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "hybridmind.mcp.refresh",
+          "when": "view == hybridmind.mcpServers",
+          "group": "navigation@1"
+        },
+        {
+          "command": "hybridmind.mcp.checkAll",
+          "when": "view == hybridmind.mcpServers",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "hybridmind.mcp.approve",
+          "when": "view == hybridmind.mcpServers && viewItem == mcpServer.unapproved",
+          "group": "inline"
+        },
+        {
+          "command": "hybridmind.mcp.check",
+          "when": "view == hybridmind.mcpServers && viewItem == mcpServer.approved",
+          "group": "inline"
+        },
+        {
+          "command": "hybridmind.mcp.check",
+          "when": "view == hybridmind.mcpServers && viewItem == mcpServer.approved",
+          "group": "trust@1"
+        },
+        {
+          "command": "hybridmind.mcp.approve",
+          "when": "view == hybridmind.mcpServers && viewItem =~ /^mcpServer\\./",
+          "group": "trust@2"
         }
       ]
     },
@@ -204,11 +284,12 @@
     }
   },
   "dependencies": {
+    "@hybridmind/local-runtimes": "file:../packages/local-runtimes",
+    "@hybridmind/ontology-core": "file:../packages/ontology-core",
     "@supabase/supabase-js": "^2.45.0",
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
-    "@hybridmind/ontology-core": "file:../packages/ontology-core",
-    "@hybridmind/local-runtimes": "file:../packages/local-runtimes"
+    "mcpsteward": "0.1.1"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

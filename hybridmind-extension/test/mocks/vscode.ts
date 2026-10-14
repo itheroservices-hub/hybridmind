@@ -112,3 +112,57 @@ export const languages = {
 export const commands = {
   executeCommand: (..._args: any[]) => Promise.resolve(undefined),
 };
+
+// Just enough of the tree view API to build and inspect TreeItems.
+
+export class EventEmitter<T> {
+  private listeners: Array<(value: T) => void> = [];
+  event = (listener: (value: T) => void) => {
+    this.listeners.push(listener);
+    return { dispose: () => { this.listeners = this.listeners.filter((l) => l !== listener); } };
+  };
+  fire(value: T): void {
+    this.listeners.forEach((listener) => listener(value));
+  }
+  dispose(): void {
+    this.listeners = [];
+  }
+}
+
+export enum TreeItemCollapsibleState {
+  None = 0,
+  Collapsed = 1,
+  Expanded = 2,
+}
+
+export class TreeItem {
+  id?: string;
+  description?: string | boolean;
+  tooltip?: any;
+  iconPath?: any;
+  command?: { command: string; title: string; arguments?: any[] };
+  contextValue?: string;
+  constructor(public label: string, public collapsibleState: TreeItemCollapsibleState = TreeItemCollapsibleState.None) {}
+}
+
+export class ThemeIcon {
+  constructor(public id: string, public color?: any) {}
+}
+
+export class ThemeColor {
+  constructor(public id: string) {}
+}
+
+export class MarkdownString {
+  value = '';
+  constructor(value?: string, public supportThemeIcons?: boolean) {
+    this.value = value || '';
+  }
+  appendMarkdown(text: string): this {
+    this.value += text;
+    return this;
+  }
+  toString(): string {
+    return this.value;
+  }
+}

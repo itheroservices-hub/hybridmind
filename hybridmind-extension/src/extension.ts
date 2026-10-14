@@ -1,4 +1,5 @@
 import { localServerUrl } from './localServer';
+import { registerMcpServers } from './mcp/mcpServersView';
 import * as vscode from 'vscode';
 import { startEmbeddedServer, stopEmbeddedServer } from './embeddedServer';
 import { ChatPanel } from './views/chatPanel';
@@ -40,6 +41,9 @@ export async function activate(context: vscode.ExtensionContext) {
     licenseManager.setCloudProActive(active);
   }
   registerCloudCommands(context);
+
+  // MCP Servers: scanning reads config files only and starts nothing.
+  registerMcpServers(context);
 
   // Register sidebar IMMEDIATELY so the webview renders without waiting for server
   serverPort = 3000; // default; updated once server starts
