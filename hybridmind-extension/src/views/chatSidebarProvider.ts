@@ -3,6 +3,8 @@
  * GitHub Copilot-style persistent chat sidebar
  */
 
+import { localServerUrl } from '../localServer';
+import { CatalogError, verifyKey } from '../providers/modelCatalog';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { LicenseManager } from '../auth/licenseManager';
@@ -18,6 +20,10 @@ export interface ChatMessage {
   tokens?: number;
   cost?: number;
 }
+
+// A sanity cap, not a tier. Every model selected is a separate request on the
+// user's own key, so a slip of the hand should not fan out to twenty of them.
+const MAX_MODELS_PER_MESSAGE = 4;
 
 export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hybridmind.chatView';
@@ -85,7 +91,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
    * configured BYOK key).
    */
   private async _callBackend(endpoint: string, body: any): Promise<Response> {
-    return fetch(`http://localhost:${this._serverPort}${endpoint}`, {
+    return fetch(localServerUrl(endpoint), {
       method: 'POST',
       headers: this._licenseManager.getApiHeaders(),
       body: JSON.stringify(body)
@@ -183,6 +189,9 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           // Toggle inline BYOK panel in the webview
           this._view?.webview.postMessage({ type: 'toggleByokPanel' });
           break;
+        case 'requestModels':
+          await this._sendModelCatalog();
+          break;
         case 'saveApiKey':
           await this._handleSaveApiKey(data.provider, data.key);
           break;
@@ -239,33 +248,77 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
     await this._licenseManager.setUserApiKey(provider, key);
-    this._view?.webview.postMessage({ type: 'byokStatus', status: 'saved', message: `Success: ${provider} API key saved. Requests will route through your key.` });
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'saved', message: `${provider} key saved. Requests go straight to ${provider} on your key.` });
+    // A different key means a different set of models.
+    await this._sendModelCatalog();
   }
 
-  /** Verify a BYOK API key by making a test call. */
+  /**
+   * Check a key the user has typed but not saved, by asking the provider what
+   * the key can use. Listing is free. The old check sent a real completion
+   * through the server with a model name no provider recognised, so it
+   * reported every key as bad.
+   */
   private async _handleVerifyApiKey(provider: string, key: string) {
     if (!provider || !key) {
       this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: 'Enter provider and key first.' });
       return;
     }
-    this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: 'Verifying Verifying key...' });
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: 'Checking key...' });
     try {
-      // Testing a candidate key the user hasn't saved yet, so this can't go
-      // through _callBackend()/getApiHeaders() (which reads the already-
-      // stored key). Same header names/convention as the stored path though.
-      const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Api-Provider': provider, 'X-User-Provider-Key': key },
-        body: JSON.stringify({ model: 'llama-3.3-70b', prompt: 'Reply with only the word OK', maxTokens: 5 })
+      const catalog = await verifyKey(provider, key);
+      this._view?.webview.postMessage({
+        type: 'byokStatus',
+        status: 'verified',
+        message: `Key works. ${catalog.providerLabel} lists ${catalog.models.length} models for it. Save it to use them.`
       });
-      if (response.ok) {
-        this._view?.webview.postMessage({ type: 'byokStatus', status: 'verified', message: `Success: Key verified! ${provider} is working correctly.` });
-      } else {
-        const err = await response.text();
-        this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `Error: Verification failed (${response.status}): ${err.substring(0, 120)}` });
-      }
     } catch (e: any) {
-      this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `Error: Could not reach backend: ${e.message}` });
+      this._view?.webview.postMessage({
+        type: 'byokStatus',
+        status: 'error',
+        message: e instanceof CatalogError ? e.message : 'Could not check the key. Try again.'
+      });
+    }
+  }
+
+  /** For callers outside the sidebar that change the saved key. */
+  public async refreshModels() {
+    await this._sendModelCatalog();
+  }
+
+  /**
+   * Tell the webview which models the saved key can use. The legacy OpenRouter
+   * setting counts as a key, the same way it does for chat requests.
+   */
+  private async _sendModelCatalog() {
+    const saved = this._licenseManager.getUserProviderKey();
+    const legacyKey = vscode.workspace.getConfiguration('hybridmind').get<string>('openrouterApiKey') || '';
+    const provider = saved ? saved.provider : 'openrouter';
+    const key = saved ? saved.key : legacyKey;
+
+    if (!key) {
+      this._view?.webview.postMessage({ type: 'modelCatalog', state: 'no-key' });
+      return;
+    }
+
+    this._view?.webview.postMessage({ type: 'modelCatalog', state: 'loading' });
+    try {
+      // verifyKey, not a bare listing: OpenRouter lists its models to anyone,
+      // so a bad key would look ready until the first message failed.
+      const catalog = await verifyKey(provider, key);
+      this._view?.webview.postMessage({
+        type: 'modelCatalog',
+        state: 'ready',
+        providerLabel: catalog.providerLabel,
+        models: catalog.models,
+        defaultModel: catalog.defaultModel
+      });
+    } catch (e: any) {
+      this._view?.webview.postMessage({
+        type: 'modelCatalog',
+        state: 'error',
+        message: e instanceof CatalogError ? e.message : 'Could not load the model list. Try again.'
+      });
     }
   }
 
@@ -279,10 +332,8 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage('Draft command detected: switched workflow to Agentic mode for command execution.');
     }
     
-    // Enforce tier limits
-    const maxModels = this._licenseManager.isPro() ? 4 : 2;
-    if (selectedModels.length > maxModels) {
-      vscode.window.showWarningMessage(`${this._licenseManager.isPro() ? 'Pro' : 'Free'} tier limited to ${maxModels} models. Upgrade for more!`);
+    if (selectedModels.length > MAX_MODELS_PER_MESSAGE) {
+      vscode.window.showWarningMessage(`Up to ${MAX_MODELS_PER_MESSAGE} models can answer one message.`);
       return;
     }
 
@@ -359,9 +410,11 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
       // Choose the appropriate endpoint based on workflow
       let endpoint = '';
-      const wantsRalphLoop = workflowMode === 'chain'
-        ? !/\b(no\s+ralph|disable\s+ralph|no\s+self[-\s]?heal)\b/i.test(userMessage)
-        : /\bralph\b|self[-\s]?heal/i.test(userMessage);
+      // The self-healing "Ralph" loop streams from /run/chain/stream, a route
+      // only the hosted backend served. Chain mode asked for it by default, so
+      // every chain request failed. It stays off until the embedded server
+      // has that route; plain chaining goes to /run/chain, which it does have.
+      const wantsRalphLoop: boolean = false;
 
       if (workflowMode === 'chain' && wantsRalphLoop) {
         await this._streamRalphTelemetry({
@@ -1238,7 +1291,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
 
     // Streaming (SSE) response — needs the raw fetch Response, so this can't
     // go through _callBackend(), but it attaches the same headers.
-    const response = await fetch(`http://localhost:${this._serverPort}/run/chain/stream`, {
+    const response = await fetch(localServerUrl('/run/chain/stream'), {
       method: 'POST',
       headers: this._licenseManager.getApiHeaders(),
       body: JSON.stringify(payload)
@@ -1348,7 +1401,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
         return;
       }
 
-      const response = await fetch(`http://localhost:${this._serverPort}/run/chain/kill/${encodeURIComponent(this._activeRalphStreamId)}`, {
+      const response = await fetch(localServerUrl(`/run/chain/kill/${encodeURIComponent(this._activeRalphStreamId)}`), {
         method: 'POST',
         headers: this._licenseManager.getApiHeaders()
       });
@@ -1420,7 +1473,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     let reasoning = '';
 
     try {
-      const response = await fetch(`http://localhost:${this._serverPort}/run/single/stream`, {
+      const response = await fetch(localServerUrl('/run/single/stream'), {
         method: 'POST',
         headers: this._licenseManager.getApiHeaders(),
         body: JSON.stringify({ model, prompt, messages }),
@@ -1550,7 +1603,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     if (!this._view) return;
     const isPro = this._licenseManager.isPro();
     const isProPlus = this._licenseManager.isProPlus();
-    const maxModels = isPro ? 4 : 2;
+    const maxModels = MAX_MODELS_PER_MESSAGE;
     const maxAgents = isProPlus ? 8 : isPro ? 4 : 0;
     // Post a message to update tier UI instead of replacing HTML
     // (replacing HTML reloads the iframe and permanently loses focus/clicks)
@@ -1569,7 +1622,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
   private _getHtmlForWebview(webview: vscode.Webview) {
     const isPro = this._licenseManager.isPro();
     const isProPlus = this._licenseManager.isProPlus();
-    const maxModels = isPro ? 4 : 2;
+    const maxModels = MAX_MODELS_PER_MESSAGE;
     const maxAgents = isProPlus ? 8 : isPro ? 4 : 0;
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.js')
@@ -1582,7 +1635,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline' ${webview.cspSource}; connect-src http://localhost:3000 http://127.0.0.1:3000; img-src ${webview.cspSource} https: data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline' ${webview.cspSource}; connect-src 'none'; img-src ${webview.cspSource} https: data:;">
 <title>HybridMind</title>
 <style>
 /* === RESET: same as working test page === */
@@ -1916,7 +1969,6 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
     <span class="hdr-name">HybridMind</span>
   </div>
   <div class="hdr-r">
-    <span class="tier-pill ${isProPlus ? 'pro-plus' : isPro ? 'pro' : 'free'}">${isProPlus ? 'PRO PLUS' : isPro ? 'PRO' : 'FREE'}</span>
     <button class="ibtn" id="clrBtn" title="Clear conversation">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="3 6 5 6 13 6"/><path d="M14 6l-1.5 8H3.5L2 6"/><path d="M6.5 6V4.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5V6"/>
@@ -1925,66 +1977,25 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
   </div>
 </div>
 
-<!-- STATS -->
-<div class="stats">
-  <div class="stat"><span class="slbl">Credits</span><span class="sval" id="stC">--</span></div>
-  <div class="stat"><span class="slbl">Requests</span><span class="sval" id="stR">0 / ${isPro ? '500' : '50'}</span><div class="sbar"><div class="sfill" id="stRB"></div></div></div>
-  <div class="stat"><span class="slbl">Models</span><span class="sval" id="stM">0 / ${maxModels}</span></div>
-  <div class="stat"><span class="slbl">Agents</span><span class="sval" id="stA">0 / ${maxAgents}</span></div>
-</div>
-
 <!-- TABS -->
 <div class="tabs">
   <button class="tab on" data-p="models">Models</button>
-  <button class="tab" data-p="agents">Agents</button>
   <button class="tab" data-p="keys">Keys</button>
 </div>
 
 <!-- MODELS PANEL -->
 <div id="panel-models" class="panel on">
-  <div><div class="flbl">Free tier</div>
-    <select class="sel" id="fmSel">
-      <option value="">Add free model</option>
-      <optgroup label="Top Free">
-        <option value="llama-3.3-70b">Llama 3.3 70B</option>
-        <option value="deepseek-r1">DeepSeek R1</option>
-        <option value="qwen3-coder">Qwen3 Coder 480B</option>
-        <option value="devstral">Devstral 2</option>
-      </optgroup>
-      <optgroup label="Fast">
-        <option value="gemini-flash">Gemini 2.0 Flash</option>
-        <option value="deepseek-v3">DeepSeek V3</option>
-        <option value="llama-3.1-8b">Llama 3.1 8B</option>
-      </optgroup>
+  <div><div class="flbl">Models</div>
+    <select class="sel" id="mdSel" disabled>
+      <option value="">Loading models...</option>
     </select>
   </div>
-  <div><div class="flbl">Premium</div>
-    <select class="sel" id="pmSel" ${isPro ? '' : 'disabled'}>
-      <option value="">Add premium model${isPro ? '' : ' (Pro only)'}</option>
-      <optgroup label="Low Cost">
-        <option value="llama-4-maverick">Llama 4 Maverick</option>
-        <option value="gemini-2.0-flash">Gemini 2.0 Flash Pro</option>
-        <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-      </optgroup>
-      <optgroup label="Reasoning">
-        <option value="o3-mini">OpenAI o3 mini</option>
-        <option value="o1">OpenAI o1</option>
-      </optgroup>
-      <optgroup label="Coding">
-        <option value="gpt-codex">GPT Codex Mini</option>
-        <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
-      </optgroup>
-      <optgroup label="Flagship">
-        <option value="gpt-4.1">GPT 4.1</option>
-        <option value="claude-sonnet-4">Claude Sonnet 4</option>
-        <option value="claude-opus-4">Claude Opus 4</option>
-        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-        <option value="grok-3">Grok 3</option>
-      </optgroup>
-    </select>
+  <div class="brow">
+    <input class="inp" id="mdCustom" placeholder="Or type a model id" style="flex:1;margin:0;">
+    <button class="btn" id="mdAdd">Add</button>
   </div>
+  <div id="mdNote" class="bstat"></div>
   <div id="tagWrap" class="tagwrap"></div>
-  ${!isPro ? '<button class="upbtn" id="upBtn">Upgrade to Pro \u2014 unlock premium models</button>' : ''}
 </div>
 
 
@@ -2070,6 +2081,7 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
     <option value="deepseek">DeepSeek</option>
     <option value="groq">Groq</option>
     <option value="openrouter">OpenRouter</option>
+    <option value="qwen">Qwen</option>
   </select>
   <input class="inp" type="password" id="byokKey" placeholder="Paste API key">
   <div class="brow">
@@ -2100,9 +2112,9 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
     <textarea class="ita" id="msgTA" placeholder="Ask HybridMind anything..." rows="1"></textarea>
     <div class="ifooter">
       <div class="ileft">
-        <div class="mpill"><span class="mdot"></span><span id="amlbl">Llama 3.3 70B</span></div>
+        <div class="mpill"><span class="mdot"></span><span id="amlbl">No model</span></div>
         <button class="ctxbtn" id="ctxBtn">Context off</button>
-        <select class="wfmini" id="wfMini"><option value="single">Single</option><option value="parallel">Parallel</option><option value="chain">Chain</option><option value="agentic">Agentic</option><option value="all-to-all">All to All</option></select>
+        <select class="wfmini" id="wfMini"><option value="single">Single</option><option value="parallel">Parallel</option><option value="chain">Chain</option><option value="agentic">Agentic</option></select>
       </div>
       <span class="charcnt" id="charcnt"></span>
       <button class="sendbtn" id="stopBtn" style="display:none;background:var(--err);border-color:var(--err);">Stop</button>

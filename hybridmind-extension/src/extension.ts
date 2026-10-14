@@ -1,3 +1,5 @@
+import { localServerUrl } from './localServer';
+import { registerMcpServers } from './mcp/mcpServersView';
 import * as vscode from 'vscode';
 import { startEmbeddedServer, stopEmbeddedServer } from './embeddedServer';
 import { ChatPanel } from './views/chatPanel';
@@ -7,15 +9,15 @@ import { LicenseManager } from './auth/licenseManager';
 import { AgentConfig } from './agents/agentConfig';
 import { registerAgenticCommands } from './commands/agenticCommands';
 import { registerMultiModelCommands } from './commands/multiModelCommands';
-import { UsageTracker } from './utils/usageTracker';
 import { CloudAuth } from './cloud/cloudAuth';
 import { checkCloudProActive } from './cloud/cloudSync';
 import { registerCloudCommands } from './cloud/cloudCommands';
 
 let serverPort: number | null = null;
+// Set once the sidebar exists, for commands that change what it should show.
+let activeSidebar: ChatSidebarProvider | null = null;
 let licenseManager: LicenseManager;
 let inlineChatProvider: InlineChatProvider;
-let usageTracker: UsageTracker;
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('HybridMind extension activating...');
@@ -40,19 +42,13 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   registerCloudCommands(context);
 
-  // Initialize usage tracker
-  usageTracker = new UsageTracker();
-  context.subscriptions.push(usageTracker.getStatusBarItem());
-  
-  // Make tracker globally available for API calls
-  (global as any).hybridmindUsageTracker = usageTracker;
-
-  // Reset warning flag every hour
-  setInterval(() => usageTracker.resetWarning(), 3600000);
+  // MCP Servers: scanning reads config files only and starts nothing.
+  registerMcpServers(context);
 
   // Register sidebar IMMEDIATELY so the webview renders without waiting for server
   serverPort = 3000; // default; updated once server starts
   const sidebarProvider = new ChatSidebarProvider(context.extensionUri, serverPort);
+  activeSidebar = sidebarProvider;
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -67,14 +63,6 @@ export async function activate(context: vscode.ExtensionContext) {
   }).catch((error: any) => {
     vscode.window.showErrorMessage(`Failed to start HybridMind server: ${error.message}`);
   });
-
-  // Create status bar item
-  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.text = licenseManager.isPro() ? '$(star-full) HybridMind Pro' : 'HybridMind Free';
-  statusBarItem.tooltip = 'Click to manage license';
-  statusBarItem.command = 'hybridmind.manageLicense';
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
 
   // Verify license and refresh UI once resolved
   licenseManager.verifyLicense().then(() => {
@@ -150,11 +138,9 @@ function registerCommands(context: vscode.ExtensionContext) {
   // Open Chat Window (Available to all tiers)
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.openChat', async () => {
-      if (serverPort) {
-        ChatPanel.createOrShow(context.extensionUri, serverPort);
-      } else {
-        vscode.window.showErrorMessage('Server not running');
-      }
+      // The sidebar is the chat that works. This used to open a second panel
+      // that called /api/models/chat, a route the embedded server never had.
+      await vscode.commands.executeCommand(`${ChatSidebarProvider.viewType}.focus`);
     })
   );
 
@@ -200,7 +186,7 @@ function registerCommands(context: vscode.ExtensionContext) {
       if (!task) return;
 
       try {
-        const res = await fetch(`http://localhost:${serverPort}/agent/team-collaboration`, {
+        const res = await fetch(localServerUrl('/agent/team-collaboration'), {
           method: 'POST',
           headers: licenseManager.getApiHeaders(),
           body: JSON.stringify({ task, agents: agentTypes })
@@ -292,6 +278,9 @@ function registerCommands(context: vscode.ExtensionContext) {
 
       const lm = LicenseManager.getInstance();
       await lm.setUserApiKey(providerName, key);
+      // The sidebar lists the models of the saved key, so it has to hear about
+      // a key saved from here as well as from its own Keys tab.
+      void activeSidebar?.refreshModels();
       vscode.window.showInformationMessage(`✓ ${displayName} API key saved. HybridMind will route requests through your key.`);
     })
   );
@@ -305,7 +294,7 @@ function registerCommands(context: vscode.ExtensionContext) {
       }
 
       try {
-        const response = await fetch(`http://localhost:${serverPort}/cost-stats`, {
+        const response = await fetch(localServerUrl('/cost-stats'), {
           headers: licenseManager.getApiHeaders()
         });
         const data = await response.json() as any;
@@ -408,9 +397,9 @@ ${tier === 'Free' && parseFloat(stats.percentUsed) > 50 ? '\n💡 **Upgrade to P
 
 async function getAvailableModels(): Promise<any[]> {
   try {
-    const response = await fetch(`http://127.0.0.1:${serverPort}/models`);
+    const response = await fetch(localServerUrl('/models'), { headers: licenseManager.getApiHeaders() });
     const result: any = await response.json();
-    return result.data?.models || [];
+    return result.models || [];
   } catch (error) {
     return [];
   }
@@ -427,13 +416,17 @@ async function runPrompt(model: string, prompt: string) {
   panel.webview.html = getLoadingHtml();
 
   try {
-    const response = await fetch(`http://127.0.0.1:${serverPort}/run/single`, {
+    const response = await fetch(localServerUrl('/run/single'), {
       method: 'POST',
       headers: licenseManager.getApiHeaders(),
       body: JSON.stringify({ model, prompt })
     });
 
     const result: any = await response.json();
+    if (!response.ok) {
+      // The body of a failed request is { error }, with no content to show.
+      throw new Error(result.error || `The request failed (${response.status}).`);
+    }
     panel.webview.html = getResponseHtml(result.content, model);
   } catch (error: any) {
     panel.webview.html = getErrorHtml(error.message);

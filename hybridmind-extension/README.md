@@ -1,57 +1,74 @@
-# HybridMind
+# HybridMind: MCP Trust and AI Agent
 
-AI coding assistant with autonomous agents and smart multi-model orchestration.
+See every MCP server your AI tools use, and know when one changes.
+
+HybridMind lists every MCP server configured on your machine for VS Code, Cursor, Claude and others, and flags API keys left in their config files. Approve a server once, and HybridMind tells you if its tools change afterward. It also includes a coding agent that runs on your own API key. Nothing leaves your machine except requests you start yourself: chat with your own AI provider, and approving or checking a server you choose.
+
+Powered by [MCP Steward](https://www.npmjs.com/package/mcpsteward).
 
 ## Install
 
-Search "HybridMind" in VS Code marketplace and install.
+Search "HybridMind" in the VS Code Marketplace and install.
 
-## Features
+## MCP Servers
 
-- **Smart Multi-Model Orchestration** - 11 specialized AI models with intelligent selection
-- **Chain Templates** - Pre-built workflows (Coding, Research, Review) for complex tasks
-- **Autonomous Agents** - Multi-step task execution with planning and confirmation
-- **Custom Chains** - Build sequential multi-model workflows for your needs
-- **Model Capabilities** - Compare model strengths across 9 dimensions
-- **Undo System** - Rollback agent changes with 10-step history
+Open the HybridMind icon in the activity bar. The **MCP Servers** view lists every server it finds in your MCP config files.
 
-## Usage
+- **Finding servers starts nothing.** HybridMind only reads the config files. No server is started and nothing is sent anywhere.
+- **Keys in config files.** A server whose API key is written directly into a config file is marked with a key icon, and you are told once per server. Anyone who can read that file can use the key, so it belongs in an environment variable or your client's secret store instead.
+- **Approve.** Approving a server starts it once, reads the tools it advertises, and remembers them. The prompt shows the program it will run or the host it will contact, and the config file that says so. Only approve a server you trust as it is today.
+- **Check for changes.** Starts the server again and compares what it advertises now with what you approved. A tool whose description was rewritten after approval is the classic sign of a poisoned server, so changes are listed under the server with a risk level and the reasons for it. Risk levels are a heuristic, not a verdict.
+- **Check all.** The checklist button in the view title checks every approved server in turn.
+- **Untrusted projects.** MCP config files inside a project are read only after you trust the workspace, and HybridMind stays off in Restricted Mode.
+- **Same approvals as the command line.** Approvals are kept in `~/.mcpsteward/pins`, where the `mcpsteward` command line tool keeps them, so approving in one shows in the other.
 
-Open HybridMind sidebar, select workflow mode (Chat/Agentic/Custom), and start coding.
+A server whose configuration reads a value from your environment, such as `${env:TOKEN}`, cannot be approved or checked from the editor, because HybridMind does not pass your environment to servers it starts. Run `npx mcpsteward trust <id>` in a terminal for those; the error message gives the id.
 
-**Commands:**
-- `HybridMind: Open Chat Window`
-- `HybridMind: Set API Key (BYOK)` - Add your own AI provider key
-- `HybridMind: Select Chain Template` - Choose pre-built multi-model workflows
-- `HybridMind: Configure Custom Chain` - Build your own model sequences
-- `HybridMind: View Model Capabilities` - Compare AI model strengths
-- `HybridMind: Run Autonomous Workflow`
-- `HybridMind: Undo Last Change`
+## The coding agent
 
-## Bring Your Own Key (BYOK)
+- **Chat in the sidebar.** Ask about your code and read the answer as it is written.
+- **Your key, your models.** The model list is read from your provider, so it shows exactly what your key can use.
+- **Several models at once.** Parallel mode sends one message to up to four models. Chain mode hands each answer on to the next model.
+- **Agentic mode.** The assistant plans a task and shows you the plan to confirm before it starts. You choose how often it asks while it works: before every action, before destructive ones, or only for risky commands.
+- **Guardrails.** Terminal commands are checked against an allowlist at every setting, and file changes stay inside your workspace.
 
-HybridMind runs entirely on your machine — a small local server starts when VS Code opens and talks directly to your chosen AI provider's API. There is no HybridMind-run backend and no shared usage pool: every request is billed to your own provider account.
+## Getting started
 
-**Setup**
+1. Open the HybridMind icon in the activity bar.
+2. On the Keys tab, pick your provider, paste your key and save.
+3. Pick a model on the Models tab and start chatting.
 
-1. Run `HybridMind: Set API Key (BYOK)` from the Command Palette.
-2. Pick a provider and paste in your API key.
-3. Start chatting — requests route straight to that provider.
+**Commands**
+
+- `HybridMind: Scan MCP Servers` reads your MCP config files again
+- `HybridMind: Check All Approved MCP Servers` checks every approved server for changes
+- `HybridMind: Open Chat` opens the sidebar (Ctrl+Shift+H)
+- `HybridMind: Set API Key (BYOK)` saves a provider key
+- `HybridMind: Quick Chat` asks one question and shows the answer beside your editor
+- `HybridMind: Show Agent Output` opens the agent log
+
+## Bring your own key
+
+HybridMind runs entirely on your machine. A small local server starts with the extension and talks directly to your provider's API. There is no HybridMind backend and no shared usage pool. Every request is billed to your own provider account.
+
+That local server answers only the extension that started it. Web pages and other programs on your machine cannot use it.
 
 **Supported providers**
 
-**OpenAI**, **Anthropic**, **Google (Gemini)**, **Groq**, **DeepSeek**, **Qwen**, and **OpenRouter** (which itself proxies 200+ additional models through a single key). The `HybridMind: Set API Key (BYOK)` picker only lists these seven — every entry is wired to a real per-provider dispatch path, so a saved key always works. (An earlier build's picker offered ~20 additional provider names that weren't actually implemented; that list was trimmed back to what's real.)
+OpenAI, Anthropic, Google (Gemini), Groq, DeepSeek, Qwen and OpenRouter.
+
+Answers from OpenAI, Anthropic, Groq, DeepSeek and OpenRouter stream in as they are written. Answers from Google and Qwen arrive in one piece.
 
 **Where your key is stored**
 
-Your key is written to VS Code's built-in [SecretStorage](https://code.visualstudio.com/api/references/vscode-api#SecretStorage) — the same OS-level encrypted store VS Code uses for its own credentials (Credential Manager on Windows, Keychain on macOS, Secret Service/libsecret on Linux). It is **not** written to your `settings.json` and never leaves your machine except in the direct HTTPS request to your provider's API.
+Your key is written to VS Code's built in [SecretStorage](https://code.visualstudio.com/api/references/vscode-api#SecretStorage), the same encrypted store VS Code uses for its own credentials: Credential Manager on Windows, Keychain on macOS, and Secret Service on Linux. It is not written to your `settings.json`, and it leaves your machine only in the direct HTTPS request to your provider.
 
-If you're upgrading from an older version that stored the key as a plain VS Code setting, HybridMind migrates it to SecretStorage automatically the first time you open it and clears the old plaintext setting — you'll see a one-time notification when that happens.
+If you are upgrading from an older version that kept the key as a plain VS Code setting, HybridMind moves it to SecretStorage the first time it starts and clears the old setting. You will see a one time notice when that happens.
 
 ## Related
 
 - [Website](https://hybridmind.ca)
-- [Documentation](https://github.com/itheroservices-hub/hybridmind)
+- [Source](https://github.com/itheroservices-hub/hybridmind)
 
 ## License
 

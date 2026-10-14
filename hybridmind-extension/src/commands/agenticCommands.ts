@@ -3,6 +3,7 @@
  * Uses strict JSON tool calls from the backend
  */
 
+import { localServerUrl } from '../localServer';
 import * as vscode from 'vscode';
 import { LicenseManager } from '../auth/licenseManager';
 import { AgentTools } from '../agents/agentTools';
@@ -16,7 +17,7 @@ import { toolExecutor } from '../agents/toolExecutor';
 async function callAI(serverPort: number, modelId: string, prompt: string): Promise<string> {
   try {
     const licenseManager = LicenseManager.getInstance();
-    const response = await fetch(`http://localhost:${serverPort}/chat`, {
+    const response = await fetch(localServerUrl('/chat'), {
       method: 'POST',
       headers: licenseManager.getApiHeaders(),
       body: JSON.stringify({

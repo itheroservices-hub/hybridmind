@@ -1,7 +1,8 @@
 (function () {
   var vsc = acquireVsCodeApi();
   var cfg = window.HM_CONFIG || {};
-  var msgs = [], selMods = ['llama-3.3-70b'], wf = 'single', ctx = false;
+  var msgs = [], selMods = [], wf = 'single', ctx = false;
+  var catState = 'loading';
   var alv = cfg.alv || 3;
   var ro = cfg.ro || false;
   var perms = cfg.perms || { read: true, edit: true, terminal: true, create: true, del: false, multi: true, restructure: false, network: false };
@@ -194,6 +195,9 @@
         var n = t.dataset.p;
         document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x.dataset.p === n); });
         document.querySelectorAll('.panel').forEach(function (x) { x.classList.toggle('on', x.id === 'panel-' + n); });
+        // Coming back to Models after a failed load (offline, a key fixed in
+        // the meantime) asks again instead of staying stuck on the error.
+        if (n === 'models' && (catState === 'error' || catState === 'no-key')) vsc.postMessage({ type: 'requestModels' });
       });
     });
 
@@ -248,21 +252,34 @@
     // Model tag management
     function renderTags() {
       var tw = g('tagWrap'); if (!tw) return;
-      tw.innerHTML = selMods.map(function (m) {
-        return '<span class="tag">' + esc(m) + '<button class="xbtn" data-m="' + esc(m) + '">\u00d7</button></span>';
-      }).join('');
-      tw.querySelectorAll('.xbtn').forEach(function (b) {
+      // Built with DOM calls, never as an HTML string: a model id comes from
+      // the provider or from the user, and esc() does not escape quotes, so an
+      // id placed inside an attribute could have closed it and added a handler.
+      tw.textContent = '';
+      selMods.forEach(function (m) {
+        var tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.appendChild(document.createTextNode(m));
+        var b = document.createElement('button');
+        b.className = 'xbtn';
+        b.textContent = '\u00d7';
         b.addEventListener('click', function () {
-          selMods = selMods.filter(function (x) { return x !== b.dataset.m; });
+          selMods = selMods.filter(function (x) { return x !== m; });
           renderTags(); updML(); updStats();
           vsc.postMessage({ type: 'changeModels', models: selMods });
         });
+        tag.appendChild(b);
+        tw.appendChild(tag);
       });
       updStats();
     }
 
+    // The same shape the extension host accepts for an id it lists.
+    var MODEL_ID = /^[\w.:\/@+~-]{1,200}$/;
+
     function addMod(m) {
       if (!m) return;
+      if (!MODEL_ID.test(m)) { vsc.postMessage({ type: 'showWarning', message: 'That does not look like a model id.' }); return; }
       if (selMods.indexOf(m) >= 0) return;
       if (selMods.length >= MAXM) { vsc.postMessage({ type: 'showWarning', message: 'Limited to ' + MAXM + ' models.' }); return; }
       selMods.push(m); renderTags(); updML();
@@ -274,9 +291,60 @@
       l.textContent = selMods.length === 0 ? 'No model' : selMods[0] + (selMods.length > 1 ? ' +' + (selMods.length - 1) : '');
     }
 
-    var fmSel = g('fmSel'), pmSel = g('pmSel');
-    if (fmSel) fmSel.addEventListener('change', function () { addMod(fmSel.value); fmSel.value = ''; });
-    if (pmSel) pmSel.addEventListener('change', function () { addMod(pmSel.value); pmSel.value = ''; });
+    // The model list is whatever the saved key's provider reports, sent by the
+    // extension host as a 'modelCatalog' message. A typed id is accepted too,
+    // so a model that is missing from the list can still be used.
+    var mdSel = g('mdSel'), mdCustom = g('mdCustom'), mdAdd = g('mdAdd');
+    var catProv = '';
+    if (mdSel) mdSel.addEventListener('change', function () { addMod(mdSel.value); mdSel.value = ''; });
+    function addCustom() {
+      if (!mdCustom) return;
+      var id = mdCustom.value.trim();
+      if (!id) return;
+      addMod(id); mdCustom.value = '';
+    }
+    if (mdAdd) mdAdd.addEventListener('click', addCustom);
+    if (mdCustom) mdCustom.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } });
+
+    function setCatalog(m) {
+      catState = m.state;
+      var note = g('mdNote');
+      if (!mdSel) return;
+      mdSel.innerHTML = '';
+      var first = document.createElement('option');
+      first.value = '';
+      mdSel.appendChild(first);
+      if (note) { note.textContent = ''; note.className = 'bstat'; }
+
+      if (m.state !== 'ready') {
+        mdSel.disabled = true;
+        first.textContent = m.state === 'loading' ? 'Loading models...'
+          : m.state === 'no-key' ? 'Add a key in the Keys tab first'
+          : 'Could not load models';
+        if (m.state === 'error' && note) { note.textContent = m.message || ''; note.className = 'bstat er'; }
+        return;
+      }
+
+      var models = m.models || [];
+      first.textContent = 'Add a model (' + models.length + ' on your ' + (m.providerLabel || '') + ' key)';
+      models.forEach(function (model) {
+        var o = document.createElement('option');
+        o.value = model.id;
+        o.textContent = model.name && model.name !== model.id ? model.name + '  (' + model.id + ')' : model.id;
+        mdSel.appendChild(o);
+      });
+      mdSel.disabled = models.length === 0;
+
+      // Ids belong to one provider. A key for a different provider makes the
+      // earlier picks meaningless, so start again from that provider's default.
+      var changedProvider = catProv !== '' && catProv !== m.providerLabel;
+      catProv = m.providerLabel || '';
+      if (changedProvider || selMods.length === 0) {
+        selMods = m.defaultModel ? [m.defaultModel] : [];
+        renderTags(); updML();
+        vsc.postMessage({ type: 'changeModels', models: selMods });
+      }
+    }
 
     // Agent slots
     function renderAgents() {
@@ -572,17 +640,6 @@
       if (sa) sa.textContent = agSlots.length + ' / ' + MAXA;
     }
 
-    function updRates() {
-      fetch('http://localhost:3000/cost-stats').then(function (r) { return r.json(); }).then(function (data) {
-        var s = data.data || {};
-        var ce = g('stC'); if (ce) ce.textContent = s.dailyRemaining !== undefined ? '$' + Number(s.dailyRemaining).toFixed(2) : '--';
-        var used = s.requestsToday || 0, max = PRO ? 500 : 50, pct = Math.min(100, (used / max) * 100);
-        var re = g('stR'), rb = g('stRB');
-        if (re) re.textContent = used + ' / ' + max;
-        if (rb) { rb.style.width = pct + '%'; rb.className = 'sfill' + (pct > 90 ? ' c' : pct > 70 ? ' w' : ''); }
-      }).catch(function () {});
-    }
-
     function renderMsgs() {
       var mc = g('msgs'); if (!mc) return;
       if (msgs.length === 0) {
@@ -810,6 +867,9 @@
         case 'streamError':
           finalizeStream(m.id, m.message);
           break;
+        case 'modelCatalog':
+          setCatalog(m);
+          break;
         case 'byokStatus': {
           var el = g('byokStat');
           if (el) { el.textContent = m.message || ''; el.className = 'bstat' + (m.status === 'error' ? ' er' : (m.status === 'verified' || m.status === 'saved') ? ' ok' : ''); }
@@ -830,7 +890,6 @@
             else if (m.isPro) { pill.className = 'tier-pill pro'; pill.textContent = 'PRO'; }
             else { pill.className = 'tier-pill free'; pill.textContent = 'FREE'; }
           }
-          var ps = g('pmSel'); if (ps) ps.disabled = !m.isPro;
           // Update runtime caps so they stay in sync after async license verification
           if (typeof m.maxAgents === 'number') MAXA = m.maxAgents;
           if (typeof m.maxModels === 'number') MAXM = m.maxModels;
@@ -947,8 +1006,8 @@
       }
     });
 
-    renderTags(); updML(); renderAgents(); updStats(); renderMsgs(); updRates();
-    setInterval(updRates, 30000);
+    renderTags(); updML(); renderAgents(); updStats(); renderMsgs();
+    vsc.postMessage({ type: 'requestModels' });
 
     // Signal init success in DIAG
     var dlx = g('dl'); if (dlx) dlx.textContent = 'INIT-OK';

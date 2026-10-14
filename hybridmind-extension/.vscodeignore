@@ -45,6 +45,11 @@ check-state.js
 test-workspace/**
 scripts/**
 
+# mcpsteward lists TypeScript as an optional peer, used only by its `migrate`
+# command, which HybridMind never calls. Without this, vsce treats it as a
+# production dependency and ships all 23 MB of it.
+node_modules/typescript/**
+
 # node_modules is NOT excluded wholesale. vsce does not bundle: it packages
 # production dependencies from node_modules as they are, so excluding the
 # directory ships an extension that cannot load (out/agents/agentClient.js

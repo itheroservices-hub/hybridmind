@@ -1,9 +1,9 @@
 {
   "name": "hybridmind",
-  "displayName": "HybridMind",
-  "description": "Autonomous AI coding agent for VS Code. Plans multi-step tasks, writes code, runs terminal commands with built-in safety validation, and iterates until done. Bring your own API key for OpenAI, Anthropic, OpenRouter, Google, Groq, DeepSeek, or Qwen. Every request goes straight to your provider, billed to your own account.",
+  "displayName": "HybridMind: MCP Trust and AI Agent",
+  "description": "See every MCP server your AI tools use, and know when one changes. Powered by MCP Steward. Also includes a coding agent that runs on your own API key.",
   "publisher": "hybridmind",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "license": "MIT",
   "icon": "icon.png",
   "galleryBanner": {
@@ -42,7 +42,12 @@
     "mcp",
     "copilot",
     "agents",
-    "productivity"
+    "productivity",
+    "mcp security",
+    "model context protocol",
+    "mcp servers",
+    "tool poisoning",
+    "mcpsteward"
   ],
   "main": "./out/extension.js",
   "scripts": {
@@ -69,6 +74,11 @@
     "views": {
       "hybridmind": [
         {
+          "id": "hybridmind.mcpServers",
+          "name": "MCP Servers",
+          "contextualTitle": "HybridMind MCP Servers"
+        },
+        {
           "type": "webview",
           "id": "hybridmind.chatView",
           "name": "Chat",
@@ -77,22 +87,11 @@
         }
       ]
     },
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "hybridmind.mcpRegistry",
-        "label": "HybridMind MCP Registry"
-      }
-    ],
     "commands": [
       {
         "command": "hybridmind.openChat",
-        "title": "HybridMind: Open Chat Window",
+        "title": "HybridMind: Open Chat",
         "icon": "$(comment-discussion)"
-      },
-      {
-        "command": "hybridmind.openAgentMode",
-        "title": "HybridMind: Open Agent Mode",
-        "icon": "$(workspace-trust-enabled)"
       },
       {
         "command": "hybridmind.setApiKey",
@@ -100,88 +99,8 @@
         "icon": "$(key)"
       },
       {
-        "command": "hybridmind.cloudSignIn",
-        "title": "HybridMind: Sign In to HybridMind Cloud",
-        "icon": "$(account)"
-      },
-      {
-        "command": "hybridmind.upgradeToCloudPro",
-        "title": "HybridMind: Upgrade to HybridMind Pro",
-        "icon": "$(star-full)"
-      },
-      {
-        "command": "hybridmind.runAgentTeam",
-        "title": "HybridMind: Run Agent Team",
-        "icon": "$(array)"
-      },
-      {
-        "command": "hybridmind.inlineChat",
-        "title": "HybridMind: Start Inline Chat",
-        "icon": "$(edit)"
-      },
-      {
-        "command": "hybridmind.manageLicense",
-        "title": "HybridMind: Manage License",
-        "icon": "$(key)"
-      },
-      {
-        "command": "hybridmind.showUsageDetails",
-        "title": "HybridMind: Show Usage Statistics",
-        "icon": "$(pulse)"
-      },
-      {
-        "command": "hybridmind.checkMcpApproval",
-        "title": "HybridMind: Check MCP Approval Ticket",
-        "icon": "$(shield)"
-      },
-      {
         "command": "hybridmind.quickChat",
         "title": "HybridMind: Quick Chat"
-      },
-      {
-        "command": "hybridmind.explainCode",
-        "title": "HybridMind: Explain Code"
-      },
-      {
-        "command": "hybridmind.reviewCode",
-        "title": "HybridMind: Review Code"
-      },
-      {
-        "command": "hybridmind.optimizeCode",
-        "title": "HybridMind: Optimize Code"
-      },
-      {
-        "command": "hybridmind.generateTests",
-        "title": "HybridMind: Generate Tests"
-      },
-      {
-        "command": "hybridmind.fixBugs",
-        "title": "HybridMind: Fix Bugs"
-      },
-      {
-        "command": "hybridmind.refactorWithAI",
-        "title": "HybridMind: 🤖 Refactor with Autonomous Agent",
-        "icon": "$(robot)"
-      },
-      {
-        "command": "hybridmind.autonomousDebug",
-        "title": "HybridMind: 🔧 Autonomous Debug (Fix All Errors)",
-        "icon": "$(debug-alt)"
-      },
-      {
-        "command": "hybridmind.runStrictJsonWorkflow",
-        "title": "HybridMind: ⚡ Run AI Workflow (Strict JSON)",
-        "icon": "$(rocket)"
-      },
-      {
-        "command": "hybridmind.strictJsonQuickFix",
-        "title": "HybridMind: ⚡ Quick Fix (Strict JSON)",
-        "icon": "$(wrench)"
-      },
-      {
-        "command": "hybridmind.strictJsonAddFeature",
-        "title": "HybridMind: ⚡ Add Feature (Strict JSON)",
-        "icon": "$(add)"
       },
       {
         "command": "hybridmind.showAgentOutput",
@@ -189,33 +108,31 @@
         "icon": "$(output)"
       },
       {
-        "command": "hybridmind.selectChainTemplate",
-        "title": "HybridMind: Select Model Chain Template",
-        "icon": "$(link)"
+        "command": "hybridmind.mcp.refresh",
+        "title": "HybridMind: Scan MCP Servers",
+        "icon": "$(refresh)"
       },
       {
-        "command": "hybridmind.configureCustomChain",
-        "title": "HybridMind: Configure Custom Model Chain",
-        "icon": "$(settings-gear)"
+        "command": "hybridmind.mcp.checkAll",
+        "title": "HybridMind: Check All Approved MCP Servers",
+        "icon": "$(checklist)"
       },
       {
-        "command": "hybridmind.viewModelCapabilities",
-        "title": "HybridMind: View Model Capabilities",
-        "icon": "$(info)"
+        "command": "hybridmind.mcp.approve",
+        "title": "Approve Current Tools",
+        "icon": "$(shield)"
       },
       {
-        "command": "hybridmind.toggleModelMode",
-        "title": "HybridMind: Toggle Model Selection Mode",
-        "icon": "$(switch)"
+        "command": "hybridmind.mcp.check",
+        "title": "Check for Changes",
+        "icon": "$(search)"
+      },
+      {
+        "command": "hybridmind.mcp.openConfig",
+        "title": "Open Config File"
       }
     ],
     "keybindings": [
-      {
-        "command": "hybridmind.inlineChat",
-        "key": "ctrl+k",
-        "mac": "cmd+k",
-        "when": "editorTextFocus"
-      },
       {
         "command": "hybridmind.openChat",
         "key": "ctrl+shift+h",
@@ -229,39 +146,50 @@
           "when": "true"
         },
         {
-          "command": "hybridmind.openAgentMode",
-          "when": "true"
+          "command": "hybridmind.mcp.approve",
+          "when": "false"
         },
         {
-          "command": "hybridmind.runAgentTeam",
-          "when": "true"
+          "command": "hybridmind.mcp.check",
+          "when": "false"
         },
         {
-          "command": "hybridmind.inlineChat",
-          "when": "editorTextFocus"
-        },
-        {
-          "command": "hybridmind.checkMcpApproval",
-          "when": "true"
+          "command": "hybridmind.mcp.openConfig",
+          "when": "false"
         }
       ],
-      "editor/context": [
+      "view/title": [
         {
-          "command": "hybridmind.inlineChat",
-          "group": "hybridmind@0",
-          "when": "editorTextFocus"
+          "command": "hybridmind.mcp.refresh",
+          "when": "view == hybridmind.mcpServers",
+          "group": "navigation@1"
         },
         {
-          "command": "hybridmind.explainCode",
-          "group": "hybridmind@1"
+          "command": "hybridmind.mcp.checkAll",
+          "when": "view == hybridmind.mcpServers",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "hybridmind.mcp.approve",
+          "when": "view == hybridmind.mcpServers && viewItem == mcpServer.unapproved",
+          "group": "inline"
         },
         {
-          "command": "hybridmind.reviewCode",
-          "group": "hybridmind@2"
+          "command": "hybridmind.mcp.check",
+          "when": "view == hybridmind.mcpServers && viewItem == mcpServer.approved",
+          "group": "inline"
         },
         {
-          "command": "hybridmind.optimizeCode",
-          "group": "hybridmind@3"
+          "command": "hybridmind.mcp.check",
+          "when": "view == hybridmind.mcpServers && viewItem == mcpServer.approved",
+          "group": "trust@1"
+        },
+        {
+          "command": "hybridmind.mcp.approve",
+          "when": "view == hybridmind.mcpServers && viewItem =~ /^mcpServer\\./",
+          "group": "trust@2"
         }
       ]
     },
@@ -356,11 +284,12 @@
     }
   },
   "dependencies": {
+    "@hybridmind/local-runtimes": "file:../packages/local-runtimes",
+    "@hybridmind/ontology-core": "file:../packages/ontology-core",
     "@supabase/supabase-js": "^2.45.0",
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
-    "@hybridmind/ontology-core": "file:../packages/ontology-core",
-    "@hybridmind/local-runtimes": "file:../packages/local-runtimes"
+    "mcpsteward": "0.1.1"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -373,5 +302,11 @@
   },
   "overrides": {
     "serialize-javascript": "^7.1.2"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "HybridMind can run commands and edit files, and its MCP Servers view starts configured MCP servers on request, so it stays off until you trust the workspace."
+    }
   }
 }

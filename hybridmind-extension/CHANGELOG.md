@@ -1,5 +1,86 @@
 # Changelog
 
+## [2.2.0] - 2026-10-14
+
+HybridMind becomes **HybridMind: MCP Trust and AI Agent**. It now watches the
+MCP servers your AI tools use, powered by MCP Steward.
+
+### Added
+- **MCP Servers view.** Lists every MCP server configured on your machine for
+  VS Code, Cursor, Claude and other clients. Finding them only reads config
+  files; no server is started and nothing is sent anywhere.
+- **Keys in config files.** Servers with an API key written directly into a
+  config file are marked, and you are told once per server.
+- **Approve.** Starts a server once and remembers the tools it advertises.
+- **Check for changes.** Compares what an approved server advertises now with
+  what you approved, and lists each change with a risk level and its reasons.
+  A tool description rewritten after approval, the classic sign of a poisoned
+  server, is flagged critical when the new text carries an instruction tag or
+  points at a credential file.
+- **Check all.** Checks every approved server in turn.
+- Approvals are shared with the `mcpsteward` command line tool.
+
+### Not included
+- Servers whose configuration reads `${env:NAME}` values cannot be approved or
+  checked from the editor, because HybridMind does not pass your environment
+  to servers it starts. The `mcpsteward` command line tool can.
+- Servers that need you to sign in are reported as such and not checked.
+
+## [2.1.2] - 2026-10-14
+
+2.1.1 made the extension start again. This release makes it usable with your
+own key, and closes a hole that a running extension opened.
+
+### Security
+- The local server now answers only the extension that started it. It used to
+  answer anyone on the machine: it allowed requests from any website, checked
+  no token, and could be asked to run the agent or forward a prompt. Every
+  request must now carry a secret generated when the extension starts, and
+  anything that looks like it came from a browser is refused. If you ever put
+  an OpenRouter key in the old `hybridmind.openrouterApiKey` setting, a web
+  page could have spent it; it no longer can.
+- Requests go to the port the server is really on. When another program
+  already had port 3000 the server moved to 3001, but parts of the extension
+  kept posting to 3000, sending your provider key to that other program.
+- The license key is no longer posted to an address nothing was listening on.
+- A Google key is sent in a request header when chatting. It used to be part of
+  the request address.
+
+### Fixed
+- Chat works with your own key. The model list was a fixed set of short names
+  that only the old hosted backend understood, so providers rejected every
+  message, starting with the default model. The list is now read from your
+  provider and shows exactly what your key can use. You can also type a model
+  id by hand.
+- Verify on the Keys tab reports the truth. It failed every key, for the same
+  reason, and now checks the key without spending anything.
+- Saving a key with `HybridMind: Set API Key (BYOK)` updates the model list in
+  the sidebar straight away.
+- OpenAI's reasoning models no longer receive an option they refuse, and the
+  default OpenAI model is a plain chat model.
+- Qwen can be chosen on the Keys tab. It was supported but missing from that
+  list.
+- Quick Chat lists models again.
+- Chain mode no longer asks for a self healing loop that only the hosted
+  backend offered, which made every chain request fail.
+- `HybridMind: Open Chat` (Ctrl+Shift+H) opens the sidebar. It opened a second
+  chat window that could not send anything.
+
+### Removed
+- The Free badge, the credit and request counters, the Upgrade to Pro button
+  and the lock on "Premium" models. There is no paid tier to buy, the counters
+  never showed real numbers, and the lock kept your own key away from the
+  models it pays for. The two model limit is now a plain limit of four for
+  everyone.
+- The Agents tab. The agents picked there were never sent with a message.
+- The All to All workflow, which needed the hosted backend.
+- 22 commands that could not work: they called the hosted backend or opened a
+  tier that cannot be bought. Four remain: Open Chat, Set API Key, Quick Chat
+  and Show Agent Output.
+- The Ctrl+K shortcut. It took over a key that VS Code uses to start many of
+  its own shortcuts, for an inline chat that could not answer.
+- The "HybridMind Free" and "Usage: 0%" status bar items.
+
 ## [2.1.1] - 2026-10-14
 
 2.1.0 never reached the Marketplace, so this is the version that carries

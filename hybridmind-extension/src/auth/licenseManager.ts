@@ -3,6 +3,7 @@
  * Handles Pro subscription verification and feature gating
  */
 
+import { localServerHeaders } from '../localServer';
 import * as vscode from 'vscode';
 
 export type LicenseTier = 'free' | 'pro' | 'pro-plus' | 'enterprise';
@@ -121,53 +122,12 @@ export class LicenseManager {
       return this.verificationCache;
     }
 
-    try {
-      const response = await fetch('http://localhost:3000/license/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licenseKey: licenseToVerify })
-      });
-
-      if (!response.ok) {
-        console.error('License verification failed:', response.status);
-        this.tier = 'free';
-        return this.getFreeStatus();
-      }
-
-      const data = await response.json() as { valid: boolean; tier: string; expiresAt?: string };
-
-      if (data.valid && ['pro', 'pro-plus', 'enterprise'].includes(data.tier)) {
-        this.tier = data.tier as LicenseTier;
-        this.licenseKey = licenseToVerify;
-        this.lastVerified = new Date();
-
-        const status: LicenseStatus = {
-          valid: true,
-          tier: this.tier,
-          expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
-          features: this.getFeaturesForTier(this.tier)
-        };
-
-        this.verificationCache = status;
-
-        // Save to settings if this is a new key
-        if (key) {
-          await this.saveLicenseToSettings(key);
-        }
-
-        return status;
-      }
-
-      this.tier = 'free';
-      return this.getFreeStatus();
-
-    } catch (error) {
-      console.error('License verification error:', error);
-      // Fail closed: a network/server failure must never leave a client-side
-      // tier assignment in place unverified. See loadLicenseFromSettings().
-      this.tier = 'free';
-      return this.getFreeStatus();
-    }
+    // No verification service exists. This used to POST the key to
+    // http://localhost:3000/license/verify, which nothing serves, so it always
+    // failed closed anyway. When some other program held port 3000, that
+    // program received the license key. Fail closed without sending it.
+    this.tier = 'free';
+    return this.getFreeStatus();
   }
 
 
@@ -339,12 +299,24 @@ export class LicenseManager {
   }
 
   /**
+   * The saved provider and key, for the one caller that talks to the provider
+   * itself: listing the models the key can use. Chat requests do not use this;
+   * they go through the embedded server with getApiHeaders().
+   */
+  getUserProviderKey(): { provider: string; key: string } | null {
+    if (!this.userApiKey) {
+      return null;
+    }
+    return { provider: this.userApiProvider || '', key: this.userApiKey };
+  }
+
+  /**
    * Get headers for API requests (includes license if available)
    */
   getApiHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
+    // Content-Type plus the token the embedded server requires. These headers
+    // are only ever sent to that server.
+    const headers: Record<string, string> = localServerHeaders();
 
     if (this.licenseKey) {
       headers['X-License-Key'] = this.licenseKey;

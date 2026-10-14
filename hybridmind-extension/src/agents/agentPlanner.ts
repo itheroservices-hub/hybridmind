@@ -4,6 +4,7 @@ import { AutonomyManager, AutonomyLevel } from './autonomyManager';
 import { agentClient } from './agentClient';
 import { ChangeTracker } from './changeTracker';
 import { ProtocolHandler } from './protocolHandler';
+import { localServerHeaders, localServerUrl } from '../localServer';
 import { AgentTools } from './agentTools';
 import { LicenseManager } from '../auth/licenseManager';
 import { safeFileUri } from '../security/workspacePath';
@@ -115,7 +116,7 @@ export class AgentPlanner {
   private async checkBackendHealth(): Promise<{ available: boolean; error?: string }> {
     try {
       const axios = (await import('axios')).default;
-      const response = await axios.get('http://localhost:3000/health', { timeout: 5000 });
+      const response = await axios.get(localServerUrl('/health'), { headers: localServerHeaders(), timeout: 5000 });
       return { available: true };
     } catch (error: any) {
       if (error.code === 'ECONNREFUSED') {
@@ -297,7 +298,7 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
       // 8. Call AI with structured prompt
       const axios = (await import('axios')).default;
       console.log(`[AgentPlanner] Planning with model: ${this._currentModel}`);
-      const apiResponse = await axios.post('http://localhost:3000/run/single', {
+      const apiResponse = await axios.post(localServerUrl('/run/single'), {
         model: this._currentModel,
         prompt: request.systemPrompt + '\n\n' + request.userMessage
       }, {
@@ -668,7 +669,7 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
       }
 
       console.log(`[AgentPlanner] Generating code with model: ${this._currentModel} for task: ${step.description}`);
-      const response = await axios.post('http://localhost:3000/run/single', {
+      const response = await axios.post(localServerUrl('/run/single'), {
         model: this._currentModel,
         prompt: directPrompt,
         maxTokens: 1024  // Keep code gen responses tight so free-tier doesn't time out

@@ -4,6 +4,8 @@
  * Commands for selecting models, managing chains, and viewing model capabilities
  */
 
+import { localServerUrl } from '../localServer';
+import { LicenseManager } from '../auth/licenseManager';
 import * as vscode from 'vscode';
 
 export function registerMultiModelCommands(context: vscode.ExtensionContext, serverPort: number) {
@@ -194,13 +196,15 @@ export function registerMultiModelCommands(context: vscode.ExtensionContext, ser
 
 async function getAvailableModels(serverPort: number): Promise<Array<{label: string, description: string, value: string}>> {
   try {
-    const response = await fetch(`http://localhost:${serverPort}/models`);
+    // The key headers matter: the server lists the models of the provider the
+    // key belongs to, and returns nothing without one.
+    const response = await fetch(localServerUrl('/models'), { headers: LicenseManager.getInstance().getApiHeaders() });
     const data = await response.json() as any;
-    const models = data.data?.models || [];
+    const models = data.models || [];
 
     return models.map((model: any) => ({
       label: model.name || model.id,
-      description: model.provider || '',
+      description: data.providerLabel || '',
       value: model.id
     }));
   } catch (error) {
