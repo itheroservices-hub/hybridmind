@@ -4,7 +4,7 @@
  */
 
 import { localServerUrl } from '../localServer';
-import { CatalogError, loadCatalog, verifyKey } from '../providers/modelCatalog';
+import { CatalogError, verifyKey } from '../providers/modelCatalog';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { LicenseManager } from '../auth/licenseManager';
@@ -281,6 +281,11 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /** For callers outside the sidebar that change the saved key. */
+  public async refreshModels() {
+    await this._sendModelCatalog();
+  }
+
   /**
    * Tell the webview which models the saved key can use. The legacy OpenRouter
    * setting counts as a key, the same way it does for chat requests.
@@ -298,7 +303,9 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
     this._view?.webview.postMessage({ type: 'modelCatalog', state: 'loading' });
     try {
-      const catalog = await loadCatalog(provider, key);
+      // verifyKey, not a bare listing: OpenRouter lists its models to anyone,
+      // so a bad key would look ready until the first message failed.
+      const catalog = await verifyKey(provider, key);
       this._view?.webview.postMessage({
         type: 'modelCatalog',
         state: 'ready',
@@ -1628,7 +1635,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline' ${webview.cspSource}; connect-src http://localhost:3000 http://127.0.0.1:3000; img-src ${webview.cspSource} https: data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline' ${webview.cspSource}; connect-src 'none'; img-src ${webview.cspSource} https: data:;">
 <title>HybridMind</title>
 <style>
 /* === RESET: same as working test page === */
@@ -2074,6 +2081,7 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
     <option value="deepseek">DeepSeek</option>
     <option value="groq">Groq</option>
     <option value="openrouter">OpenRouter</option>
+    <option value="qwen">Qwen</option>
   </select>
   <input class="inp" type="password" id="byokKey" placeholder="Paste API key">
   <div class="brow">

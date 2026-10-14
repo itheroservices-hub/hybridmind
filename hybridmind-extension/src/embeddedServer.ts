@@ -465,7 +465,13 @@ async function streamOpenAICompatible(
       'Content-Type': 'application/json',
       ...extraHeaders
     },
-    body: JSON.stringify({ model, messages, stream: true, max_tokens: 4000 }),
+    // OpenAI's reasoning models (the gpt-5 and o series) reject max_tokens,
+    // and a cap would count their hidden reasoning against the answer, so
+    // OpenAI gets no cap, the same as the non streaming runOpenAI(). The other
+    // providers on this path accept it.
+    body: JSON.stringify(providerName === 'openai'
+      ? { model, messages, stream: true }
+      : { model, messages, stream: true, max_tokens: 4000 }),
     signal
   });
 
@@ -672,9 +678,11 @@ async function runGemini(model: string, prompt: string, apiKey: string): Promise
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+    // The key travels in a header, not the documented `?key=` parameter, so
+    // it never sits in a URL.
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }]
       }),

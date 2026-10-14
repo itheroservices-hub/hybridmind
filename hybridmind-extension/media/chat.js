@@ -2,6 +2,7 @@
   var vsc = acquireVsCodeApi();
   var cfg = window.HM_CONFIG || {};
   var msgs = [], selMods = [], wf = 'single', ctx = false;
+  var catState = 'loading';
   var alv = cfg.alv || 3;
   var ro = cfg.ro || false;
   var perms = cfg.perms || { read: true, edit: true, terminal: true, create: true, del: false, multi: true, restructure: false, network: false };
@@ -194,6 +195,9 @@
         var n = t.dataset.p;
         document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x.dataset.p === n); });
         document.querySelectorAll('.panel').forEach(function (x) { x.classList.toggle('on', x.id === 'panel-' + n); });
+        // Coming back to Models after a failed load (offline, a key fixed in
+        // the meantime) asks again instead of staying stuck on the error.
+        if (n === 'models' && (catState === 'error' || catState === 'no-key')) vsc.postMessage({ type: 'requestModels' });
       });
     });
 
@@ -248,21 +252,34 @@
     // Model tag management
     function renderTags() {
       var tw = g('tagWrap'); if (!tw) return;
-      tw.innerHTML = selMods.map(function (m) {
-        return '<span class="tag">' + esc(m) + '<button class="xbtn" data-m="' + esc(m) + '">\u00d7</button></span>';
-      }).join('');
-      tw.querySelectorAll('.xbtn').forEach(function (b) {
+      // Built with DOM calls, never as an HTML string: a model id comes from
+      // the provider or from the user, and esc() does not escape quotes, so an
+      // id placed inside an attribute could have closed it and added a handler.
+      tw.textContent = '';
+      selMods.forEach(function (m) {
+        var tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.appendChild(document.createTextNode(m));
+        var b = document.createElement('button');
+        b.className = 'xbtn';
+        b.textContent = '\u00d7';
         b.addEventListener('click', function () {
-          selMods = selMods.filter(function (x) { return x !== b.dataset.m; });
+          selMods = selMods.filter(function (x) { return x !== m; });
           renderTags(); updML(); updStats();
           vsc.postMessage({ type: 'changeModels', models: selMods });
         });
+        tag.appendChild(b);
+        tw.appendChild(tag);
       });
       updStats();
     }
 
+    // The same shape the extension host accepts for an id it lists.
+    var MODEL_ID = /^[\w.:\/@+~-]{1,200}$/;
+
     function addMod(m) {
       if (!m) return;
+      if (!MODEL_ID.test(m)) { vsc.postMessage({ type: 'showWarning', message: 'That does not look like a model id.' }); return; }
       if (selMods.indexOf(m) >= 0) return;
       if (selMods.length >= MAXM) { vsc.postMessage({ type: 'showWarning', message: 'Limited to ' + MAXM + ' models.' }); return; }
       selMods.push(m); renderTags(); updML();
@@ -290,6 +307,7 @@
     if (mdCustom) mdCustom.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } });
 
     function setCatalog(m) {
+      catState = m.state;
       var note = g('mdNote');
       if (!mdSel) return;
       mdSel.innerHTML = '';

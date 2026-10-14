@@ -350,44 +350,11 @@ export class ProtocolHandler {
       useContextOptimization = true
     } = options;
 
-    // For small contexts or if optimization disabled, use standard request
-    if (!useContextOptimization || fullContext.length < 5000) {
-      return this.buildRequest(userMessage, model, fullContext, temperature);
-    }
-
-    // Use backend context management to optimize context
-    try {
-      const response = await fetch('http://localhost:3000/api/context/optimize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawContext: fullContext,
-          task: userMessage,
-          taskType,
-          maxTokens
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Context optimization failed: ${response.statusText}`);
-      }
-
-      const optimized = await response.json() as { success?: boolean; data?: { context: string; metadata: any } };
-      
-      if (optimized.success && optimized.data) {
-        const { context, metadata } = optimized.data;
-        
-        // Log optimization results
-        console.log(`Context optimized: ${metadata.compressionRatio.toFixed(2)}x reduction (${metadata.originalTokens} → ${metadata.optimizedTokens} tokens)`);
-
-        // Build request with optimized context
-        return this.buildRequest(userMessage, model, context, temperature);
-      }
-    } catch (error) {
-      console.warn('Context optimization failed, using full context:', error);
-    }
-
-    // Fallback to standard request
+    // Context optimisation was a route on the hosted backend
+    // (/api/context/optimize). This used to POST the caller's code context to
+    // a hardcoded localhost:3000 for it, which would have gone to whatever
+    // program held that port. Nothing serves the route, so the context is
+    // used as given.
     return this.buildRequest(userMessage, model, fullContext, temperature);
   }
 

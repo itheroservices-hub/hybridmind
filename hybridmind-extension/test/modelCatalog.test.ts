@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import {
   CatalogError,
+  isSafeModelId,
   loadCatalog,
   normalizeProvider,
   pickDefaultModel,
@@ -153,6 +154,45 @@ describe('loadCatalog', () => {
 
     assert.deepStrictEqual(catalog.models.map((m) => m.id), ['qwen-plus', 'qwen-max']);
     assert.strictEqual(catalog.defaultModel, 'qwen-plus');
+  });
+
+  it('drops an id that could not be a real model id, so a hostile provider reply cannot put markup in the sidebar', async () => {
+    const { impl } = fakeFetch({
+      'https://openrouter.ai/api/v1/models': {
+        body: { data: [
+          { id: 'x" onmouseover="alert(1)', name: 'Quote escape' },
+          { id: '<img src=x onerror=alert(1)>', name: 'Tag' },
+          { id: 'a'.repeat(201), name: 'Too long' },
+          { id: 'lab/real-model:free', name: 'N'.repeat(500) }
+        ] }
+      }
+    });
+
+    const catalog = await loadCatalog('openrouter', KEY, { fetchImpl: impl });
+
+    assert.deepStrictEqual(catalog.models.map((m) => m.id), ['lab/real-model:free']);
+    assert.strictEqual(catalog.models[0].name.length, 200);
+    assert.strictEqual(catalog.defaultModel, 'lab/real-model:free');
+  });
+
+  it('keeps every shape of id real providers use', () => {
+    for (const id of ['gpt-4.1', 'claude-sonnet-4-5', 'meta-llama/llama-3.3-70b-instruct', '~lab/model-latest', 'google/gemini:batch', 'ft:gpt-4o:org::abc123', 'accounts/x/models/y@v1']) {
+      assert.ok(isSafeModelId(id), id);
+    }
+    for (const id of ['', 'has space', 'a"b', "a'b", 'a<b', 'a>b', 'a&b', null, 42]) {
+      assert.ok(!isSafeModelId(id), String(id));
+    }
+  });
+
+  it('refuses a reply that declares itself far larger than any real model list', async () => {
+    const impl = async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name === 'content-length' ? String(64 * 1024 * 1024) : null) },
+      json: async () => { throw new Error('the body must not be read'); }
+    });
+
+    await assert.rejects(loadCatalog('groq', KEY, { fetchImpl: impl as any }), (error: any) => error.kind === 'provider');
   });
 
   it('says the key was rejected on a 401, in words that never repeat the key', async () => {

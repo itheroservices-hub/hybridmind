@@ -40,8 +40,23 @@ export class CatalogError extends Error {
 type FetchLike = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
+  headers?: { get(name: string): string | null };
   json(): Promise<any>;
 }>;
+
+// What a model id may look like. Ids come from the provider and end up in the
+// sidebar and in request URLs, so one that could not be a real id is dropped
+// instead of trusted. Every id OpenRouter lists (the widest catalog) fits.
+const SAFE_MODEL_ID = /^[\w.:/@+~-]{1,200}$/;
+const MAX_NAME_LENGTH = 200;
+
+export function isSafeModelId(id: unknown): id is string {
+  return typeof id === 'string' && SAFE_MODEL_ID.test(id);
+}
+
+function displayName(name: unknown, id: string): string {
+  return typeof name === 'string' && name ? name.slice(0, MAX_NAME_LENGTH) : id;
+}
 
 interface ProviderSpec {
   label: string;
@@ -68,8 +83,8 @@ const bearer = (key: string) => ({ Authorization: `Bearer ${key}` });
 function parseOpenAiList(body: any, keep: (model: any) => boolean = () => true): CatalogModel[] {
   const rows: any[] = Array.isArray(body?.data) ? body.data : [];
   return rows
-    .filter((row) => typeof row?.id === 'string' && keep(row))
-    .map((row) => ({ id: row.id, name: typeof row.name === 'string' && row.name ? row.name : row.id }));
+    .filter((row) => isSafeModelId(row?.id) && keep(row))
+    .map((row) => ({ id: row.id, name: displayName(row.name, row.id) }));
 }
 
 // A key lists every model on the account, including ones that cannot hold a
@@ -87,9 +102,14 @@ const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       // OpenAI returns no particular order. Newest first puts current models
       // at the top of the list and makes the default the newest match.
       rows.sort((a, b) => (b?.created || 0) - (a?.created || 0));
-      return parseOpenAiList({ data: rows }, (row) => !NOT_CHAT.test(row.id));
+      // Besides the kinds no provider chats with, OpenAI lists models that only
+      // answer on its Responses API. Chat requests to those fail.
+      return parseOpenAiList({ data: rows }, (row) => !NOT_CHAT.test(row.id) && !/codex|instruct|deep-research|computer-use|-pro(-|$)/i.test(row.id));
     },
-    preferred: [/^gpt-5(\.\d+)?$/, /^gpt-4\.1$/, /^gpt-4o$/, /^gpt-/]
+    // Plain chat models first. The gpt-5 and o series are reasoning models:
+    // they refuse some request options, and streaming them needs a verified
+    // organisation, so they make a poor first experience as the default.
+    preferred: [/^gpt-4\.1$/, /^gpt-4o$/, /^gpt-4\.1-mini$/, /^gpt-4o-mini$/, /^gpt-5(\.\d+)?$/, /^gpt-/]
   },
   anthropic: {
     label: 'Anthropic',
@@ -98,8 +118,8 @@ const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     parse: (body) => {
       const rows: any[] = Array.isArray(body?.data) ? body.data : [];
       return rows
-        .filter((row) => typeof row?.id === 'string')
-        .map((row) => ({ id: row.id, name: typeof row.display_name === 'string' && row.display_name ? row.display_name : row.id }));
+        .filter((row) => isSafeModelId(row?.id))
+        .map((row) => ({ id: row.id, name: displayName(row.display_name, row.id) }));
     },
     // The API lists newest first, so this is the newest Sonnet.
     preferred: [/sonnet/]
@@ -127,9 +147,9 @@ const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         .map((row) => {
           // Listed as "models/gemini-...", but the generate call takes the bare id.
           const id = row.name.replace(/^models\//, '');
-          return { id, name: typeof row.displayName === 'string' && row.displayName ? row.displayName : id };
+          return { id, name: displayName(row.displayName, id) };
         })
-        .filter((model) => !NOT_CHAT.test(model.id));
+        .filter((model) => isSafeModelId(model.id) && !NOT_CHAT.test(model.id));
     },
     preferred: [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/, /flash/, /^gemini-/],
     // Google answers an invalid key with 400 INVALID_ARGUMENT, not 401.
@@ -192,39 +212,52 @@ export function pickDefaultModel(provider: ProviderId, models: CatalogModel[]): 
 
 const MAX_MODELS = 600;
 const DEFAULT_TIMEOUT_MS = 10000;
+// The largest real list, OpenRouter's, is under one megabyte.
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 async function getJson(url: string, headers: Record<string, string>, spec: ProviderSpec, fetchImpl: FetchLike, timeoutMs: number): Promise<any> {
   const label = spec.label;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
   try {
-    response = await fetchImpl(url, { headers, signal: controller.signal });
-  } catch (error: any) {
-    const why = error?.name === 'AbortError' ? 'it did not answer in time' : 'the request could not be sent';
-    throw new CatalogError('network', `Could not reach ${label}: ${why}. Check your connection and try again.`);
+    let response;
+    try {
+      response = await fetchImpl(url, { headers, signal: controller.signal });
+    } catch (error: any) {
+      const why = error?.name === 'AbortError' ? 'it did not answer in time' : 'the request could not be sent';
+      throw new CatalogError('network', `Could not reach ${label}: ${why}. Check your connection and try again.`);
+    }
+
+    const rejected = `${label} rejected this key. Check that it was copied in full and is still active.`;
+    if (response.status === 401 || response.status === 403) {
+      throw new CatalogError('rejected-key', rejected);
+    }
+
+    const unreadable = new CatalogError('provider', `${label} sent a reply that could not be read. Try again in a moment.`);
+    const declaredLength = Number(response.headers?.get('content-length') || 0);
+    if (declaredLength > MAX_RESPONSE_BYTES) {
+      throw unreadable;
+    }
+
+    if (!response.ok) {
+      if (spec.rejectsKey) {
+        const errorBody = await response.json().catch(() => null);
+        if (spec.rejectsKey(response.status, errorBody)) {
+          throw new CatalogError('rejected-key', rejected);
+        }
+      }
+      throw new CatalogError('provider', `${label} answered with an error (${response.status}). Try again in a moment.`);
+    }
+
+    try {
+      // Still inside the timer: a provider that sends headers and then stalls
+      // on the body is cut off like one that never answers.
+      return await response.json();
+    } catch {
+      throw unreadable;
+    }
   } finally {
     clearTimeout(timer);
-  }
-
-  const rejected = `${label} rejected this key. Check that it was copied in full and is still active.`;
-  if (response.status === 401 || response.status === 403) {
-    throw new CatalogError('rejected-key', rejected);
-  }
-  if (!response.ok) {
-    if (spec.rejectsKey) {
-      const errorBody = await response.json().catch(() => null);
-      if (spec.rejectsKey(response.status, errorBody)) {
-        throw new CatalogError('rejected-key', rejected);
-      }
-    }
-    throw new CatalogError('provider', `${label} answered with an error (${response.status}). Try again in a moment.`);
-  }
-
-  try {
-    return await response.json();
-  } catch {
-    throw new CatalogError('provider', `${label} sent a reply that could not be read. Try again in a moment.`);
   }
 }
 

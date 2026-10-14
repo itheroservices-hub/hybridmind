@@ -13,6 +13,8 @@ import { checkCloudProActive } from './cloud/cloudSync';
 import { registerCloudCommands } from './cloud/cloudCommands';
 
 let serverPort: number | null = null;
+// Set once the sidebar exists, for commands that change what it should show.
+let activeSidebar: ChatSidebarProvider | null = null;
 let licenseManager: LicenseManager;
 let inlineChatProvider: InlineChatProvider;
 
@@ -42,6 +44,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Register sidebar IMMEDIATELY so the webview renders without waiting for server
   serverPort = 3000; // default; updated once server starts
   const sidebarProvider = new ChatSidebarProvider(context.extensionUri, serverPort);
+  activeSidebar = sidebarProvider;
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -271,6 +274,9 @@ function registerCommands(context: vscode.ExtensionContext) {
 
       const lm = LicenseManager.getInstance();
       await lm.setUserApiKey(providerName, key);
+      // The sidebar lists the models of the saved key, so it has to hear about
+      // a key saved from here as well as from its own Keys tab.
+      void activeSidebar?.refreshModels();
       vscode.window.showInformationMessage(`✓ ${displayName} API key saved. HybridMind will route requests through your key.`);
     })
   );
