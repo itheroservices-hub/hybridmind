@@ -3,6 +3,7 @@
  * Persistent chat interface with multi-turn conversations
  */
 
+import { localServerUrl } from '../localServer';
 import * as vscode from 'vscode';
 import { LicenseManager } from '../auth/licenseManager';
 
@@ -332,7 +333,7 @@ export class ChatPanel {
     // Add current prompt
     context.push({ role: 'user', content: prompt });
 
-    const response = await fetch(`http://localhost:${this._serverPort}/api/models/chat`, {
+    const response = await fetch(localServerUrl('/api/models/chat'), {
       method: 'POST',
       headers: this._licenseManager.getApiHeaders(),
       body: JSON.stringify({

@@ -3,6 +3,7 @@
  * GitHub Copilot-style persistent chat sidebar
  */
 
+import { localServerHeaders, localServerUrl } from '../localServer';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { LicenseManager } from '../auth/licenseManager';
@@ -85,7 +86,7 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
    * configured BYOK key).
    */
   private async _callBackend(endpoint: string, body: any): Promise<Response> {
-    return fetch(`http://localhost:${this._serverPort}${endpoint}`, {
+    return fetch(localServerUrl(endpoint), {
       method: 'POST',
       headers: this._licenseManager.getApiHeaders(),
       body: JSON.stringify(body)
@@ -253,9 +254,9 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       // Testing a candidate key the user hasn't saved yet, so this can't go
       // through _callBackend()/getApiHeaders() (which reads the already-
       // stored key). Same header names/convention as the stored path though.
-      const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
+      const response = await fetch(localServerUrl('/run/single'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Api-Provider': provider, 'X-User-Provider-Key': key },
+        headers: localServerHeaders({ 'X-User-Api-Provider': provider, 'X-User-Provider-Key': key }),
         body: JSON.stringify({ model: 'llama-3.3-70b', prompt: 'Reply with only the word OK', maxTokens: 5 })
       });
       if (response.ok) {
@@ -1238,7 +1239,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
 
     // Streaming (SSE) response — needs the raw fetch Response, so this can't
     // go through _callBackend(), but it attaches the same headers.
-    const response = await fetch(`http://localhost:${this._serverPort}/run/chain/stream`, {
+    const response = await fetch(localServerUrl('/run/chain/stream'), {
       method: 'POST',
       headers: this._licenseManager.getApiHeaders(),
       body: JSON.stringify(payload)
@@ -1348,7 +1349,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
         return;
       }
 
-      const response = await fetch(`http://localhost:${this._serverPort}/run/chain/kill/${encodeURIComponent(this._activeRalphStreamId)}`, {
+      const response = await fetch(localServerUrl(`/run/chain/kill/${encodeURIComponent(this._activeRalphStreamId)}`), {
         method: 'POST',
         headers: this._licenseManager.getApiHeaders()
       });
@@ -1420,7 +1421,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     let reasoning = '';
 
     try {
-      const response = await fetch(`http://localhost:${this._serverPort}/run/single/stream`, {
+      const response = await fetch(localServerUrl('/run/single/stream'), {
         method: 'POST',
         headers: this._licenseManager.getApiHeaders(),
         body: JSON.stringify({ model, prompt, messages }),

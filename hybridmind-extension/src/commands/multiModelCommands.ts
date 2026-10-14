@@ -4,6 +4,7 @@
  * Commands for selecting models, managing chains, and viewing model capabilities
  */
 
+import { localServerHeaders, localServerUrl } from '../localServer';
 import * as vscode from 'vscode';
 
 export function registerMultiModelCommands(context: vscode.ExtensionContext, serverPort: number) {
@@ -194,7 +195,7 @@ export function registerMultiModelCommands(context: vscode.ExtensionContext, ser
 
 async function getAvailableModels(serverPort: number): Promise<Array<{label: string, description: string, value: string}>> {
   try {
-    const response = await fetch(`http://localhost:${serverPort}/models`);
+    const response = await fetch(localServerUrl('/models'), { headers: localServerHeaders() });
     const data = await response.json() as any;
     const models = data.data?.models || [];
 

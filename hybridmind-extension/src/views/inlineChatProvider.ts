@@ -3,6 +3,7 @@
  * Cursor-style inline chat with Ctrl+K
  */
 
+import { localServerUrl } from '../localServer';
 import * as vscode from 'vscode';
 import { LicenseManager } from '../auth/licenseManager';
 
@@ -68,7 +69,7 @@ export class InlineChatProvider {
         const fullPrompt = this._buildPrompt(prompt, action.value, selectedText, editor.document);
 
         // Call API
-        const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
+        const response = await fetch(localServerUrl('/run/single'), {
           method: 'POST',
           headers: this._licenseManager.getApiHeaders(),
           body: JSON.stringify({
@@ -261,7 +262,7 @@ export class InlineChatProvider {
         const languageId = editor.document.languageId;
         const fullPrompt = `${prompts[action]}\n\nLanguage: ${languageId}\n\nCode:\n\`\`\`${languageId}\n${selectedText}\n\`\`\``;
 
-        const response = await fetch(`http://localhost:${this._serverPort}/run/single`, {
+        const response = await fetch(localServerUrl('/run/single'), {
           method: 'POST',
           headers: this._licenseManager.getApiHeaders(),
           body: JSON.stringify({

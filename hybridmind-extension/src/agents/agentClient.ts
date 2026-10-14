@@ -3,6 +3,7 @@
  * Handles strict JSON tool call requests and responses
  */
 
+import { localServerHeaders, localServerUrl } from '../localServer';
 import axios, { AxiosError } from 'axios';
 
 export interface Position {
@@ -47,12 +48,6 @@ export interface AgenticOptions {
 }
 
 class AgentClient {
-  private baseUrl: string;
-
-  constructor(baseUrl: string = 'http://localhost:3000') {
-    this.baseUrl = baseUrl;
-  }
-
   /**
    * Execute an agentic workflow with strict JSON tool calls
    */
@@ -66,7 +61,7 @@ class AgentClient {
 
     try {
       const response = await axios.post<AgenticResponse>(
-        `${this.baseUrl}/agent/execute`,
+        localServerUrl('/agent/execute'),
         {
           prompt,
           context,
@@ -74,7 +69,7 @@ class AgentClient {
           provider
         },
         {
-          headers: { 'Content-Type': 'application/json' },
+          headers: localServerHeaders(),
           timeout: 60000 // 60 second timeout for complex workflows
         }
       );
@@ -92,7 +87,7 @@ class AgentClient {
           throw new Error(`Backend error: ${axiosError.response.data.error}`);
         }
         if (axiosError.code === 'ECONNREFUSED') {
-          throw new Error('Cannot connect to HybridMind backend. Please ensure the server is running on port 3001.');
+          throw new Error('Cannot connect to the HybridMind local server. Reload the window and try again.');
         }
         throw new Error(`Network error: ${axiosError.message}`);
       }
@@ -105,7 +100,7 @@ class AgentClient {
    */
   async testConnection(): Promise<boolean> {
     try {
-      await axios.get(`${this.baseUrl}/health`, { timeout: 5000 });
+      await axios.get(localServerUrl('/health'), { headers: localServerHeaders(), timeout: 5000 });
       return true;
     } catch {
       return false;
@@ -117,7 +112,7 @@ class AgentClient {
    */
   async getAvailableModels(): Promise<any[]> {
     try {
-      const response = await axios.get(`${this.baseUrl}/models`);
+      const response = await axios.get(localServerUrl('/models'), { headers: localServerHeaders() });
       return response.data.models || [];
     } catch {
       return [];

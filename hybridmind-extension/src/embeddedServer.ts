@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import * as path from 'path';
 import { AutonomousAgent } from './agents/autonomousAgent';
+import { isTrustedLocalRequest, setLocalServerPort } from './localServer';
 
 let server: http.Server | null = null;
 let serverPort = 3000;
@@ -19,14 +20,12 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
   return new Promise((resolve, reject) => {
     // Create a simple HTTP server that proxies to AI APIs
     server = http.createServer(async (req, res) => {
-      // CORS headers
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-      if (req.method === 'OPTIONS') {
-        res.writeHead(200);
-        res.end();
+      // Only this extension host may use the server. There are deliberately no
+      // CORS headers and no OPTIONS handler: nothing legitimate calls this
+      // from a browser, so a preflight should fail. See localServer.ts.
+      if (!isTrustedLocalRequest(req.headers, serverPort)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
         return;
       }
 
@@ -221,6 +220,9 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
 
     server.listen(serverPort, '127.0.0.1', () => {
       console.log(`HybridMind embedded server running on port ${serverPort}`);
+      // Callers read the port from localServer.ts, so they follow the server
+      // when 3000 was taken and it moved.
+      setLocalServerPort(serverPort);
       resolve(serverPort);
     });
   });

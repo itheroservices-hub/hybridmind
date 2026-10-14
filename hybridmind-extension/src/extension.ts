@@ -1,3 +1,4 @@
+import { localServerUrl } from './localServer';
 import * as vscode from 'vscode';
 import { startEmbeddedServer, stopEmbeddedServer } from './embeddedServer';
 import { ChatPanel } from './views/chatPanel';
@@ -200,7 +201,7 @@ function registerCommands(context: vscode.ExtensionContext) {
       if (!task) return;
 
       try {
-        const res = await fetch(`http://localhost:${serverPort}/agent/team-collaboration`, {
+        const res = await fetch(localServerUrl('/agent/team-collaboration'), {
           method: 'POST',
           headers: licenseManager.getApiHeaders(),
           body: JSON.stringify({ task, agents: agentTypes })
@@ -305,7 +306,7 @@ function registerCommands(context: vscode.ExtensionContext) {
       }
 
       try {
-        const response = await fetch(`http://localhost:${serverPort}/cost-stats`, {
+        const response = await fetch(localServerUrl('/cost-stats'), {
           headers: licenseManager.getApiHeaders()
         });
         const data = await response.json() as any;
@@ -408,7 +409,7 @@ ${tier === 'Free' && parseFloat(stats.percentUsed) > 50 ? '\n💡 **Upgrade to P
 
 async function getAvailableModels(): Promise<any[]> {
   try {
-    const response = await fetch(`http://127.0.0.1:${serverPort}/models`);
+    const response = await fetch(localServerUrl('/models'), { headers: licenseManager.getApiHeaders() });
     const result: any = await response.json();
     return result.data?.models || [];
   } catch (error) {
@@ -427,7 +428,7 @@ async function runPrompt(model: string, prompt: string) {
   panel.webview.html = getLoadingHtml();
 
   try {
-    const response = await fetch(`http://127.0.0.1:${serverPort}/run/single`, {
+    const response = await fetch(localServerUrl('/run/single'), {
       method: 'POST',
       headers: licenseManager.getApiHeaders(),
       body: JSON.stringify({ model, prompt })
