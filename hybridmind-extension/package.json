@@ -77,22 +77,11 @@
         }
       ]
     },
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "hybridmind.mcpRegistry",
-        "label": "HybridMind MCP Registry"
-      }
-    ],
     "commands": [
       {
         "command": "hybridmind.openChat",
-        "title": "HybridMind: Open Chat Window",
+        "title": "HybridMind: Open Chat",
         "icon": "$(comment-discussion)"
-      },
-      {
-        "command": "hybridmind.openAgentMode",
-        "title": "HybridMind: Open Agent Mode",
-        "icon": "$(workspace-trust-enabled)"
       },
       {
         "command": "hybridmind.setApiKey",
@@ -100,122 +89,16 @@
         "icon": "$(key)"
       },
       {
-        "command": "hybridmind.cloudSignIn",
-        "title": "HybridMind: Sign In to HybridMind Cloud",
-        "icon": "$(account)"
-      },
-      {
-        "command": "hybridmind.upgradeToCloudPro",
-        "title": "HybridMind: Upgrade to HybridMind Pro",
-        "icon": "$(star-full)"
-      },
-      {
-        "command": "hybridmind.runAgentTeam",
-        "title": "HybridMind: Run Agent Team",
-        "icon": "$(array)"
-      },
-      {
-        "command": "hybridmind.inlineChat",
-        "title": "HybridMind: Start Inline Chat",
-        "icon": "$(edit)"
-      },
-      {
-        "command": "hybridmind.manageLicense",
-        "title": "HybridMind: Manage License",
-        "icon": "$(key)"
-      },
-      {
-        "command": "hybridmind.showUsageDetails",
-        "title": "HybridMind: Show Usage Statistics",
-        "icon": "$(pulse)"
-      },
-      {
-        "command": "hybridmind.checkMcpApproval",
-        "title": "HybridMind: Check MCP Approval Ticket",
-        "icon": "$(shield)"
-      },
-      {
         "command": "hybridmind.quickChat",
         "title": "HybridMind: Quick Chat"
-      },
-      {
-        "command": "hybridmind.explainCode",
-        "title": "HybridMind: Explain Code"
-      },
-      {
-        "command": "hybridmind.reviewCode",
-        "title": "HybridMind: Review Code"
-      },
-      {
-        "command": "hybridmind.optimizeCode",
-        "title": "HybridMind: Optimize Code"
-      },
-      {
-        "command": "hybridmind.generateTests",
-        "title": "HybridMind: Generate Tests"
-      },
-      {
-        "command": "hybridmind.fixBugs",
-        "title": "HybridMind: Fix Bugs"
-      },
-      {
-        "command": "hybridmind.refactorWithAI",
-        "title": "HybridMind: 🤖 Refactor with Autonomous Agent",
-        "icon": "$(robot)"
-      },
-      {
-        "command": "hybridmind.autonomousDebug",
-        "title": "HybridMind: 🔧 Autonomous Debug (Fix All Errors)",
-        "icon": "$(debug-alt)"
-      },
-      {
-        "command": "hybridmind.runStrictJsonWorkflow",
-        "title": "HybridMind: ⚡ Run AI Workflow (Strict JSON)",
-        "icon": "$(rocket)"
-      },
-      {
-        "command": "hybridmind.strictJsonQuickFix",
-        "title": "HybridMind: ⚡ Quick Fix (Strict JSON)",
-        "icon": "$(wrench)"
-      },
-      {
-        "command": "hybridmind.strictJsonAddFeature",
-        "title": "HybridMind: ⚡ Add Feature (Strict JSON)",
-        "icon": "$(add)"
       },
       {
         "command": "hybridmind.showAgentOutput",
         "title": "HybridMind: Show Agent Output",
         "icon": "$(output)"
-      },
-      {
-        "command": "hybridmind.selectChainTemplate",
-        "title": "HybridMind: Select Model Chain Template",
-        "icon": "$(link)"
-      },
-      {
-        "command": "hybridmind.configureCustomChain",
-        "title": "HybridMind: Configure Custom Model Chain",
-        "icon": "$(settings-gear)"
-      },
-      {
-        "command": "hybridmind.viewModelCapabilities",
-        "title": "HybridMind: View Model Capabilities",
-        "icon": "$(info)"
-      },
-      {
-        "command": "hybridmind.toggleModelMode",
-        "title": "HybridMind: Toggle Model Selection Mode",
-        "icon": "$(switch)"
       }
     ],
     "keybindings": [
-      {
-        "command": "hybridmind.inlineChat",
-        "key": "ctrl+k",
-        "mac": "cmd+k",
-        "when": "editorTextFocus"
-      },
       {
         "command": "hybridmind.openChat",
         "key": "ctrl+shift+h",
@@ -227,41 +110,6 @@
         {
           "command": "hybridmind.openChat",
           "when": "true"
-        },
-        {
-          "command": "hybridmind.openAgentMode",
-          "when": "true"
-        },
-        {
-          "command": "hybridmind.runAgentTeam",
-          "when": "true"
-        },
-        {
-          "command": "hybridmind.inlineChat",
-          "when": "editorTextFocus"
-        },
-        {
-          "command": "hybridmind.checkMcpApproval",
-          "when": "true"
-        }
-      ],
-      "editor/context": [
-        {
-          "command": "hybridmind.inlineChat",
-          "group": "hybridmind@0",
-          "when": "editorTextFocus"
-        },
-        {
-          "command": "hybridmind.explainCode",
-          "group": "hybridmind@1"
-        },
-        {
-          "command": "hybridmind.reviewCode",
-          "group": "hybridmind@2"
-        },
-        {
-          "command": "hybridmind.optimizeCode",
-          "group": "hybridmind@3"
         }
       ]
     },

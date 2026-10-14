@@ -622,17 +622,6 @@
       if (sa) sa.textContent = agSlots.length + ' / ' + MAXA;
     }
 
-    function updRates() {
-      fetch('http://localhost:3000/cost-stats').then(function (r) { return r.json(); }).then(function (data) {
-        var s = data.data || {};
-        var ce = g('stC'); if (ce) ce.textContent = s.dailyRemaining !== undefined ? '$' + Number(s.dailyRemaining).toFixed(2) : '--';
-        var used = s.requestsToday || 0, max = PRO ? 500 : 50, pct = Math.min(100, (used / max) * 100);
-        var re = g('stR'), rb = g('stRB');
-        if (re) re.textContent = used + ' / ' + max;
-        if (rb) { rb.style.width = pct + '%'; rb.className = 'sfill' + (pct > 90 ? ' c' : pct > 70 ? ' w' : ''); }
-      }).catch(function () {});
-    }
-
     function renderMsgs() {
       var mc = g('msgs'); if (!mc) return;
       if (msgs.length === 0) {
@@ -999,9 +988,8 @@
       }
     });
 
-    renderTags(); updML(); renderAgents(); updStats(); renderMsgs(); updRates();
+    renderTags(); updML(); renderAgents(); updStats(); renderMsgs();
     vsc.postMessage({ type: 'requestModels' });
-    setInterval(updRates, 30000);
 
     // Signal init success in DIAG
     var dlx = g('dl'); if (dlx) dlx.textContent = 'INIT-OK';

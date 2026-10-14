@@ -1,57 +1,54 @@
 # HybridMind
 
-AI coding assistant with autonomous agents and smart multi-model orchestration.
+A coding assistant for VS Code that runs on your own AI provider key.
 
 ## Install
 
-Search "HybridMind" in VS Code marketplace and install.
+Search "HybridMind" in the VS Code Marketplace and install.
 
-## Features
+## What it does
 
-- **Smart Multi-Model Orchestration** - 11 specialized AI models with intelligent selection
-- **Chain Templates** - Pre-built workflows (Coding, Research, Review) for complex tasks
-- **Autonomous Agents** - Multi-step task execution with planning and confirmation
-- **Custom Chains** - Build sequential multi-model workflows for your needs
-- **Model Capabilities** - Compare model strengths across 9 dimensions
-- **Undo System** - Rollback agent changes with 10-step history
+- **Chat in the sidebar.** Ask about your code and read the answer as it is written.
+- **Your key, your models.** The model list is read from your provider, so it shows exactly what your key can use.
+- **Several models at once.** Parallel mode sends one message to up to four models. Chain mode hands each answer on to the next model.
+- **Agentic mode.** The assistant plans a task and shows you the plan to confirm before it starts. You choose how often it asks while it works: before every action, before destructive ones, or only for risky commands.
+- **Guardrails.** Terminal commands are checked against an allowlist at every setting, and file changes stay inside your workspace.
 
-## Usage
+## Getting started
 
-Open HybridMind sidebar, select workflow mode (Chat/Agentic/Custom), and start coding.
+1. Open the HybridMind icon in the activity bar.
+2. On the Keys tab, pick your provider, paste your key and save.
+3. Pick a model on the Models tab and start chatting.
 
-**Commands:**
-- `HybridMind: Open Chat Window`
-- `HybridMind: Set API Key (BYOK)` - Add your own AI provider key
-- `HybridMind: Select Chain Template` - Choose pre-built multi-model workflows
-- `HybridMind: Configure Custom Chain` - Build your own model sequences
-- `HybridMind: View Model Capabilities` - Compare AI model strengths
-- `HybridMind: Run Autonomous Workflow`
-- `HybridMind: Undo Last Change`
+**Commands**
 
-## Bring Your Own Key (BYOK)
+- `HybridMind: Open Chat` opens the sidebar (Ctrl+Shift+H)
+- `HybridMind: Set API Key (BYOK)` saves a provider key
+- `HybridMind: Quick Chat` asks one question and shows the answer beside your editor
+- `HybridMind: Show Agent Output` opens the agent log
 
-HybridMind runs entirely on your machine — a small local server starts when VS Code opens and talks directly to your chosen AI provider's API. There is no HybridMind-run backend and no shared usage pool: every request is billed to your own provider account.
+## Bring your own key
 
-**Setup**
+HybridMind runs entirely on your machine. A small local server starts with the extension and talks directly to your provider's API. There is no HybridMind backend and no shared usage pool. Every request is billed to your own provider account.
 
-1. Run `HybridMind: Set API Key (BYOK)` from the Command Palette.
-2. Pick a provider and paste in your API key.
-3. Start chatting — requests route straight to that provider.
+That local server answers only the extension that started it. Web pages and other programs on your machine cannot use it.
 
 **Supported providers**
 
-**OpenAI**, **Anthropic**, **Google (Gemini)**, **Groq**, **DeepSeek**, **Qwen**, and **OpenRouter** (which itself proxies 200+ additional models through a single key). The `HybridMind: Set API Key (BYOK)` picker only lists these seven — every entry is wired to a real per-provider dispatch path, so a saved key always works. (An earlier build's picker offered ~20 additional provider names that weren't actually implemented; that list was trimmed back to what's real.)
+OpenAI, Anthropic, Google (Gemini), Groq, DeepSeek, Qwen and OpenRouter.
+
+Answers from OpenAI, Anthropic, Groq, DeepSeek and OpenRouter stream in as they are written. Answers from Google and Qwen arrive in one piece.
 
 **Where your key is stored**
 
-Your key is written to VS Code's built-in [SecretStorage](https://code.visualstudio.com/api/references/vscode-api#SecretStorage) — the same OS-level encrypted store VS Code uses for its own credentials (Credential Manager on Windows, Keychain on macOS, Secret Service/libsecret on Linux). It is **not** written to your `settings.json` and never leaves your machine except in the direct HTTPS request to your provider's API.
+Your key is written to VS Code's built in [SecretStorage](https://code.visualstudio.com/api/references/vscode-api#SecretStorage), the same encrypted store VS Code uses for its own credentials: Credential Manager on Windows, Keychain on macOS, and Secret Service on Linux. It is not written to your `settings.json`, and it leaves your machine only in the direct HTTPS request to your provider.
 
-If you're upgrading from an older version that stored the key as a plain VS Code setting, HybridMind migrates it to SecretStorage automatically the first time you open it and clears the old plaintext setting — you'll see a one-time notification when that happens.
+If you are upgrading from an older version that kept the key as a plain VS Code setting, HybridMind moves it to SecretStorage the first time it starts and clears the old setting. You will see a one time notice when that happens.
 
 ## Related
 
 - [Website](https://hybridmind.ca)
-- [Documentation](https://github.com/itheroservices-hub/hybridmind)
+- [Source](https://github.com/itheroservices-hub/hybridmind)
 
 ## License
 

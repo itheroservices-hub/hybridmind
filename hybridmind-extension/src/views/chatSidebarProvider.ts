@@ -21,6 +21,10 @@ export interface ChatMessage {
   cost?: number;
 }
 
+// A sanity cap, not a tier. Every model selected is a separate request on the
+// user's own key, so a slip of the hand should not fan out to twenty of them.
+const MAX_MODELS_PER_MESSAGE = 4;
+
 export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hybridmind.chatView';
   private _view?: vscode.WebviewView;
@@ -321,10 +325,8 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage('Draft command detected: switched workflow to Agentic mode for command execution.');
     }
     
-    // Enforce tier limits
-    const maxModels = this._licenseManager.isPro() ? 4 : 2;
-    if (selectedModels.length > maxModels) {
-      vscode.window.showWarningMessage(`${this._licenseManager.isPro() ? 'Pro' : 'Free'} tier limited to ${maxModels} models. Upgrade for more!`);
+    if (selectedModels.length > MAX_MODELS_PER_MESSAGE) {
+      vscode.window.showWarningMessage(`Up to ${MAX_MODELS_PER_MESSAGE} models can answer one message.`);
       return;
     }
 
@@ -1594,7 +1596,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
     if (!this._view) return;
     const isPro = this._licenseManager.isPro();
     const isProPlus = this._licenseManager.isProPlus();
-    const maxModels = isPro ? 4 : 2;
+    const maxModels = MAX_MODELS_PER_MESSAGE;
     const maxAgents = isProPlus ? 8 : isPro ? 4 : 0;
     // Post a message to update tier UI instead of replacing HTML
     // (replacing HTML reloads the iframe and permanently loses focus/clicks)
@@ -1613,7 +1615,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
   private _getHtmlForWebview(webview: vscode.Webview) {
     const isPro = this._licenseManager.isPro();
     const isProPlus = this._licenseManager.isProPlus();
-    const maxModels = isPro ? 4 : 2;
+    const maxModels = MAX_MODELS_PER_MESSAGE;
     const maxAgents = isProPlus ? 8 : isPro ? 4 : 0;
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.js')
@@ -1960,7 +1962,6 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
     <span class="hdr-name">HybridMind</span>
   </div>
   <div class="hdr-r">
-    <span class="tier-pill ${isProPlus ? 'pro-plus' : isPro ? 'pro' : 'free'}">${isProPlus ? 'PRO PLUS' : isPro ? 'PRO' : 'FREE'}</span>
     <button class="ibtn" id="clrBtn" title="Clear conversation">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="3 6 5 6 13 6"/><path d="M14 6l-1.5 8H3.5L2 6"/><path d="M6.5 6V4.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5V6"/>
@@ -1969,18 +1970,9 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
   </div>
 </div>
 
-<!-- STATS -->
-<div class="stats">
-  <div class="stat"><span class="slbl">Credits</span><span class="sval" id="stC">--</span></div>
-  <div class="stat"><span class="slbl">Requests</span><span class="sval" id="stR">0 / ${isPro ? '500' : '50'}</span><div class="sbar"><div class="sfill" id="stRB"></div></div></div>
-  <div class="stat"><span class="slbl">Models</span><span class="sval" id="stM">0 / ${maxModels}</span></div>
-  <div class="stat"><span class="slbl">Agents</span><span class="sval" id="stA">0 / ${maxAgents}</span></div>
-</div>
-
 <!-- TABS -->
 <div class="tabs">
   <button class="tab on" data-p="models">Models</button>
-  <button class="tab" data-p="agents">Agents</button>
   <button class="tab" data-p="keys">Keys</button>
 </div>
 

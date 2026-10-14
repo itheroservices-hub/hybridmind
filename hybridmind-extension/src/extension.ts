@@ -8,7 +8,6 @@ import { LicenseManager } from './auth/licenseManager';
 import { AgentConfig } from './agents/agentConfig';
 import { registerAgenticCommands } from './commands/agenticCommands';
 import { registerMultiModelCommands } from './commands/multiModelCommands';
-import { UsageTracker } from './utils/usageTracker';
 import { CloudAuth } from './cloud/cloudAuth';
 import { checkCloudProActive } from './cloud/cloudSync';
 import { registerCloudCommands } from './cloud/cloudCommands';
@@ -16,7 +15,6 @@ import { registerCloudCommands } from './cloud/cloudCommands';
 let serverPort: number | null = null;
 let licenseManager: LicenseManager;
 let inlineChatProvider: InlineChatProvider;
-let usageTracker: UsageTracker;
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('HybridMind extension activating...');
@@ -41,16 +39,6 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   registerCloudCommands(context);
 
-  // Initialize usage tracker
-  usageTracker = new UsageTracker();
-  context.subscriptions.push(usageTracker.getStatusBarItem());
-  
-  // Make tracker globally available for API calls
-  (global as any).hybridmindUsageTracker = usageTracker;
-
-  // Reset warning flag every hour
-  setInterval(() => usageTracker.resetWarning(), 3600000);
-
   // Register sidebar IMMEDIATELY so the webview renders without waiting for server
   serverPort = 3000; // default; updated once server starts
   const sidebarProvider = new ChatSidebarProvider(context.extensionUri, serverPort);
@@ -68,14 +56,6 @@ export async function activate(context: vscode.ExtensionContext) {
   }).catch((error: any) => {
     vscode.window.showErrorMessage(`Failed to start HybridMind server: ${error.message}`);
   });
-
-  // Create status bar item
-  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.text = licenseManager.isPro() ? '$(star-full) HybridMind Pro' : 'HybridMind Free';
-  statusBarItem.tooltip = 'Click to manage license';
-  statusBarItem.command = 'hybridmind.manageLicense';
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
 
   // Verify license and refresh UI once resolved
   licenseManager.verifyLicense().then(() => {
@@ -151,11 +131,9 @@ function registerCommands(context: vscode.ExtensionContext) {
   // Open Chat Window (Available to all tiers)
   context.subscriptions.push(
     vscode.commands.registerCommand('hybridmind.openChat', async () => {
-      if (serverPort) {
-        ChatPanel.createOrShow(context.extensionUri, serverPort);
-      } else {
-        vscode.window.showErrorMessage('Server not running');
-      }
+      // The sidebar is the chat that works. This used to open a second panel
+      // that called /api/models/chat, a route the embedded server never had.
+      await vscode.commands.executeCommand(`${ChatSidebarProvider.viewType}.focus`);
     })
   );
 
@@ -435,6 +413,10 @@ async function runPrompt(model: string, prompt: string) {
     });
 
     const result: any = await response.json();
+    if (!response.ok) {
+      // The body of a failed request is { error }, with no content to show.
+      throw new Error(result.error || `The request failed (${response.status}).`);
+    }
     panel.webview.html = getResponseHtml(result.content, model);
   } catch (error: any) {
     panel.webview.html = getErrorHtml(error.message);

@@ -31,9 +31,30 @@ const MARKETPLACE_CATEGORIES = [
 ];
 
 // Compiled tests run from test-out/test, two levels below the manifest.
-const manifest: { categories?: string[] } = JSON.parse(
-  fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
+const extensionRoot = path.join(__dirname, '..', '..');
+
+interface Manifest {
+  categories?: string[];
+  contributes?: {
+    commands?: { command: string; title: string }[];
+    menus?: Record<string, { command: string }[]>;
+    keybindings?: { command: string; key: string }[];
+  };
+}
+
+const manifest: Manifest = JSON.parse(
+  fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'),
 );
+
+function sourceFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return sourceFiles(full);
+    }
+    return entry.name.endsWith('.ts') ? [full] : [];
+  });
+}
 
 describe('extension manifest', () => {
   it('names only categories the Marketplace accepts, the gap that let "Agents" block the 2.1.0 upload', () => {
@@ -44,5 +65,30 @@ describe('extension manifest', () => {
 
   it('declares at least one category, so the check above cannot pass by having nothing to check', () => {
     assert.ok((manifest.categories ?? []).length > 0);
+  });
+
+  it('registers a handler for every command it advertises, the gap that put a command with no code behind it in the palette', () => {
+    const source = sourceFiles(path.join(extensionRoot, 'src'))
+      .map((file) => fs.readFileSync(file, 'utf8'))
+      .join('\n');
+    const commands = (manifest.contributes?.commands ?? []).map((entry) => entry.command);
+    assert.ok(commands.length > 0);
+
+    const unregistered = commands.filter((command) => !source.includes(`registerCommand('${command}'`));
+    assert.deepStrictEqual(unregistered, []);
+  });
+
+  it('points menus and keybindings only at commands it declares, so hiding a command cannot leave a dead menu entry or shortcut', () => {
+    const declared = new Set((manifest.contributes?.commands ?? []).map((entry) => entry.command));
+    const menuCommands = Object.values(manifest.contributes?.menus ?? {}).flat().map((entry) => entry.command);
+    const keyCommands = (manifest.contributes?.keybindings ?? []).map((entry) => entry.command);
+
+    const dangling = [...menuCommands, ...keyCommands].filter((command) => !declared.has(command));
+    assert.deepStrictEqual(dangling, []);
+  });
+
+  it('does not bind Ctrl+K alone, which VS Code uses as the first half of many of its own shortcuts', () => {
+    const keys = (manifest.contributes?.keybindings ?? []).map((entry) => entry.key.toLowerCase());
+    assert.ok(!keys.includes('ctrl+k'));
   });
 });
