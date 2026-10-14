@@ -411,7 +411,7 @@ async function getAvailableModels(): Promise<any[]> {
   try {
     const response = await fetch(localServerUrl('/models'), { headers: licenseManager.getApiHeaders() });
     const result: any = await response.json();
-    return result.data?.models || [];
+    return result.models || [];
   } catch (error) {
     return [];
   }

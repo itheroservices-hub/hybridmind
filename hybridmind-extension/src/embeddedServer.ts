@@ -8,6 +8,7 @@ import * as http from 'http';
 import * as path from 'path';
 import { AutonomousAgent } from './agents/autonomousAgent';
 import { isTrustedLocalRequest, setLocalServerPort } from './localServer';
+import { Catalog, CatalogError, loadCatalog } from './providers/modelCatalog';
 
 let server: http.Server | null = null;
 let serverPort = 3000;
@@ -42,8 +43,16 @@ export async function startEmbeddedServer(context: vscode.ExtensionContext): Pro
 
       // Models endpoint
       if (req.url === '/models') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(getAvailableModels(req.headers)));
+        try {
+          const catalog = await loadCatalogForRequest(req.headers);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(catalog));
+        } catch (error: any) {
+          // Having no key yet is the caller's state, not a server fault.
+          const missingKey = error instanceof CatalogError && (error.kind === 'no-key' || error.kind === 'unknown-provider');
+          res.writeHead(missingKey ? 400 : 502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message, models: [] }));
+        }
         return;
       }
 
@@ -259,41 +268,21 @@ function getByokFromHeaders(headers: http.IncomingHttpHeaders): { provider: stri
   return { provider, key };
 }
 
-function getAvailableModels(headers: http.IncomingHttpHeaders = {}) {
-  const config = vscode.workspace.getConfiguration('hybridmind');
-  const openrouterKey = config.get('openrouterApiKey');
-  const { key: userKey } = getByokFromHeaders(headers);
-
-  // Models are available if the user has EITHER the shared OpenRouter key
-  // configured OR their own BYOK provider key attached to the request.
-  if (!openrouterKey && !userKey) {
-    return [];
+/**
+ * The models the caller's key can use, asked of the provider it belongs to.
+ * This used to return a fixed list of OpenRouter ids as a bare array, which
+ * went stale and matched none of the shapes its callers read.
+ */
+async function loadCatalogForRequest(headers: http.IncomingHttpHeaders = {}): Promise<Catalog> {
+  const { provider, key: userKey } = getByokFromHeaders(headers);
+  if (provider && userKey) {
+    return loadCatalog(provider, userKey);
   }
 
-  return [
-    // === FREE MODELS (via OpenRouter) ===
-    { id: 'meta-llama/llama-3.3-70b-instruct', provider: 'openrouter', name: '🆓 Llama 3.3 70B', tier: 'free' },
-    { id: 'deepseek/deepseek-r1', provider: 'openrouter', name: '🆓 DeepSeek R1', tier: 'free' },
-    { id: 'google/gemini-2.0-flash-thinking-exp:free', provider: 'openrouter', name: '🆓 Gemini 2.0 Flash', tier: 'free' },
-    { id: 'qwen/qwen-2.5-coder-32b-instruct', provider: 'openrouter', name: '🆓 Qwen 2.5 Coder 32B', tier: 'free' },
-    { id: 'mistralai/mixtral-8x7b-instruct', provider: 'openrouter', name: '🆓 Mixtral 8x7B', tier: 'free' },
-    
-    // === BUDGET MODELS ($0.09-$0.50/M tokens) ===
-    { id: 'google/gemini-flash-1.5', provider: 'openrouter', name: '💰 Gemini Flash 1.5', tier: 'budget' },
-    { id: 'anthropic/claude-haiku-3.5', provider: 'openrouter', name: '💰 Claude Haiku 3.5', tier: 'budget' },
-    { id: 'openai/gpt-4.1-mini', provider: 'openrouter', name: '💰 GPT-4.1 Mini', tier: 'budget' },
-    
-    // === STANDARD MODELS ($2-$5/M tokens) ===
-    { id: 'openai/gpt-4.1', provider: 'openrouter', name: '⭐ GPT-4.1', tier: 'standard' },
-    { id: 'anthropic/claude-sonnet-4', provider: 'openrouter', name: '⭐ Claude Sonnet 4', tier: 'standard' },
-    { id: 'google/gemini-pro-1.5', provider: 'openrouter', name: '⭐ Gemini Pro 1.5', tier: 'standard' },
-    { id: 'x-ai/grok-2', provider: 'openrouter', name: '⭐ Grok 2', tier: 'standard' },
-    
-    // === PREMIUM MODELS ($15-$75/M tokens) ===
-    { id: 'openai/o1', provider: 'openrouter', name: '💎 OpenAI o1 (Reasoning)', tier: 'premium' },
-    { id: 'anthropic/claude-opus-4', provider: 'openrouter', name: '💎 Claude Opus 4', tier: 'premium' },
-    { id: 'google/gemini-pro-1.5-exp', provider: 'openrouter', name: '💎 Gemini Pro 1.5 Exp', tier: 'premium' }
-  ];
+  // No key on the request: fall back to the legacy OpenRouter setting, the
+  // same fallback runModel() and streamModel() use.
+  const config = vscode.workspace.getConfiguration('hybridmind');
+  return loadCatalog('openrouter', config.get<string>('openrouterApiKey') || '');
 }
 
 async function runModel(

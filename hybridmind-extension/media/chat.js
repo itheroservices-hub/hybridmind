@@ -1,7 +1,7 @@
 (function () {
   var vsc = acquireVsCodeApi();
   var cfg = window.HM_CONFIG || {};
-  var msgs = [], selMods = ['llama-3.3-70b'], wf = 'single', ctx = false;
+  var msgs = [], selMods = [], wf = 'single', ctx = false;
   var alv = cfg.alv || 3;
   var ro = cfg.ro || false;
   var perms = cfg.perms || { read: true, edit: true, terminal: true, create: true, del: false, multi: true, restructure: false, network: false };
@@ -274,9 +274,59 @@
       l.textContent = selMods.length === 0 ? 'No model' : selMods[0] + (selMods.length > 1 ? ' +' + (selMods.length - 1) : '');
     }
 
-    var fmSel = g('fmSel'), pmSel = g('pmSel');
-    if (fmSel) fmSel.addEventListener('change', function () { addMod(fmSel.value); fmSel.value = ''; });
-    if (pmSel) pmSel.addEventListener('change', function () { addMod(pmSel.value); pmSel.value = ''; });
+    // The model list is whatever the saved key's provider reports, sent by the
+    // extension host as a 'modelCatalog' message. A typed id is accepted too,
+    // so a model that is missing from the list can still be used.
+    var mdSel = g('mdSel'), mdCustom = g('mdCustom'), mdAdd = g('mdAdd');
+    var catProv = '';
+    if (mdSel) mdSel.addEventListener('change', function () { addMod(mdSel.value); mdSel.value = ''; });
+    function addCustom() {
+      if (!mdCustom) return;
+      var id = mdCustom.value.trim();
+      if (!id) return;
+      addMod(id); mdCustom.value = '';
+    }
+    if (mdAdd) mdAdd.addEventListener('click', addCustom);
+    if (mdCustom) mdCustom.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } });
+
+    function setCatalog(m) {
+      var note = g('mdNote');
+      if (!mdSel) return;
+      mdSel.innerHTML = '';
+      var first = document.createElement('option');
+      first.value = '';
+      mdSel.appendChild(first);
+      if (note) { note.textContent = ''; note.className = 'bstat'; }
+
+      if (m.state !== 'ready') {
+        mdSel.disabled = true;
+        first.textContent = m.state === 'loading' ? 'Loading models...'
+          : m.state === 'no-key' ? 'Add a key in the Keys tab first'
+          : 'Could not load models';
+        if (m.state === 'error' && note) { note.textContent = m.message || ''; note.className = 'bstat er'; }
+        return;
+      }
+
+      var models = m.models || [];
+      first.textContent = 'Add a model (' + models.length + ' on your ' + (m.providerLabel || '') + ' key)';
+      models.forEach(function (model) {
+        var o = document.createElement('option');
+        o.value = model.id;
+        o.textContent = model.name && model.name !== model.id ? model.name + '  (' + model.id + ')' : model.id;
+        mdSel.appendChild(o);
+      });
+      mdSel.disabled = models.length === 0;
+
+      // Ids belong to one provider. A key for a different provider makes the
+      // earlier picks meaningless, so start again from that provider's default.
+      var changedProvider = catProv !== '' && catProv !== m.providerLabel;
+      catProv = m.providerLabel || '';
+      if (changedProvider || selMods.length === 0) {
+        selMods = m.defaultModel ? [m.defaultModel] : [];
+        renderTags(); updML();
+        vsc.postMessage({ type: 'changeModels', models: selMods });
+      }
+    }
 
     // Agent slots
     function renderAgents() {
@@ -810,6 +860,9 @@
         case 'streamError':
           finalizeStream(m.id, m.message);
           break;
+        case 'modelCatalog':
+          setCatalog(m);
+          break;
         case 'byokStatus': {
           var el = g('byokStat');
           if (el) { el.textContent = m.message || ''; el.className = 'bstat' + (m.status === 'error' ? ' er' : (m.status === 'verified' || m.status === 'saved') ? ' ok' : ''); }
@@ -830,7 +883,6 @@
             else if (m.isPro) { pill.className = 'tier-pill pro'; pill.textContent = 'PRO'; }
             else { pill.className = 'tier-pill free'; pill.textContent = 'FREE'; }
           }
-          var ps = g('pmSel'); if (ps) ps.disabled = !m.isPro;
           // Update runtime caps so they stay in sync after async license verification
           if (typeof m.maxAgents === 'number') MAXA = m.maxAgents;
           if (typeof m.maxModels === 'number') MAXM = m.maxModels;
@@ -948,6 +1000,7 @@
     });
 
     renderTags(); updML(); renderAgents(); updStats(); renderMsgs(); updRates();
+    vsc.postMessage({ type: 'requestModels' });
     setInterval(updRates, 30000);
 
     // Signal init success in DIAG

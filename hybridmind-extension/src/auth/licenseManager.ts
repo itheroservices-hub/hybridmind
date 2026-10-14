@@ -299,6 +299,18 @@ export class LicenseManager {
   }
 
   /**
+   * The saved provider and key, for the one caller that talks to the provider
+   * itself: listing the models the key can use. Chat requests do not use this;
+   * they go through the embedded server with getApiHeaders().
+   */
+  getUserProviderKey(): { provider: string; key: string } | null {
+    if (!this.userApiKey) {
+      return null;
+    }
+    return { provider: this.userApiProvider || '', key: this.userApiKey };
+  }
+
+  /**
    * Get headers for API requests (includes license if available)
    */
   getApiHeaders(): Record<string, string> {

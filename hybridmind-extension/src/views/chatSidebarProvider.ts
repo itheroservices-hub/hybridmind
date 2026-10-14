@@ -3,7 +3,8 @@
  * GitHub Copilot-style persistent chat sidebar
  */
 
-import { localServerHeaders, localServerUrl } from '../localServer';
+import { localServerUrl } from '../localServer';
+import { CatalogError, loadCatalog, verifyKey } from '../providers/modelCatalog';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { LicenseManager } from '../auth/licenseManager';
@@ -184,6 +185,9 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
           // Toggle inline BYOK panel in the webview
           this._view?.webview.postMessage({ type: 'toggleByokPanel' });
           break;
+        case 'requestModels':
+          await this._sendModelCatalog();
+          break;
         case 'saveApiKey':
           await this._handleSaveApiKey(data.provider, data.key);
           break;
@@ -240,33 +244,70 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
     await this._licenseManager.setUserApiKey(provider, key);
-    this._view?.webview.postMessage({ type: 'byokStatus', status: 'saved', message: `Success: ${provider} API key saved. Requests will route through your key.` });
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'saved', message: `${provider} key saved. Requests go straight to ${provider} on your key.` });
+    // A different key means a different set of models.
+    await this._sendModelCatalog();
   }
 
-  /** Verify a BYOK API key by making a test call. */
+  /**
+   * Check a key the user has typed but not saved, by asking the provider what
+   * the key can use. Listing is free. The old check sent a real completion
+   * through the server with a model name no provider recognised, so it
+   * reported every key as bad.
+   */
   private async _handleVerifyApiKey(provider: string, key: string) {
     if (!provider || !key) {
       this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: 'Enter provider and key first.' });
       return;
     }
-    this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: 'Verifying Verifying key...' });
+    this._view?.webview.postMessage({ type: 'byokStatus', status: 'verifying', message: 'Checking key...' });
     try {
-      // Testing a candidate key the user hasn't saved yet, so this can't go
-      // through _callBackend()/getApiHeaders() (which reads the already-
-      // stored key). Same header names/convention as the stored path though.
-      const response = await fetch(localServerUrl('/run/single'), {
-        method: 'POST',
-        headers: localServerHeaders({ 'X-User-Api-Provider': provider, 'X-User-Provider-Key': key }),
-        body: JSON.stringify({ model: 'llama-3.3-70b', prompt: 'Reply with only the word OK', maxTokens: 5 })
+      const catalog = await verifyKey(provider, key);
+      this._view?.webview.postMessage({
+        type: 'byokStatus',
+        status: 'verified',
+        message: `Key works. ${catalog.providerLabel} lists ${catalog.models.length} models for it. Save it to use them.`
       });
-      if (response.ok) {
-        this._view?.webview.postMessage({ type: 'byokStatus', status: 'verified', message: `Success: Key verified! ${provider} is working correctly.` });
-      } else {
-        const err = await response.text();
-        this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `Error: Verification failed (${response.status}): ${err.substring(0, 120)}` });
-      }
     } catch (e: any) {
-      this._view?.webview.postMessage({ type: 'byokStatus', status: 'error', message: `Error: Could not reach backend: ${e.message}` });
+      this._view?.webview.postMessage({
+        type: 'byokStatus',
+        status: 'error',
+        message: e instanceof CatalogError ? e.message : 'Could not check the key. Try again.'
+      });
+    }
+  }
+
+  /**
+   * Tell the webview which models the saved key can use. The legacy OpenRouter
+   * setting counts as a key, the same way it does for chat requests.
+   */
+  private async _sendModelCatalog() {
+    const saved = this._licenseManager.getUserProviderKey();
+    const legacyKey = vscode.workspace.getConfiguration('hybridmind').get<string>('openrouterApiKey') || '';
+    const provider = saved ? saved.provider : 'openrouter';
+    const key = saved ? saved.key : legacyKey;
+
+    if (!key) {
+      this._view?.webview.postMessage({ type: 'modelCatalog', state: 'no-key' });
+      return;
+    }
+
+    this._view?.webview.postMessage({ type: 'modelCatalog', state: 'loading' });
+    try {
+      const catalog = await loadCatalog(provider, key);
+      this._view?.webview.postMessage({
+        type: 'modelCatalog',
+        state: 'ready',
+        providerLabel: catalog.providerLabel,
+        models: catalog.models,
+        defaultModel: catalog.defaultModel
+      });
+    } catch (e: any) {
+      this._view?.webview.postMessage({
+        type: 'modelCatalog',
+        state: 'error',
+        message: e instanceof CatalogError ? e.message : 'Could not load the model list. Try again.'
+      });
     }
   }
 
@@ -360,9 +401,11 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
       // Choose the appropriate endpoint based on workflow
       let endpoint = '';
-      const wantsRalphLoop = workflowMode === 'chain'
-        ? !/\b(no\s+ralph|disable\s+ralph|no\s+self[-\s]?heal)\b/i.test(userMessage)
-        : /\bralph\b|self[-\s]?heal/i.test(userMessage);
+      // The self-healing "Ralph" loop streams from /run/chain/stream, a route
+      // only the hosted backend served. Chain mode asked for it by default, so
+      // every chain request failed. It stays off until the embedded server
+      // has that route; plain chaining goes to /run/chain, which it does have.
+      const wantsRalphLoop: boolean = false;
 
       if (workflowMode === 'chain' && wantsRalphLoop) {
         await this._streamRalphTelemetry({
@@ -1943,49 +1986,17 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
 
 <!-- MODELS PANEL -->
 <div id="panel-models" class="panel on">
-  <div><div class="flbl">Free tier</div>
-    <select class="sel" id="fmSel">
-      <option value="">Add free model</option>
-      <optgroup label="Top Free">
-        <option value="llama-3.3-70b">Llama 3.3 70B</option>
-        <option value="deepseek-r1">DeepSeek R1</option>
-        <option value="qwen3-coder">Qwen3 Coder 480B</option>
-        <option value="devstral">Devstral 2</option>
-      </optgroup>
-      <optgroup label="Fast">
-        <option value="gemini-flash">Gemini 2.0 Flash</option>
-        <option value="deepseek-v3">DeepSeek V3</option>
-        <option value="llama-3.1-8b">Llama 3.1 8B</option>
-      </optgroup>
+  <div><div class="flbl">Models</div>
+    <select class="sel" id="mdSel" disabled>
+      <option value="">Loading models...</option>
     </select>
   </div>
-  <div><div class="flbl">Premium</div>
-    <select class="sel" id="pmSel" ${isPro ? '' : 'disabled'}>
-      <option value="">Add premium model${isPro ? '' : ' (Pro only)'}</option>
-      <optgroup label="Low Cost">
-        <option value="llama-4-maverick">Llama 4 Maverick</option>
-        <option value="gemini-2.0-flash">Gemini 2.0 Flash Pro</option>
-        <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-      </optgroup>
-      <optgroup label="Reasoning">
-        <option value="o3-mini">OpenAI o3 mini</option>
-        <option value="o1">OpenAI o1</option>
-      </optgroup>
-      <optgroup label="Coding">
-        <option value="gpt-codex">GPT Codex Mini</option>
-        <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
-      </optgroup>
-      <optgroup label="Flagship">
-        <option value="gpt-4.1">GPT 4.1</option>
-        <option value="claude-sonnet-4">Claude Sonnet 4</option>
-        <option value="claude-opus-4">Claude Opus 4</option>
-        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-        <option value="grok-3">Grok 3</option>
-      </optgroup>
-    </select>
+  <div class="brow">
+    <input class="inp" id="mdCustom" placeholder="Or type a model id" style="flex:1;margin:0;">
+    <button class="btn" id="mdAdd">Add</button>
   </div>
+  <div id="mdNote" class="bstat"></div>
   <div id="tagWrap" class="tagwrap"></div>
-  ${!isPro ? '<button class="upbtn" id="upBtn">Upgrade to Pro \u2014 unlock premium models</button>' : ''}
 </div>
 
 
@@ -2101,9 +2112,9 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
     <textarea class="ita" id="msgTA" placeholder="Ask HybridMind anything..." rows="1"></textarea>
     <div class="ifooter">
       <div class="ileft">
-        <div class="mpill"><span class="mdot"></span><span id="amlbl">Llama 3.3 70B</span></div>
+        <div class="mpill"><span class="mdot"></span><span id="amlbl">No model</span></div>
         <button class="ctxbtn" id="ctxBtn">Context off</button>
-        <select class="wfmini" id="wfMini"><option value="single">Single</option><option value="parallel">Parallel</option><option value="chain">Chain</option><option value="agentic">Agentic</option><option value="all-to-all">All to All</option></select>
+        <select class="wfmini" id="wfMini"><option value="single">Single</option><option value="parallel">Parallel</option><option value="chain">Chain</option><option value="agentic">Agentic</option></select>
       </div>
       <span class="charcnt" id="charcnt"></span>
       <button class="sendbtn" id="stopBtn" style="display:none;background:var(--err);border-color:var(--err);">Stop</button>
