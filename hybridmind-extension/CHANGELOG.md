@@ -1,5 +1,52 @@
 # Changelog
 
+## [2.1.2] - 2026-10-14
+
+2.1.1 made the extension start again. This release makes it usable with your
+own key, and closes a hole that a running extension opened.
+
+### Security
+- The local server now answers only the extension that started it. It used to
+  answer anyone on the machine: it allowed requests from any website, checked
+  no token, and could be asked to run the agent or forward a prompt. Every
+  request must now carry a secret generated when the extension starts, and
+  anything that looks like it came from a browser is refused. If you ever put
+  an OpenRouter key in the old `hybridmind.openrouterApiKey` setting, a web
+  page could have spent it; it no longer can.
+- Requests go to the port the server is really on. When another program
+  already had port 3000 the server moved to 3001, but parts of the extension
+  kept posting to 3000, sending your provider key to that other program.
+- The license key is no longer posted to an address nothing was listening on.
+
+### Fixed
+- Chat works with your own key. The model list was a fixed set of short names
+  that only the old hosted backend understood, so providers rejected every
+  message, starting with the default model. The list is now read from your
+  provider and shows exactly what your key can use. You can also type a model
+  id by hand.
+- Verify on the Keys tab reports the truth. It failed every key, for the same
+  reason, and now checks the key without spending anything.
+- Quick Chat lists models again.
+- Chain mode works. It asked for a self healing loop that only the hosted
+  backend offered, so every chain request failed.
+- `HybridMind: Open Chat` (Ctrl+Shift+H) opens the sidebar. It opened a second
+  chat window that could not send anything.
+
+### Removed
+- The Free badge, the credit and request counters, the Upgrade to Pro button
+  and the lock on "Premium" models. There is no paid tier to buy, the counters
+  never showed real numbers, and the lock kept your own key away from the
+  models it pays for. The two model limit is now a plain limit of four for
+  everyone.
+- The Agents tab. The agents picked there were never sent with a message.
+- The All to All workflow, which needed the hosted backend.
+- 22 commands that could not work: they called the hosted backend or opened a
+  tier that cannot be bought. Four remain: Open Chat, Set API Key, Quick Chat
+  and Show Agent Output.
+- The Ctrl+K shortcut. It took over a key that VS Code uses to start many of
+  its own shortcuts, for an inline chat that could not answer.
+- The "HybridMind Free" and "Usage: 0%" status bar items.
+
 ## [2.1.1] - 2026-10-14
 
 2.1.0 never reached the Marketplace, so this is the version that carries
