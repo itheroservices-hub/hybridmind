@@ -40,7 +40,8 @@
   };
 
   function g(id) { return document.getElementById(id); }
-  function esc(t) { var d = document.createElement('div'); d.textContent = String(t == null ? '' : t); return d.innerHTML; }
+  // Quotes too, so text is safe inside an attribute as well as an element.
+  function esc(t) { var d = document.createElement('div'); d.textContent = String(t == null ? '' : t); return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function showErr(e) { var b = g('eb'); if (b) { b.style.display = 'block'; b.textContent = 'ERR: ' + (e && e.message ? e.message : String(e)); } }
 
   // ==========================================================================
@@ -691,12 +692,35 @@
             + '</div>';
         }
 
+        // What an MCP tool returned: shown as text only, never as markup.
+        if (m.role === 'system' && m.kind === 'mcpResult' && m.mcp) {
+          return '<div class="mcp-res' + (m.mcp.isError ? ' err' : '') + '">'
+            + '<div class="mcp-res-hdr"><span>Tool result from ' + esc(m.mcp.serverName) + '</span><span class="mcp-res-chev">&#9660;</span></div>'
+            + '<div class="mcp-res-body"><pre class="mcp-res-text">' + esc(m.content || '(no text returned)') + '</pre>'
+            + (m.mcp.truncated ? '<div class="mcp-note">Cut short: the tool returned more than the agent keeps.</div>' : '')
+            + '<div class="mcp-note">Used as information only. It cannot add steps or run commands.</div></div></div>';
+        }
+
+        // A tool call refused because its server changed since it was approved.
+        if (m.role === 'system' && m.kind === 'mcpRefusal' && m.mcp) {
+          var since = '';
+          if (m.mcp.approvedAt) {
+            var ad = new Date(m.mcp.approvedAt);
+            if (!isNaN(ad.getTime())) since = ' on ' + ad.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          }
+          return '<div class="msg system">'
+            + '<div class="mhdr"><div class="mrole"><span class="rdot2"></span><span>HybridMind</span></div><span class="mbadge">MCP Trust</span></div>'
+            + '<div class="mbody"><b>' + esc(m.mcp.serverName) + '</b> changed since you approved it' + esc(since) + '.\n' + esc(m.content) + '</div>'
+            + '<div class="macts"><button class="btn btn-t mcpReview" data-id="' + esc(m.mcp.serverId || '') + '">Review in MCP Servers</button></div></div>';
+        }
+
         // System messages → compact single-line status
         if (m.role === 'system') {
           var c = m.content || '';
           var slCls = c.startsWith('[running]') ? 'sl-run'
                     : c.startsWith('Success:') ? 'sl-ok'
                     : c.startsWith('Error:') ? 'sl-err'
+                    : c.startsWith('Skipped:') ? 'sl-skip'
                     : 'sl-sys';
           return '<div class="status-line ' + slCls + '"><span class="sdot"></span><span class="stxt">' + esc(c) + '</span></div>';
         }
@@ -716,6 +740,15 @@
           var box = hdr.parentElement;
           if (box) box.classList.toggle('open');
         });
+      });
+      mc.querySelectorAll('.mcp-res-hdr').forEach(function (hdr) {
+        hdr.addEventListener('click', function () {
+          var box = hdr.parentElement;
+          if (box) box.classList.toggle('collapsed');
+        });
+      });
+      mc.querySelectorAll('.mcpReview').forEach(function (b) {
+        b.addEventListener('click', function () { vsc.postMessage({ type: 'reviewMcpServer', serverId: b.getAttribute('data-id') || '' }); });
       });
 
       var am = msgs.filter(function (m) { return m.role === 'assistant'; });

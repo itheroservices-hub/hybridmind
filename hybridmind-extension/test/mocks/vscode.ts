@@ -16,6 +16,7 @@ export const showWarningMessageCalls: any[][] = [];
 export const writeFileCalls: { uri: any; content: any }[] = [];
 
 let approvalChoice: 'Approve' | 'Deny' | undefined = undefined;
+let warningResponder: ((...args: any[]) => any) | undefined = undefined;
 let workspaceRoot = 'C:\\fake-workspace';
 let hasWorkspace = true;
 
@@ -25,8 +26,14 @@ export function resetVscodeMock(): void {
   showWarningMessageCalls.length = 0;
   writeFileCalls.length = 0;
   approvalChoice = undefined;
+  warningResponder = undefined;
   workspaceRoot = 'C:\\fake-workspace';
   hasWorkspace = true;
+}
+
+/** Answers showWarningMessage with whatever this returns, for dialogs with MessageItem buttons. */
+export function setWarningResponder(responder: ((...args: any[]) => any) | undefined): void {
+  warningResponder = responder;
 }
 
 export function setApprovalChoice(choice: 'Approve' | 'Deny' | undefined): void {
@@ -50,7 +57,7 @@ export const window = {
   createTerminal: (_opts: any) => { createTerminalCalls.push(1); return terminal; },
   showWarningMessage: (...args: any[]) => {
     showWarningMessageCalls.push(args);
-    return Promise.resolve(approvalChoice);
+    return Promise.resolve(warningResponder ? warningResponder(...args) : approvalChoice);
   },
   showInformationMessage: (..._args: any[]) => Promise.resolve(undefined),
   showErrorMessage: (..._args: any[]) => Promise.resolve(undefined),

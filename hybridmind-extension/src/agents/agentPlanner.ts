@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { WorkspaceAnalyzer } from './workspaceAnalyzer';
 import { AutonomyManager, AutonomyLevel } from './autonomyManager';
 import { agentClient } from './agentClient';
@@ -8,6 +9,18 @@ import { localServerHeaders, localServerUrl } from '../localServer';
 import { AgentTools } from './agentTools';
 import { LicenseManager } from '../auth/licenseManager';
 import { safeFileUri } from '../security/workspacePath';
+import {
+  CatalogServer,
+  McpResultForPrompt,
+  McpStepOutcome,
+  McpStepSpec,
+  buildCatalog,
+  catalogPrompt,
+  getMcpAgentHost,
+  readMcpStep,
+  resultsPrompt,
+  runMcpStep
+} from '../mcp/mcpAgent';
 
 export interface ExecutionPlan {
   goal: string;
@@ -22,12 +35,16 @@ export interface ExecutionPlan {
 
 export interface ExecutionStep {
   id: number;
-  type: 'edit' | 'create' | 'delete' | 'terminal' | 'refactor' | 'install';
+  type: 'edit' | 'create' | 'delete' | 'terminal' | 'refactor' | 'install' | 'mcp';
   description: string;
   file?: string;
   command?: string;
   tool?: any;
   reasoning: string;
+  /** For an 'mcp' step: which approved server and tool, and what to send. */
+  mcp?: McpStepSpec;
+  /** For an 'mcp' step that has run: what happened. */
+  mcpOutcome?: McpStepOutcome;
 }
 
 export interface ExecutionResult {
@@ -66,6 +83,10 @@ export class AgentPlanner {
   private _lastFoundFilePath: string | null = null; // Remember last file for follow-ups
   private _currentModel: string = 'llama-3.3-70b-versatile'; // Default, updated per request
   private _protocolHandler: ProtocolHandler;
+  /** The approved MCP tools the last plan was offered. */
+  private _catalog: CatalogServer[] = [];
+  /** What MCP tools returned so far in the plan being executed. */
+  private _mcpResults: McpResultForPrompt[] = [];
 
   constructor(autonomy: AutonomyManager) {
     this._analyzer = new WorkspaceAnalyzer();
@@ -77,6 +98,11 @@ export class AgentPlanner {
   /**
    * Set the model to use for AI calls
    */
+  /** Whether the last plan was made with approved MCP tools, and their descriptions, in its prompt. */
+  public get offeredMcpTools(): boolean {
+    return this._catalog.length > 0;
+  }
+
   public setModel(model: string): void {
     this._currentModel = model;
     console.log(`[AgentPlanner] Using model: ${model}`);
@@ -251,6 +277,11 @@ export class AgentPlanner {
       // 5. Build context for protocol handler
       const additionalContext = `${fullContext}\n\n**Target File:** ${targetFile || 'Not specified'}${workspaceRoot ? `\n**Workspace Root:** ${workspaceRoot}` : ''}`;
       
+      // 5b. Approved MCP tools, read from the saved tool lists. Starts no server.
+      const mcpHost = getMcpAgentHost();
+      this._catalog = mcpHost ? await buildCatalog(mcpHost).catch(() => []) : [];
+      const mcpSection = catalogPrompt(this._catalog);
+
       // 6. Add to conversation history
       this._protocolHandler.addToHistory('user', userMessage);
 
@@ -284,10 +315,10 @@ For EXECUTION requests (making actual changes to files): Include specific steps 
 CRITICAL RULES:
 - For NEW file creation, use type "create" and provide the FULL PATH starting with workspace root: ${workspaceRoot}\\filename.ext
 - For EDITING existing files, use the exact file path: ${targetFile}
-- EVERY step must include the "file" property with a complete absolute path
+- EVERY step must include the "file" property with a complete absolute path, except "mcp" steps, which have none
 - If creating a file in the workspace root, use: ${workspaceRoot}\\filename.ext
 - If editing the same file multiple times, repeat the exact file path in each step
-
+${mcpSection ? `\n${mcpSection}\n` : ''}
 User Request: ${userMessage}
 
 Respond with ONLY the JSON object (no markdown code blocks).`,
@@ -354,8 +385,8 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
    * Execute a plan with autonomy checks
    */
   public async executePlan(
-    plan: ExecutionPlan, 
-    onProgress?: (step: ExecutionStep, status: string) => void,
+    plan: ExecutionPlan,
+    onProgress?: (step: ExecutionStep, status: string, detail?: string) => void,
     constraints?: {
       readOnly?: boolean;
       noDelete?: boolean;
@@ -364,10 +395,54 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
     }
   ): Promise<ExecutionResult> {
     this._actionLog = [];
+    this._mcpResults = [];
     let completed = 0;
     let failed = 0;
+    // Set when an MCP step did not run: the steps after it were planned around
+    // its answer, so they are held back rather than run without it.
+    let heldBackBy: number | null = null;
+    let notRun = 0;
 
     for (const step of plan.steps) {
+      // A plan object can be run twice; an outcome is only ever this run's.
+      step.mcpOutcome = undefined;
+      if (heldBackBy !== null) {
+        notRun++;
+        const detail = `It may depend on step ${heldBackBy}, which did not run.`;
+        this._actionLog.push({ step: step.id, type: step.type, description: step.description, status: 'skipped', details: detail });
+        onProgress?.(step, 'skipped', detail);
+        continue;
+      }
+
+      if (step.type === 'mcp') {
+        if (constraints?.readOnly) {
+          // A tool can change things, so read-only mode does not call one.
+          this._actionLog.push({ step: step.id, type: step.type, description: step.description, status: 'skipped', details: 'Skipped due to constraint: read-only mode' });
+          onProgress?.(step, 'skipped', 'Read-only mode does not call MCP tools.');
+          continue;
+        }
+        onProgress?.(step, 'executing');
+        const outcome = await this._runMcpStep(step);
+        step.mcpOutcome = outcome;
+        if (outcome.status === 'done' && !outcome.isError) {
+          completed++;
+          this._mcpResults.push({ stepId: step.id, serverName: outcome.serverName, tool: outcome.tool, text: outcome.text });
+          this._actionLog.push({ step: step.id, type: step.type, description: step.description, status: 'completed', details: `Used ${outcome.serverName} › ${outcome.tool}` });
+          onProgress?.(step, 'completed');
+        } else {
+          heldBackBy = step.id;
+          const denied = outcome.status === 'denied';
+          if (denied) {
+            notRun++;
+          } else {
+            failed++;
+          }
+          this._actionLog.push({ step: step.id, type: step.type, description: step.description, status: denied ? 'skipped' : 'failed', details: describeMcpOutcome(outcome) });
+          onProgress?.(step, denied ? 'skipped' : 'failed', describeMcpOutcome(outcome));
+        }
+        continue;
+      }
+
       // Check constraints before permission check
       const violatesConstraints = this._checkConstraintViolation(step, constraints);
       if (violatesConstraints) {
@@ -446,17 +521,36 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
     }
 
     // Generate summary and next steps
-    const summary = this._generateSummary(plan, completed, failed);
+    const summary = this._generateSummary(plan, completed, failed, notRun);
     const nextSteps = await this._generateNextSteps(plan, this._actionLog);
 
     return {
-      success: failed === 0,
+      // A plan whose MCP step was denied, and whose later steps were held back,
+      // did not do what it set out to.
+      success: failed === 0 && notRun === 0,
       stepsCompleted: completed,
       stepsFailed: failed,
       actions: this._actionLog,
       summary,
       nextSteps
     };
+  }
+
+  /** Runs one MCP step: the user is asked, and nothing is sent unless they allow it. */
+  private async _runMcpStep(step: ExecutionStep): Promise<McpStepOutcome> {
+    const spec = step.mcp;
+    const host = getMcpAgentHost();
+    if (!spec || !spec.server || !spec.tool) {
+      return { status: 'failed', serverName: 'an MCP server', tool: 'a tool', message: 'The plan did not say which approved MCP tool to use, so nothing was sent.' };
+    }
+    if (!host) {
+      return { status: 'failed', serverName: spec.serverName || 'that server', tool: spec.tool, message: 'MCP servers are not available in this window, so nothing was sent.' };
+    }
+    try {
+      return await runMcpStep(host, spec);
+    } catch (error: any) {
+      return { status: 'failed', serverName: spec.serverName || 'that server', tool: spec.tool, message: `The tool call could not be made: ${error?.message || error}` };
+    }
   }
 
   /**
@@ -509,6 +603,10 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
             return { success: true, details: `Executed: ${step.command}` };
           }
           return { success: false, error: 'No command provided' };
+
+        case 'mcp':
+          // Run by executePlan, which handles permission and what follows.
+          return { success: false, error: 'An MCP step runs only as part of a plan.' };
 
         case 'edit':
         case 'create':
@@ -566,6 +664,16 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
               // Call AI to generate specific code changes
               const toolCall = await this._generateCodeChange(step, content);
               if (toolCall) {
+                // With MCP results in its prompt, the change is held to exactly
+                // what the plan named: this one file, in the way the step says.
+                if (this._mcpResults.length && !toolCallMatchesStep(toolCall, step)) {
+                  return { success: false, error: 'The generated change did not match the planned step, so it was not applied.' };
+                }
+                // A tool's answer can shape what is written, so a change made
+                // with one in hand is shown and confirmed at every autonomy level.
+                if (this._mcpResults.length && !(await confirmMcpInformedChange(toolCall, step))) {
+                  return { success: false, error: 'You chose not to apply this change, which used what an MCP tool returned.' };
+                }
                 const result = await this._executeToolCall(toolCall);
                 return result;
               } else {
@@ -607,6 +715,10 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
       
       // Choose tool based on step type
       const isCreateOperation = step.type === 'create';
+
+      // What MCP tools returned earlier in this plan, framed as data.
+      const mcpContext = resultsPrompt(this._mcpResults);
+      const mcpBlock = mcpContext ? `\n${mcpContext}\n` : '';
       
       // Use a simple, direct prompt WITHOUT the full system prompt to ensure JSON response
       let directPrompt: string;
@@ -617,7 +729,7 @@ Respond with ONLY the JSON object (no markdown code blocks).`,
 
 File to create: ${step.file}
 Task: ${step.description}
-
+${mcpBlock}
 CRITICAL: Respond with ONLY a valid JSON object. No explanations, no markdown, no code blocks.
 
 Required JSON format:
@@ -644,7 +756,7 @@ Task: ${step.description}
 
 Current File Content (line numbers for reference):
 ${this._addLineNumbers(fileContent)}
-
+${mcpBlock}
 CRITICAL: Respond with ONLY a valid JSON object. No explanations, no markdown, no code blocks.
 
 Required JSON format:
@@ -851,14 +963,27 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
         const actualFilePath = fileContexts.length > 0 ? fileContexts[0].path : null;
         
         // Validate, filter, and fix steps
-        const validSteps = Array.isArray(planData.steps) 
+        const validSteps = Array.isArray(planData.steps)
           ? planData.steps
               .filter((s: any) => s && s.id && s.type && s.description)
               .map((s: any) => {
+                if (s.type === 'mcp') {
+                  // Kept even when unreadable, so it fails visibly when run and
+                  // the steps after it are held back, rather than vanishing.
+                  const spec = readMcpStep(s, this._catalog) || { server: '', tool: '', arguments: {} };
+                  return { id: s.id, type: 'mcp', description: String(s.description), reasoning: String(s.reasoning || ''), mcp: spec };
+                }
                 // Always use the actual file path if we have one
                 // This fixes AI returning placeholder paths like "C:\middleware\rateLimiter.js"
                 if (actualFilePath) {
                   s.file = actualFilePath;
+                }
+                // A change written into the plan itself would skip the checks a
+                // generated one gets. Once tool descriptions written by MCP
+                // server authors were in the planning prompt, every change is
+                // generated when its step runs instead.
+                if (this._catalog.length && s.tool !== undefined) {
+                  delete s.tool;
                 }
                 return s;
               })
@@ -933,10 +1058,10 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
   /**
    * Generate execution summary
    */
-  private _generateSummary(plan: ExecutionPlan, completed: number, failed: number): string {
+  private _generateSummary(plan: ExecutionPlan, completed: number, failed: number, notRun = 0): string {
     let summary = `## Execution Summary\n\n`;
     summary += `**Goal:** ${plan.goal}\n\n`;
-    summary += `**Results:** ${completed} completed, ${failed} failed\n\n`;
+    summary += `**Results:** ${completed} completed, ${failed} failed${notRun ? `, ${notRun} not run` : ''}\n\n`;
     summary += `### Actions Taken:\n`;
     
     for (const action of this._actionLog) {
@@ -1029,4 +1154,75 @@ RESPOND WITH ONLY THE JSON OBJECT:`;
     const lines = content.split('\n');
     return lines.map((line, index) => `${String(index + 1).padStart(4, ' ')} | ${line}`).join('\n');
   }
+}
+
+/** One line on what happened to an MCP step that did not complete. */
+export function describeMcpOutcome(outcome: McpStepOutcome): string {
+  switch (outcome.status) {
+    case 'done':
+      return outcome.isError
+        ? `${outcome.serverName} › ${outcome.tool} reported a failure.`
+        : `Used ${outcome.serverName} › ${outcome.tool}.`;
+    case 'denied':
+      return `You denied ${outcome.serverName} › ${outcome.tool}. Nothing was sent.`;
+    case 'changed':
+      return `${outcome.serverName} changed since you approved it. Nothing was sent.`;
+    case 'failed':
+      return outcome.message;
+  }
+}
+
+/**
+ * Whether a generated change does exactly what the step planned: the step's
+ * own kind of change, to the step's own file. Used once MCP results are in the
+ * prompt, so a tool's output cannot steer a change to some other file.
+ */
+export function toolCallMatchesStep(toolCall: any, step: ExecutionStep): boolean {
+  if (!toolCall || typeof toolCall !== 'object' || !step.file) {
+    return false;
+  }
+  const allowed: Record<string, readonly string[]> = {
+    create: ['create_file'],
+    delete: ['delete_file'],
+    edit: ['apply_edit', 'insert_text'],
+    refactor: ['apply_edit', 'insert_text']
+  };
+  if (!(allowed[step.type] || []).includes(toolCall.tool)) {
+    return false;
+  }
+  const target = typeof toolCall.file === 'string' ? toolCall.file : typeof toolCall.path === 'string' ? toolCall.path : '';
+  if (!target) {
+    return false;
+  }
+  try {
+    const a = path.normalize(safeFileUri(target).fsPath);
+    const b = path.normalize(safeFileUri(step.file).fsPath);
+    return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  } catch {
+    return false;
+  }
+}
+
+const CHANGE_PREVIEW_CHARS = 600;
+
+/**
+ * Asks before applying a change generated with an MCP tool's answer in the
+ * prompt, showing the file and the start of the new text.
+ */
+export async function confirmMcpInformedChange(toolCall: any, step: ExecutionStep): Promise<boolean> {
+  const raw = typeof toolCall?.text === 'string' ? toolCall.text : typeof toolCall?.content === 'string' ? toolCall.content : '';
+  const shown = raw.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g, (ch: string) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const preview = shown.length > CHANGE_PREVIEW_CHARS ? `${shown.slice(0, CHANGE_PREVIEW_CHARS)}... (${shown.length - CHANGE_PREVIEW_CHARS} more characters)` : shown;
+  const apply: vscode.MessageItem = { title: 'Apply' };
+  const skip: vscode.MessageItem = { title: 'Do not apply', isCloseAffordance: true };
+  const choice = await vscode.window.showWarningMessage(
+    `Apply this change to ${path.basename(step.file || 'the file')}?`,
+    {
+      modal: true,
+      detail: `Step ${step.id}: ${step.description}\nFile: ${step.file}\n\nIt was written using what an MCP tool returned, so check it first. New text:\n${preview || '(none)'}`
+    },
+    apply,
+    skip
+  );
+  return choice === apply;
 }

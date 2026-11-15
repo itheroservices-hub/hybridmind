@@ -1,4 +1,6 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
+import { ChangeSummary, McpAgentHost, McpCallRequest, changesAsEvents, setMcpAgentHost } from './mcpAgent';
 import {
   CheckResult,
   RiskTier,
@@ -10,6 +12,7 @@ import {
   check,
   describeFailure,
   describeLaunch,
+  launchEnvironment,
   loadSteward,
   scan
 } from './steward';
@@ -51,10 +54,35 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
   private readonly checks = new Map<string, CheckResult>();
   private duplicateNames = new Set<string>();
 
-  constructor(private readonly loadStewardFn: () => Promise<Steward> = loadSteward) {}
+  constructor(
+    private readonly loadStewardFn: () => Promise<Steward> = loadSteward,
+    /** Where approved tool lists are kept for the agent. Without it the agent gets none. */
+    readonly toolsDirectory?: string,
+    /** Where approvals are kept. Defaults to the mcpsteward CLI's folder. */
+    readonly pinDirectory?: string
+  ) {}
 
   get lastScan(): ScanResult | null {
     return this.result;
+  }
+
+  /** What a check this session found for a server, if one ran. */
+  checkState(serverId: string): CheckResult['state'] | undefined {
+    return this.checks.get(serverId)?.state;
+  }
+
+  /**
+   * Records a change found when the agent's tool call was refused, so the view
+   * shows it straight away. There is no surface to accept from here; approving
+   * again starts the server and shows what it advertises now.
+   */
+  recordChangesFromCall(serverId: string, changes: readonly ChangeSummary[]): void {
+    const events = changesAsEvents(changes);
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const event of events) {
+      counts[event.risk] += 1;
+    }
+    this.recordCheck(serverId, { state: 'changed', events, counts, ...(events.length ? { worstRisk: events[0].risk } : {}) });
   }
 
   steward(): Promise<Steward> {
@@ -69,7 +97,7 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
           // A workspace's own MCP configs are read only once it is trusted, the
           // same line VS Code draws before starting workspace MCP servers.
           const folders = vscode.workspace.isTrusted === false ? [] : workspaceFolderPaths();
-          this.result = await scan(await this.loadStewardFn(), undefined, folders);
+          this.result = await scan(await this.loadStewardFn(), this.pinDirectory, folders, { toolsDirectory: this.toolsDirectory });
           this.error = null;
           // A check result is only meaningful while the approval it was made
           // against still exists.
@@ -156,8 +184,9 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
         if (this.duplicateNames.has(server.name)) {
           badges.push(server.where);
         }
-        if (result?.state === 'changed') {
-          badges.push(`changed since approved (${result.worstRisk})`);
+        const changed = result?.state === 'changed';
+        if (changed) {
+          badges.push(`changed since approved (${result?.worstRisk || 'unknown'})`);
         } else if (result?.state === 'unchanged') {
           badges.push('unchanged');
         } else {
@@ -165,6 +194,15 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
         }
         if (server.hasInlineCredential) {
           badges.push('key in config file');
+        }
+        // Only known when the scan looked for saved tool lists.
+        const agentState = !server.approved || changed || server.agentTools === undefined
+          ? undefined
+          : server.agentTools && server.agentTools.length ? 'ready' : server.agentTools ? 'no-tools' : 'approve-again';
+        if (agentState === 'ready') {
+          badges.push('agent can use');
+        } else if (agentState === 'approve-again') {
+          badges.push('approve again for the agent');
         }
         item.description = badges.join(' · ');
 
@@ -186,11 +224,20 @@ export class McpServersProvider implements vscode.TreeDataProvider<Node> {
           tooltip.appendMarkdown('A key is written directly in a config file. Anyone who can read that file can use it.\n\n');
         }
         if (result?.state === 'changed') {
-          tooltip.appendMarkdown(`Its tools changed since you approved them on ${formatDate(result.approvedAt)}. Expand to see what changed. Risk levels are a heuristic, not a verdict.\n\n`);
+          tooltip.appendMarkdown(`Its tools changed since you approved them on ${formatDate(result.approvedAt || server.approvedAt)}. Expand to see what changed. Risk levels are a heuristic, not a verdict. The agent will not use it until you approve it again.\n\n`);
         } else if (server.approved) {
           tooltip.appendMarkdown('Approved. Use Check for changes to compare it with what you approved.\n\n');
         } else {
           tooltip.appendMarkdown('Not approved yet. Approve records what it advertises now, so later changes can be spotted. Approving starts the server once.\n\n');
+        }
+        if (agentState === 'ready') {
+          tooltip.appendMarkdown(`The agent can use its ${server.agentTools?.length} approved tool(s), and asks you before each use.\n\n`);
+        } else if (agentState === 'approve-again') {
+          if (server.newEnvNames?.length) {
+            tooltip.appendMarkdown(`Its configuration now reads environment variables it did not when you approved it: ${server.newEnvNames.map(escapeMarkdown).join(', ')}. It is not given them, and the agent will not use it, until you approve it again.\n\n`);
+          } else {
+            tooltip.appendMarkdown('Approved before HybridMind 2.3.0 or from the command line, so the agent cannot use it yet. Approve it again, or use Check for changes, to let the agent use its tools.\n\n');
+          }
         }
         item.tooltip = tooltip;
         item.contextValue = server.approved ? 'mcpServer.approved' : 'mcpServer.unapproved';
@@ -229,6 +276,24 @@ function workspaceFolderPaths(): string[] {
   return (vscode.workspace.workspaceFolders || []).map((folder) => folder.uri.fsPath);
 }
 
+/** Names a check of `server` may give it: read by its configuration now, and recorded with its approval. */
+export function checkedEnvNames(server: ServerSummary): readonly string[] {
+  const approved = server.approvedEnvNames || [];
+  return server.envNames.filter((name) => approved.includes(name));
+}
+
+function agentNote(agentReady: boolean, provider: McpServersProvider): string {
+  if (!provider.toolsDirectory) {
+    return '';
+  }
+  return agentReady ? ' The agent can now use its tools, and asks you before each use.' : ' Its tool list could not be saved, so the agent cannot use it yet.';
+}
+
+function formatShortDate(iso: string): string {
+  const date = new Date(iso);
+  return isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 function formatDate(iso?: string): string {
   if (!iso) {
     return 'an earlier date';
@@ -246,10 +311,67 @@ function summarizeCounts(result: CheckResult): string {
 
 const WARNED_KEY = 'hybridmind.mcp.warnedInlineCredentials';
 
+/** Where approved tool lists are kept: HybridMind's own storage, not the CLI's pin folder. */
+export function toolsDirectoryFor(context: vscode.ExtensionContext): string | undefined {
+  const base = context.globalStorageUri?.fsPath;
+  return base ? path.join(base, 'mcp-tools') : undefined;
+}
+
+/**
+ * Asks before one MCP tool call. Shown at every autonomy level, with no way to
+ * allow more than this call.
+ */
+export async function confirmMcpCall(request: McpCallRequest): Promise<boolean> {
+  const lines = [
+    `Server: ${request.serverName}${request.approvedAt ? `, approved ${formatShortDate(request.approvedAt)}` : ''}`
+  ];
+  if (request.source) {
+    lines.push(`It ${request.source}`);
+  }
+  lines.push(`Tool: ${request.tool}`, `It will send: ${request.argumentsText}`);
+  if (request.envNames.length) {
+    lines.push(`It is given from your environment: ${request.envNames.join(', ')}`);
+  }
+  lines.push(
+    '',
+    'Right before the call, HybridMind checks the server still matches what you approved. If anything changed, nothing is sent.',
+    'What the tool returns is shown in the chat and given to your selected model.'
+  );
+  const allow: vscode.MessageItem = { title: 'Allow once' };
+  const deny: vscode.MessageItem = { title: 'Deny', isCloseAffordance: true };
+  const choice = await vscode.window.showWarningMessage('Let the agent use an MCP tool?', { modal: true, detail: lines.join('\n') }, allow, deny);
+  return choice === allow;
+}
+
+/** The agent's way into the MCP Servers view. */
+export function createMcpAgentHost(provider: McpServersProvider): McpAgentHost | undefined {
+  const toolsDirectory = provider.toolsDirectory;
+  if (!toolsDirectory) {
+    return undefined;
+  }
+  return {
+    steward: () => provider.steward(),
+    servers: async () => {
+      if (!provider.lastScan) {
+        await provider.refresh();
+      }
+      return provider.lastScan?.servers || [];
+    },
+    isKnownChanged: (serverId) => provider.checkState(serverId) === 'changed',
+    toolsDirectory,
+    ...(provider.pinDirectory ? { pinDirectory: provider.pinDirectory } : {}),
+    confirm: confirmMcpCall,
+    onServerChanged: (serverId, changes) => provider.recordChangesFromCall(serverId, changes)
+  };
+}
+
 /** Registers the MCP Servers view and its commands. */
-export function registerMcpServers(context: vscode.ExtensionContext, provider: McpServersProvider = new McpServersProvider()): McpServersProvider {
+export function registerMcpServers(context: vscode.ExtensionContext, given?: McpServersProvider): McpServersProvider {
+  const provider = given || new McpServersProvider(loadSteward, toolsDirectoryFor(context));
   const view = vscode.window.createTreeView(MCP_VIEW_ID, { treeDataProvider: provider, showCollapseAll: true });
   context.subscriptions.push(view);
+  setMcpAgentHost(createMcpAgentHost(provider));
+  context.subscriptions.push({ dispose: () => setMcpAgentHost(undefined) });
 
   const refreshAndWarn = async () => {
     await provider.refresh();
@@ -285,10 +407,11 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
     // Accepting a change just reviewed pins what the check saw; nothing runs again.
     if (reviewed?.surface) {
       try {
-        const result = await approveSurface(await provider.steward(), server.ref, reviewed.surface);
+        // The check that saw this surface was given only the approved names.
+        const result = await approveSurface(await provider.steward(), server.ref, reviewed.surface, { toolsDirectory: provider.toolsDirectory, envNames: checkedEnvNames(server) });
         provider.forgetCheck(server.id);
         await provider.refresh();
-        vscode.window.showInformationMessage(`Approved ${server.name} as it is now: ${result.tools} tool(s) and ${result.items} item(s) in all.`);
+        vscode.window.showInformationMessage(`Approved ${server.name} as it is now: ${result.tools} tool(s) and ${result.items} item(s) in all.${agentNote(result.agentReady, provider)}`);
       } catch (error) {
         vscode.window.showErrorMessage(describeFailure(error, server.name, server.id));
       }
@@ -322,7 +445,15 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
           const controller = new AbortController();
           const subscription = token.onCancellationRequested(() => controller.abort());
           try {
-            return await approve(await provider.steward(), server.ref, { signal: controller.signal, timeoutMs: CAPTURE_TIMEOUT_MS });
+            const steward = await provider.steward();
+            return await approve(steward, server.ref, {
+              signal: controller.signal,
+              timeoutMs: CAPTURE_TIMEOUT_MS,
+              // Exactly the names the approval prompt listed, recorded with it.
+              env: launchEnvironment(steward, server.ref, process.env, server.envNames),
+              envNames: server.envNames,
+              toolsDirectory: provider.toolsDirectory
+            });
           } finally {
             subscription.dispose();
           }
@@ -330,17 +461,41 @@ export function registerMcpServers(context: vscode.ExtensionContext, provider: M
       );
       provider.forgetCheck(server.id);
       await provider.refresh();
-      vscode.window.showInformationMessage(`Approved ${server.name}: ${result.tools} tool(s) and ${result.items} item(s) in all. Use Check for changes to compare against this later.`);
+      vscode.window.showInformationMessage(`Approved ${server.name}: ${result.tools} tool(s) and ${result.items} item(s) in all. Use Check for changes to compare against this later.${agentNote(result.agentReady, provider)}`);
     } catch (error) {
       vscode.window.showErrorMessage(describeFailure(error, server.name, server.id));
     }
   }));
 
   const runCheck = async (server: ServerSummary, signal: AbortSignal): Promise<CheckResult> => {
-    const result = await check(await provider.steward(), server.ref, { signal, timeoutMs: CAPTURE_TIMEOUT_MS });
+    const steward = await provider.steward();
+    const result = await check(steward, server.ref, {
+      signal,
+      timeoutMs: CAPTURE_TIMEOUT_MS,
+      // A check is given only names recorded with the approval, so a
+      // configuration edited to read another variable does not get it here.
+      env: launchEnvironment(steward, server.ref, process.env, checkedEnvNames(server)),
+      envNames: checkedEnvNames(server),
+      toolsDirectory: provider.toolsDirectory
+    });
     provider.recordCheck(server.id, result);
+    if (result.state === 'unchanged' && server.agentTools === null) {
+      // The check may have saved its tool list; pick that up for the agent.
+      void provider.refresh().catch(() => undefined);
+    }
     return result;
   };
+
+  // From the chat, after a tool call was refused: show the server, and check it
+  // again so the change can be reviewed and accepted. Checking starts the
+  // server, which the click on Review asked for.
+  context.subscriptions.push(vscode.commands.registerCommand('hybridmind.mcp.review', async (serverId?: string) => {
+    await vscode.commands.executeCommand(`${MCP_VIEW_ID}.focus`);
+    const server = (provider.lastScan?.servers || []).find((candidate) => candidate.id === serverId);
+    if (server) {
+      await vscode.commands.executeCommand('hybridmind.mcp.check', { kind: 'server', server });
+    }
+  }));
 
   context.subscriptions.push(vscode.commands.registerCommand('hybridmind.mcp.check', async (node?: { kind: string; server?: ServerSummary }) => {
     const server = node?.kind === 'server' ? node.server : undefined;

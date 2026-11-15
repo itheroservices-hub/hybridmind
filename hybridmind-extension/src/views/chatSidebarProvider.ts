@@ -10,7 +10,9 @@ import * as path from 'path';
 import { LicenseManager } from '../auth/licenseManager';
 import { WorkspaceAnalyzer } from '../agents/workspaceAnalyzer';
 import { AutonomyManager, AutonomyLevel, ToolPermissions } from '../agents/autonomyManager';
-import { AgentPlanner, ExecutionResult, NextStep } from '../agents/agentPlanner';
+import { AgentPlanner, ExecutionResult, ExecutionStep, NextStep } from '../agents/agentPlanner';
+import { ChangeSummary } from '../mcp/mcpAgent';
+import { safeDisplayName } from '../mcp/steward';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -19,6 +21,90 @@ export interface ChatMessage {
   timestamp: Date;
   tokens?: number;
   cost?: number;
+  /**
+   * A system message drawn as something other than a status line: what an MCP
+   * tool returned, or a tool call refused because its server changed. Neither
+   * is ever sent to a model as conversation.
+   */
+  kind?: 'mcpResult' | 'mcpRefusal';
+  mcp?: {
+    serverId?: string;
+    serverName: string;
+    tool: string;
+    isError?: boolean;
+    truncated?: boolean;
+    approvedAt?: string;
+    changes?: readonly ChangeSummary[];
+  };
+}
+
+/**
+ * Whether a plan must wait for the user's "ok" whatever the autonomy level: it
+ * calls an MCP tool, or it was made with MCP tool descriptions in its prompt
+ * and runs commands or deletes files. Descriptions are written by server
+ * authors, so the user sees what such a plan will do before any of it runs.
+ */
+export function planNeedsConfirmation(plan: { steps: readonly ExecutionStep[] }, offeredMcpTools: boolean): boolean {
+  return plan.steps.some((step) => step.type === 'mcp'
+    || (offeredMcpTools && (step.type === 'terminal' || step.type === 'install' || step.type === 'delete')));
+}
+
+/** One line of the plan card. An MCP step names the server and tool it will use. */
+export function planStepLine(step: ExecutionStep): string {
+  if (step.type === 'mcp') {
+    const server = safeDisplayName(step.mcp?.serverName || 'an MCP server');
+    const tool = safeDisplayName(step.mcp?.tool || 'a tool');
+    return `${step.id}. ${step.description} (MCP tool: ${server} › ${tool})`;
+  }
+  return `${step.id}. ${step.description} (${step.type})`;
+}
+
+/** The chat messages for one step's progress. Exported for tests. */
+export function stepProgressMessages(step: ExecutionStep, status: string, detail?: string, now: Date = new Date()): ChatMessage[] {
+  const outcome = step.mcpOutcome;
+  if (step.type === 'mcp' && outcome && status !== 'executing') {
+    switch (outcome.status) {
+      case 'done': {
+        const line: ChatMessage = outcome.isError
+          ? { role: 'system', content: `Error: Step ${step.id}: ${outcome.serverName} › ${outcome.tool} reported a failure`, timestamp: now }
+          : { role: 'system', content: `Success: Step ${step.id}: Used ${outcome.serverName} › ${outcome.tool}`, timestamp: now };
+        const box: ChatMessage = {
+          role: 'system',
+          kind: 'mcpResult',
+          content: outcome.text,
+          timestamp: now,
+          mcp: { serverId: outcome.serverId, serverName: outcome.serverName, tool: outcome.tool, isError: outcome.isError, truncated: outcome.truncated }
+        };
+        return [line, box];
+      }
+      case 'changed': {
+        const worst = outcome.changes[0];
+        const count = outcome.changes.length;
+        const what = worst
+          ? `${count} change${count === 1 ? '' : 's'}, the most serious ${worst.risk} risk: ${worst.summary}.`
+          : 'Its tools differ from what you approved.';
+        return [
+          { role: 'system', content: `Error: Step ${step.id} not run: ${outcome.serverName} changed. Nothing was sent.`, timestamp: now },
+          {
+            role: 'system',
+            kind: 'mcpRefusal',
+            content: `${what} The agent will not use this server until you review the change.`,
+            timestamp: now,
+            mcp: { serverId: outcome.serverId, serverName: outcome.serverName, tool: outcome.tool, approvedAt: outcome.approvedAt, changes: outcome.changes }
+          }
+        ];
+      }
+      case 'denied':
+        return [{ role: 'system', content: `Skipped: Step ${step.id}: You denied ${outcome.serverName} › ${outcome.tool}. Nothing was sent.`, timestamp: now }];
+      case 'failed':
+        return [{ role: 'system', content: `Error: Step ${step.id}: ${outcome.message}`, timestamp: now }];
+    }
+  }
+  if (status === 'skipped') {
+    return [{ role: 'system', content: `Skipped: Step ${step.id}: ${detail || step.description}`, timestamp: now }];
+  }
+  const prefix = status === 'completed' ? 'Success:' : status === 'failed' ? 'Error:' : '[running]';
+  return [{ role: 'system', content: `${prefix} Step ${step.id}: ${step.description}`, timestamp: now }];
 }
 
 // A sanity cap, not a tier. Every model selected is a separate request on the
@@ -204,8 +290,20 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
         case 'removeAgent':
           // Agent chip removal is handled entirely in the webview
           break;
+        case 'reviewMcpServer':
+          await vscode.commands.executeCommand('hybridmind.mcp.review', typeof data.serverId === 'string' ? data.serverId : '');
+          break;
       }
     });
+  }
+
+  private _reportStepProgress(step: ExecutionStep, status: string, detail?: string): void {
+    // Each MCP step shows one line once it is done, not a running line as well.
+    if (step.type === 'mcp' && status === 'executing') {
+      return;
+    }
+    this._messages.push(...stepProgressMessages(step, status, detail));
+    this._updateWebview();
   }
 
   /** Show a QuickPick of the agent catalog and post the selection back into the webview. */
@@ -602,7 +700,10 @@ Models evolved their solutions ${synthesis.communicationRounds || 0} times, each
 
     try {
       // Get last few messages for context
+      // Only what the user and assistant said: status lines and MCP tool
+      // results are not conversation, and a tool's output must not reach this.
       const recentContext = this._messages
+        .filter(m => m.role === 'user' || m.role === 'assistant')
         .slice(-4)
         .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.substring(0, 200)}`)
         .join('\n');
@@ -1011,14 +1112,8 @@ Respond with ONLY one word: simple, moderate, or complex`,
           this._messages.push(executingMsg);
           this._updateWebview();
 
-          const result = await this._agentPlanner.executePlan(this._lastPlan, (step, status) => {
-            const progressMsg: ChatMessage = {
-              role: 'system',
-              content: `${status === 'completed' ? 'Success:' : status === 'failed' ? 'Error:' : '[running]'} Step ${step.id}: ${step.description}`,
-              timestamp: new Date()
-            };
-            this._messages.push(progressMsg);
-            this._updateWebview();
+          const result = await this._agentPlanner.executePlan(this._lastPlan, (step, status, detail) => {
+            this._reportStepProgress(step, status, detail);
           }, constraints);
 
           this._currentExecution = result;
@@ -1151,7 +1246,8 @@ Respond with ONLY one word: simple, moderate, or complex`,
       
       // Show risk indicator in plan message
       const riskEmoji = riskLevel === 'critical' ? '[error]' : riskLevel === 'high' ? '[high]' : riskLevel === 'medium' ? '[warn]' : '[ok]';
-      const needsConfirm = riskLevel === 'high' || riskLevel === 'critical' || autonomyLevel !== AutonomyLevel.FullAuto;
+      const needsConfirm = riskLevel === 'high' || riskLevel === 'critical' || autonomyLevel !== AutonomyLevel.FullAuto
+        || planNeedsConfirmation(plan, this._agentPlanner.offeredMcpTools);
 
       // Show the plan with steps
       const confirmationText = riskLevel === 'high' || riskLevel === 'critical'
@@ -1162,7 +1258,7 @@ Respond with ONLY one word: simple, moderate, or complex`,
 
       const planMsg: ChatMessage = {
         role: 'assistant',
-        content: `## Execution Plan\n\n**Goal:** ${plan.goal}\n\n**Analysis:** ${plan.analysis}\n\n**Steps:**\n${plan.steps.map((s: any) => `${s.id}. ${s.description} (${s.type})`).join('\n')}\n\n**Reasoning:** ${plan.reasoning}\n\n**Complexity:** ${complexity} | **Risk:** ${riskEmoji} ${riskLevel}\n**Autonomy Level:** ${this._autonomyManager.getLevelDescription()}${confirmationText}`,
+        content: `## Execution Plan\n\n**Goal:** ${plan.goal}\n\n**Analysis:** ${plan.analysis}\n\n**Steps:**\n${plan.steps.map((s: ExecutionStep) => planStepLine(s)).join('\n')}\n\n**Reasoning:** ${plan.reasoning}\n\n**Complexity:** ${complexity} | **Risk:** ${riskEmoji} ${riskLevel}\n**Autonomy Level:** ${this._autonomyManager.getLevelDescription()}${confirmationText}`,
         model: 'Agent Planner',
         timestamp: new Date()
       };
@@ -1179,14 +1275,8 @@ Respond with ONLY one word: simple, moderate, or complex`,
       // Full autonomy + low/medium risk: execute immediately without asking
       console.log(`[Autonomous] Full autonomy — executing immediately. Goal: "${plan.goal}"`);
       const constraints = await this._detectConstraints(userMessage);
-      const result = await this._agentPlanner.executePlan(plan, (step, status) => {
-        const progressMsg: ChatMessage = {
-          role: 'system',
-          content: `${status === 'completed' ? 'Success:' : status === 'failed' ? 'Error:' : '[running]'} Step ${step.id}: ${step.description}`,
-          timestamp: new Date()
-        };
-        this._messages.push(progressMsg);
-        this._updateWebview();
+      const result = await this._agentPlanner.executePlan(plan, (step, status, detail) => {
+        this._reportStepProgress(step, status, detail);
       }, constraints);
 
       this._currentExecution = result;
@@ -1826,6 +1916,17 @@ body { margin: 0; padding: 0; font-family: var(--vscode-font-family, sans-serif)
 .status-line.sl-err .sdot { background: var(--er); }
 .status-line.sl-sys .sdot { background: var(--warn); }
 .status-line .stxt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.status-line.sl-skip .sdot { background: var(--mu); }
+/* What an MCP tool returned, under its step */
+.mcp-res { margin: 0 0 2px 14px; border-radius: var(--rs); border: 1px solid rgba(128,128,128,.25); background: var(--sf); flex-shrink: 0; overflow: hidden; }
+.mcp-res-hdr { display: flex; align-items: center; justify-content: space-between; padding: 5px 9px; cursor: pointer; user-select: none; font-size: 10px; font-weight: 600; color: var(--vscode-foreground,#ccc); }
+.mcp-res-chev { font-size: 9px; color: var(--mu); transition: transform 150ms; }
+.mcp-res.collapsed .mcp-res-chev { transform: rotate(-90deg); }
+.mcp-res.collapsed .mcp-res-body { display: none; }
+.mcp-res-body { padding: 0 9px 8px; display: flex; flex-direction: column; gap: 6px; }
+.mcp-res-text { margin: 0; font-family: var(--vscode-editor-font-family, monospace); font-size: 10px; line-height: 1.5; color: var(--mu); background: var(--vscode-sideBar-background,#252526); border-radius: 4px; padding: 6px 8px; white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow-y: auto; }
+.mcp-res.err .mcp-res-text { border-left: 2px solid var(--err); }
+.mcp-note { font-size: 10px; line-height: 1.5; color: var(--mu); font-style: italic; }
 .mhdr { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid rgba(128,128,128,.10); }
 .mrole { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 600; letter-spacing: .3px; }
 .rdot2 { width: 7px; height: 7px; border-radius: 50%; }

@@ -3,7 +3,7 @@
   "displayName": "HybridMind: MCP Trust and AI Agent",
   "description": "See every MCP server your AI tools use, and know when one changes. Powered by MCP Steward. Also includes a coding agent that runs on your own API key.",
   "publisher": "hybridmind",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "license": "MIT",
   "icon": "icon.png",
   "galleryBanner": {
@@ -289,7 +289,7 @@
     "@supabase/supabase-js": "^2.45.0",
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
-    "mcpsteward": "0.1.1"
+    "mcpsteward": "0.2.0"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

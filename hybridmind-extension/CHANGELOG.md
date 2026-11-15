@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased] - 2.3.0
+
+The coding agent can use your approved MCP servers.
+
+### Added
+- **MCP tools in agentic mode.** The planner is offered the tools of servers
+  you approved, exactly as they were approved, and names the server and tool in
+  each step that uses one. Planning starts no server.
+- **Asked every time.** Before each MCP tool call, at every autonomy level,
+  HybridMind asks, showing the server, the tool, what it will send and any
+  environment variables the server is given. There is no "allow all".
+- **Checked right before the call.** The server is started, compared with your
+  approval, and the tool is called on that same connection. If anything changed,
+  nothing is sent, the steps that depended on it are skipped, and the change is
+  shown in MCP Servers.
+- **Plans wait for you.** A plan that calls an MCP tool always waits for your
+  "ok" before anything runs, at every autonomy level. So does a plan that runs
+  commands or deletes files after the planner saw tool descriptions, which are
+  written by each server's author.
+- **Results as data.** What a tool returns is shown in the chat and handed to
+  later steps as information only. A file change made with a tool's result in
+  hand is held to the one file and kind of change the plan named, and shown to
+  you before it is applied.
+- **Nothing hidden in the dialog.** Arguments are sent only when all of them
+  fit in the dialog. Any value a server was given from your environment is
+  hidden if a tool echoes it back.
+- **MCP Servers labels.** Approved servers say whether the agent can use them.
+
+### Changed
+- Approving saves the server's tool list in HybridMind's own storage, checked
+  against the approval's hashes whenever it is read. Servers approved before
+  2.3.0, or from the command line, need approving again, or a Check for changes
+  that finds them unchanged, before the agent can use them.
+- A server started to approve, check or call a tool is now given the
+  environment variables its own configuration names, and nothing else, so
+  servers that read `${env:NAME}` work from the editor. The approval prompt
+  lists them, and the approval records them: if the configuration is later
+  edited to read another variable, it is not given that one, and the agent
+  does not use the server until you approve it again.
+- Requires mcpsteward 0.2.0.
+
 ## [2.2.0] - 2026-10-14
 
 HybridMind becomes **HybridMind: MCP Trust and AI Agent**. It now watches the

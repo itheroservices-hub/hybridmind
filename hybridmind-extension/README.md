@@ -22,7 +22,7 @@ Open the HybridMind icon in the activity bar. The **MCP Servers** view lists eve
 - **Untrusted projects.** MCP config files inside a project are read only after you trust the workspace, and HybridMind stays off in Restricted Mode.
 - **Same approvals as the command line.** Approvals are kept in `~/.mcpsteward/pins`, where the `mcpsteward` command line tool keeps them, so approving in one shows in the other.
 
-A server whose configuration reads a value from your environment, such as `${env:TOKEN}`, cannot be approved or checked from the editor, because HybridMind does not pass your environment to servers it starts. Run `npx mcpsteward trust <id>` in a terminal for those; the error message gives the id.
+A server whose configuration reads a value from your environment, such as `${env:TOKEN}`, is given exactly the variables its configuration names, and nothing else from your environment. The approval prompt lists them and the approval records them, so a configuration edited later to read another variable does not get it until you approve the server again. A value only the server's own client can fill in, such as `${input:...}`, cannot be filled from the editor; run `npx mcpsteward trust <id>` in a terminal for those, and the error message gives the id.
 
 ## The coding agent
 
@@ -30,7 +30,10 @@ A server whose configuration reads a value from your environment, such as `${env
 - **Your key, your models.** The model list is read from your provider, so it shows exactly what your key can use.
 - **Several models at once.** Parallel mode sends one message to up to four models. Chain mode hands each answer on to the next model.
 - **Agentic mode.** The assistant plans a task and shows you the plan to confirm before it starts. You choose how often it asks while it works: before every action, before destructive ones, or only for risky commands.
+- **Uses your approved MCP servers.** In agentic mode the assistant can use tools from MCP servers you approved, and only as they were when you approved them. The plan names each tool it will use, and a plan that uses one always waits for your "ok". Before every call it asks you again, at every autonomy level, showing the server, where it runs, the tool and everything it will send. Right before the call, HybridMind checks the server still matches your approval; if anything changed, nothing is sent and the steps that depended on it are skipped. What a tool returns is used as information for later steps only: it cannot add steps or run commands, and a file change written with it is shown to you before it is applied.
 - **Guardrails.** Terminal commands are checked against an allowlist at every setting, and file changes stay inside your workspace.
+
+Servers approved before 2.3.0 need approving again, or a Check for changes that finds them unchanged, before the agent can use them: their tool lists were not saved back then. The MCP Servers view marks them "approve again for the agent".
 
 ## Getting started
 
